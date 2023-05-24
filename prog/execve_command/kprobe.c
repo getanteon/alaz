@@ -4,13 +4,18 @@
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
-struct bpf_map_def SEC("maps") output = {
-    .type =
-        BPF_MAP_TYPE_PERF_EVENT_ARRAY, // TODO: use PERF_EVENT_ARRAY instead?
+struct bpf_map_def SEC("maps") output2 = {
+    .type = BPF_MAP_TYPE_PERF_EVENT_ARRAY,
     .key_size = 0,
     .value_size = 0,
     .max_entries = 4096, // TODO: why 4096?
 };
+
+// struct {
+//   __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
+//   __uint(key_size, sizeof(u32));
+//   __uint(value_size, sizeof(u32));
+// } output2 SEC(".maps");
 
 // perf event
 struct data_t {
@@ -25,8 +30,8 @@ struct data_t {
   char message[12];
 };
 
-SEC("kprobe/execve_command")
-int get_command6(void *ctx) {
+SEC("kprobe/sys_execve")
+int get_command(void *ctx) {
   struct data_t data = {};
   data.sample_type = 0x400; // PERF_SAMPLE_RAW;
   data.type = 0x1;          // PERF_TYPE_SOFTWARE;
@@ -36,13 +41,6 @@ int get_command6(void *ctx) {
   int pid = bpf_get_current_pid_tgid() >> 32;
   int uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
 
-  // reserve space in the ring buffer
-  //   data = bpf_ringbuf_reserve(&output, sizeof(*data), 0);
-
-  //   if (!data) {
-  //     return 0;
-  //   }
-
   data.pid = pid;
   data.uid = uid;
 
@@ -50,26 +48,15 @@ int get_command6(void *ctx) {
   bpf_probe_read_kernel(data.message, sizeof(data.message), message);
 
   // BPF_F_CURRENT_CPU
-  long flags = 0xffffffff; // The *flags* are used to indicate the index in
+  long flags = 0xffffffffULL; // The *flags* are used to indicate the index in
   // *map* for which
   // * 	the value must be put
-  long res = bpf_perf_event_output(ctx, &output, flags, &data, sizeof(data));
+  long res = bpf_perf_event_output(ctx, &output2, flags, &data, sizeof(data));
   if (res != 0) {
     //  TODO: fails because of -2 (ENOENT)
     const char *msg = "Fail -> **%d**";
     bpf_trace_printk(msg, 15, res);
-  } else {
-    const char *msg = "Success!";
-    bpf_trace_printk(msg, 9);
   }
-
-  // bpf_ringbuf_output(&output, &data, sizeof(data), 0);
-  //   bpf_ringbuf_commit(data, 0, FALSE);
-  //   bpf_ringbuf_discard(data, 0);
-
-  // TODO: if icine koyarsan leak oluyo, unreleased diyor
-
-  // TODO: include for BPF_RB_FORCE_WAKEUP use
 
   return 0;
 }

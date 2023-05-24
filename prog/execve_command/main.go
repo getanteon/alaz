@@ -8,8 +8,10 @@ import (
 	"log"
 	"os"
 	"time"
+	"unsafe"
 
 	"github.com/cilium/ebpf/link"
+	"github.com/cilium/ebpf/perf"
 	"github.com/cilium/ebpf/rlimit"
 )
 
@@ -17,6 +19,18 @@ import (
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc $BPF_CLANG -cflags $BPF_CFLAGS bpf kprobe.c -- -I../headers
 
 const mapKey uint32 = 0
+
+// padding to match the kernel struct
+type commandEvent struct {
+	sample_type int32
+	type_       int32
+	config      int32
+
+	pid     uint32
+	uid     uint32
+	command [16]byte
+	message [16]byte
+}
 
 func main() {
 
@@ -45,31 +59,50 @@ func main() {
 	// pre-compiled program. Each time the kernel function enters, the program
 	// will increment the execution counter by 1. The read loop below polls this
 	// map value once per second.
-	kp, err := link.Kprobe(fn, objs.bpfPrograms.GetCommand6, nil)
-	if err != nil {
-		log.Fatalf("opening kprobe: %s", err)
-	}
-	defer kp.Close()
 
 	// Read loop reporting the total amount of times the kernel
 	// function was entered, once per second.
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
+	time.Sleep(1 * time.Second)
+
+	kp, err := link.Kprobe(fn, objs.bpfPrograms.GetCommand, nil)
+	if err != nil {
+		log.Fatalf("opening kprobe: %s", err)
+	}
+	defer kp.Close()
+
+	reader, err := perf.NewReader(objs.Output2, 64*os.Getpagesize())
+	if err != nil {
+		log.Fatalf("error creating perf ring buffer: %w", err)
+	}
+
 	go listenDebugMsgs()
 	log.Println("Waiting for events..")
 
-	for range ticker.C {
-		var mapKey uint64
-		var value interface{}
-		it := objs.bpfMaps.Output.Iterate()
-		if it.Next(&mapKey, &value) {
-			log.Print(mapKey, value)
-			// log.Fatalf("reading map: %v", err)
+	go func() {
+		for range ticker.C {
+			record, err := reader.Read()
+			if err != nil {
+				log.Fatalf("error reading from perf array: %w", err)
+			}
+
+			if record.LostSamples != 0 {
+				log.Printf("lost %d samples", record.LostSamples)
+			}
+
+			bpfEvent := (*commandEvent)(unsafe.Pointer(&record.RawSample[0]))
+
+			log.Printf("pid:%d", bpfEvent.pid)
+			log.Printf("uid:%d", bpfEvent.uid)
+			log.Printf("command:%s", bpfEvent.command)
+			log.Printf("message:%s", bpfEvent.message)
+
 		}
+	}()
 
-	}
-
+	select {}
 }
 
 func listenDebugMsgs() {

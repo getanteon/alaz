@@ -54,14 +54,14 @@ type bpfSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfProgramSpecs struct {
-	GetCommand6 *ebpf.ProgramSpec `ebpf:"get_command6"`
+	GetCommand *ebpf.ProgramSpec `ebpf:"get_command"`
 }
 
 // bpfMapSpecs contains maps before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfMapSpecs struct {
-	Output *ebpf.MapSpec `ebpf:"output"`
+	Output2 *ebpf.MapSpec `ebpf:"output2"`
 }
 
 // bpfObjects contains all objects after they have been loaded into the kernel.
@@ -83,12 +83,12 @@ func (o *bpfObjects) Close() error {
 //
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfMaps struct {
-	Output *ebpf.Map `ebpf:"output"`
+	Output2 *ebpf.Map `ebpf:"output2"`
 }
 
 func (m *bpfMaps) Close() error {
 	return _BpfClose(
-		m.Output,
+		m.Output2,
 	)
 }
 
@@ -96,12 +96,12 @@ func (m *bpfMaps) Close() error {
 //
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfPrograms struct {
-	GetCommand6 *ebpf.Program `ebpf:"get_command6"`
+	GetCommand *ebpf.Program `ebpf:"get_command"`
 }
 
 func (p *bpfPrograms) Close() error {
 	return _BpfClose(
-		p.GetCommand6,
+		p.GetCommand,
 	)
 }
 
