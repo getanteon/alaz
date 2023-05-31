@@ -1,0 +1,13 @@
+To clean debug print pipe -> cat /sys/kernel/debug/tracing/trace_pipe
+
+When debugging, bpf_trace_printk's "fmt_size" is important. Otherwise, you can get errors like below from verifier:
+    load program: permission denied: invalid access to map value, value_size=31 off=14 size=20: R1 min value is outside of the allowed memory range (228 line(s) omitted)
+
+
+To see bpf calls with strace: 
+    sudo strace -o calls.txt  -f -e trace=bpf,ioctl go run -exec sudo main.go bpf_bpfel.go
+
+See "/sys/kernel/debug/tracing/events" to find available tracepoints
+
+To generate kernel headers files necessary:
+    > bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
