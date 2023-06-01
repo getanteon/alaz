@@ -11,3 +11,4 @@ See "/sys/kernel/debug/tracing/events" to find available tracepoints
 
 To generate kernel headers files necessary:
     > bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
+

@@ -148,10 +148,10 @@ func main() {
 			log.Printf("type: %d", bpfEvent.Type)
 
 			log.Printf("pid: %d", bpfEvent.Pid)
-			source := fmt.Sprintf("%d.%d.%d.%d:%d", bpfEvent.SAddr[1], bpfEvent.SAddr[2], bpfEvent.SAddr[3], bpfEvent.SAddr[4], bpfEvent.SPort)
+			source := fmt.Sprintf("%d.%d.%d.%d:%d", bpfEvent.SAddr[0], bpfEvent.SAddr[1], bpfEvent.SAddr[2], bpfEvent.SAddr[3], bpfEvent.SPort)
 			log.Printf("source: %s", source)
 
-			dest := fmt.Sprintf("%d.%d.%d.%d:%d", bpfEvent.DAddr[1], bpfEvent.DAddr[2], bpfEvent.DAddr[3], bpfEvent.DAddr[4], bpfEvent.DPort)
+			dest := fmt.Sprintf("%d.%d.%d.%d:%d", bpfEvent.DAddr[0], bpfEvent.DAddr[1], bpfEvent.DAddr[2], bpfEvent.DAddr[3], bpfEvent.DPort)
 			log.Printf("dest: %s", dest)
 		}
 	}()
