@@ -53,7 +53,6 @@ struct trace_event_raw_inet_sock_set_state__stub {
   __u8 daddr_v6[16];
 };
 
-
 struct sk_info {
   __u64 fd;
   __u32 pid;
@@ -82,11 +81,12 @@ void printByteArray(const unsigned char *array, size_t length) {
 
 SEC("tracepoint/sock/inet_sock_set_state")
 int inet_sock_set_state(void *ctx) {
-  struct trace_event_raw_inet_sock_set_state__stub args = {};
+  struct trace_event_raw_inet_sock_set_state args = {};
   if (bpf_probe_read(&args, sizeof(args), ctx) < 0) {
     return 0;
   }
-  if (args.protocol != IPPROTO_TCP) {
+
+  if (BPF_CORE_READ(&args, protocol) != IPPROTO_TCP) {
     return 0;
   }
   __u64 id = bpf_get_current_pid_tgid();

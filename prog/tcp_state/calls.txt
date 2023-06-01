@@ -1,0 +1,702 @@
+2810586 ioctl(1, TCGETS, {B38400 opost isig icanon echo ...}) = 0
+2810586 ioctl(0, TCGETS, {B38400 opost isig icanon echo ...}) = 0
+2810591 +++ exited with 0 +++
+2810592 +++ exited with 0 +++
+2810590 +++ exited with 0 +++
+2810589 +++ exited with 0 +++
+2810588 +++ exited with 0 +++
+2810587 +++ exited with 0 +++
+2810586 ioctl(1, TCGETS, {B38400 opost isig icanon echo ...}) = 0
+2810586 ioctl(0, TCGETS, {B38400 opost isig icanon echo ...}) = 0
+2810604 +++ exited with 0 +++
+2810603 +++ exited with 0 +++
+2810602 +++ exited with 0 +++
+2810601 +++ exited with 0 +++
+2810600 +++ exited with 0 +++
+2810599 +++ exited with 0 +++
+2810597 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=2810599, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+2810615 ????( <unfinished ...>
+2810616 +++ exited with 0 +++
+2810615 +++ exited with 0 +++
+2810614 +++ exited with 0 +++
+2810612 +++ exited with 0 +++
+2810598 +++ exited with 0 +++
+2810597 +++ exited with 0 +++
+2810596 +++ exited with 0 +++
+2810595 +++ exited with 0 +++
+2810594 +++ exited with 0 +++
+2810593 +++ exited with 0 +++
+2810586 +++ superseded by execve in pid 2810613 +++
+2810621 +++ exited with 0 +++
+2810620 +++ exited with 0 +++
+2810619 +++ exited with 0 +++
+2810618 +++ exited with 0 +++
+2810617 +++ exited with 0 +++
+2810586 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810625 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810625 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810631 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810586 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810627 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810634 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810633 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810636 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810625 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810633 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810586 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810634 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810625 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810635 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810632 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810635 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810632 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810630 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810635 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810630 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810636 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810628 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810633 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810623 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810630 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810634 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810638 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810586 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810630 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810635 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810623 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810638 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810586 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810624 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810627 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810623 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810586 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810631 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810632 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810625 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810623 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810630 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810634 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810638 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810586 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810624 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810627 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810631 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810632 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810625 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810628 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810631 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810635 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810586 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810627 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810637 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810623 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810636 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810627 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810624 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810638 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810586 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810628 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810631 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810633 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810634 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810635 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810625 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810636 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810634 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810627 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810631 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810633 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810634 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810635 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810625 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810632 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810630 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810631 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810633 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810623 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810623 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810632 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810632 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810624 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810638 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810630 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810637 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810635 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810634 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810637 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810624 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810630 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810637 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810633 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810631 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810638 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810634 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810634 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810630 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810634 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810625 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810625 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810634 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810631 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810630 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810624 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810630 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810625 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810624 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810627 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810632 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810637 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810638 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810631 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810636 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810623 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810586 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810632 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810630 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810623 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810625 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810625 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810624 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810635 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810632 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810637 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810636 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810586 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810634 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810634 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810644 +++ exited with 0 +++
+2810643 +++ exited with 0 +++
+2810642 +++ exited with 0 +++
+2810641 +++ exited with 0 +++
+2810640 +++ exited with 0 +++
+2810639 +++ exited with 0 +++
+2810624 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=2810639, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+2810623 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810586 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810637 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810635 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810633 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810630 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810628 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810627 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810631 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810630 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810635 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810627 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810637 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810586 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810628 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810631 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810633 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810635 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810637 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810635 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810637 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810649 +++ exited with 0 +++
+2810652 +++ exited with 0 +++
+2810651 +++ exited with 0 +++
+2810650 +++ exited with 0 +++
+2810645 +++ exited with 0 +++
+2810636 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=2810645, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+2810657 +++ exited with 0 +++
+2810656 +++ exited with 0 +++
+2810655 +++ exited with 0 +++
+2810654 +++ exited with 0 +++
+2810646 +++ exited with 0 +++
+2810636 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=2810646, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+2810662 +++ exited with 0 +++
+2810661 +++ exited with 0 +++
+2810660 +++ exited with 0 +++
+2810659 +++ exited with 0 +++
+2810647 +++ exited with 0 +++
+2810633 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=2810647, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+2810648 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810648, si_uid=0} ---
+2810667 +++ exited with 0 +++
+2810666 +++ exited with 0 +++
+2810665 +++ exited with 0 +++
+2810664 +++ exited with 0 +++
+2810648 +++ exited with 0 +++
+2810636 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=2810648, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+2810672 +++ exited with 0 +++
+2810671 +++ exited with 0 +++
+2810670 +++ exited with 0 +++
+2810669 +++ exited with 0 +++
+2810653 +++ exited with 0 +++
+2810636 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=2810653, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+2810676 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810658, si_uid=0} ---
+2810658 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810658, si_uid=0} ---
+2810677 +++ exited with 0 +++
+2810676 +++ exited with 0 +++
+2810675 +++ exited with 0 +++
+2810674 +++ exited with 0 +++
+2810658 +++ exited with 0 +++
+2810636 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=2810658, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+2810663 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810663, si_uid=0} ---
+2810627 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810627 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810627 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810630 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810635 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810634 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810632 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810682 +++ exited with 0 +++
+2810681 +++ exited with 0 +++
+2810680 +++ exited with 0 +++
+2810679 +++ exited with 0 +++
+2810663 +++ exited with 0 +++
+2810636 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=2810663, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+2810633 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810636 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810628 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810686 +++ exited with 0 +++
+2810685 +++ exited with 0 +++
+2810684 +++ exited with 0 +++
+2810683 +++ exited with 0 +++
+2810635 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810668 +++ exited with 0 +++
+2810630 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=2810668, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+2810636 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810636 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810624 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810624 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810636 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810633 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810624 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810635 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810624 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810635 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810630 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810635 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810691 +++ exited with 0 +++
+2810690 +++ exited with 0 +++
+2810689 +++ exited with 0 +++
+2810688 +++ exited with 0 +++
+2810673 +++ exited with 0 +++
+2810637 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=2810673, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+2810678 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810678, si_uid=0} ---
+2810638 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810696 +++ exited with 0 +++
+2810695 +++ exited with 0 +++
+2810694 +++ exited with 0 +++
+2810693 +++ exited with 0 +++
+2810678 +++ exited with 0 +++
+2810638 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=2810678, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+2810687 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810687, si_uid=0} ---
+2810701 +++ exited with 0 +++
+2810700 +++ exited with 0 +++
+2810699 +++ exited with 0 +++
+2810698 +++ exited with 0 +++
+2810687 +++ exited with 0 +++
+2810630 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=2810687, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+2810707 +++ exited with 0 +++
+2810705 +++ exited with 0 +++
+2810704 +++ exited with 0 +++
+2810703 +++ exited with 0 +++
+2810692 +++ exited with 0 +++
+2810633 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=2810692, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+2810712 +++ exited with 0 +++
+2810711 +++ exited with 0 +++
+2810710 +++ exited with 0 +++
+2810709 +++ exited with 0 +++
+2810697 +++ exited with 0 +++
+2810629 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=2810697, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+2810702 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810702, si_uid=0} ---
+2810717 +++ exited with 0 +++
+2810716 +++ exited with 0 +++
+2810714 +++ exited with 0 +++
+2810715 +++ exited with 0 +++
+2810702 +++ exited with 0 +++
+2810631 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=2810702, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+2810722 +++ exited with 0 +++
+2810721 +++ exited with 0 +++
+2810720 +++ exited with 0 +++
+2810719 +++ exited with 0 +++
+2810706 +++ exited with 0 +++
+2810637 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=2810706, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+2810727 +++ exited with 0 +++
+2810726 +++ exited with 0 +++
+2810725 +++ exited with 0 +++
+2810724 +++ exited with 0 +++
+2810708 +++ exited with 0 +++
+2810629 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=2810708, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+2810732 +++ exited with 0 +++
+2810731 +++ exited with 0 +++
+2810730 +++ exited with 0 +++
+2810729 +++ exited with 0 +++
+2810713 +++ exited with 0 +++
+2810629 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=2810713, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+2810631 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810632 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810718 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810718, si_uid=0} ---
+2810733 +++ exited with 0 +++
+2810736 +++ exited with 0 +++
+2810735 +++ exited with 0 +++
+2810734 +++ exited with 0 +++
+2810718 +++ exited with 0 +++
+2810630 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=2810718, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+2810740 +++ exited with 0 +++
+2810739 +++ exited with 0 +++
+2810738 +++ exited with 0 +++
+2810737 +++ exited with 0 +++
+2810723 +++ exited with 0 +++
+2810630 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=2810723, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+2810744 +++ exited with 0 +++
+2810743 +++ exited with 0 +++
+2810742 +++ exited with 0 +++
+2810741 +++ exited with 0 +++
+2810728 +++ exited with 0 +++
+2810637 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=2810728, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+2810625 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810632 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810630 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810624 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810625 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810631 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810632 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810638 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810631 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810638 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810630 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810628 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810625 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810625 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810638 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810630 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810625 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810625 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810638 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810638 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810638 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810623 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810623 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810631 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810627 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810623 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810638 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810625 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810636 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810623 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810636 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810630 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810634 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810637 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810637 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810638 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810624 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810623 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810586 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810628 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810636 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810623 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810586 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810628 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810633 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810627 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810627 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810633 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810637 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810635 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810634 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810624 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810628 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810627 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810633 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810638 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810635 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810586 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810637 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810637 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810633 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810637 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810630 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810586 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810623 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810628 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810638 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810635 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810627 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810630 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810628 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810631 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810627 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810635 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810630 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810623 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810627 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810635 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810627 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810628 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810637 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810633 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810586 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810635 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810631 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810628 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810623 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810630 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810624 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810637 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810630 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810624 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810586 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810629 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810627 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810586 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810634 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810623 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810623 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810623 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810749 +++ exited with 0 +++
+2810748 +++ exited with 0 +++
+2810747 +++ exited with 0 +++
+2810746 +++ exited with 0 +++
+2810745 +++ exited with 0 +++
+2810632 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=2810745, si_uid=0, si_status=0, si_utime=0, si_stime=0} ---
+2810750 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810755 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810750 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810750 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810756 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810756 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810756 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810753 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810755 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810753 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810756 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810753 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810753 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810756 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810753 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810756 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810752 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810756 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810756 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810756 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810756 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810754 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810756 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810750, si_uid=0} ---
+2810758 +++ exited with 0 +++
+2810757 +++ exited with 0 +++
+2810756 +++ exited with 0 +++
+2810755 +++ exited with 0 +++
+2810754 +++ exited with 0 +++
+2810753 +++ exited with 0 +++
+2810752 +++ exited with 0 +++
+2810751 +++ exited with 0 +++
+2810750 +++ exited with 0 +++
+2810632 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=2810750, si_uid=0, si_status=0, si_utime=7, si_stime=6} ---
+2810759 ioctl(3, TIOCGPGRP, [2810583])  = 0
+2810759 ioctl(2, TIOCGWINSZ, {ws_row=24, ws_col=86, ws_xpixel=0, ws_ypixel=0}) = 0
+2810759 ioctl(5, TCGETS, 0x7fff348e54e0) = -1 ENOTTY (Inappropriate ioctl for device)
+2810759 ioctl(6, TCGETS, 0x7fff348e5310) = -1 ENOTTY (Inappropriate ioctl for device)
+2810759 ioctl(6, TCGETS, 0x7fff348e5500) = -1 ENOTTY (Inappropriate ioctl for device)
+2810759 ioctl(6, TCGETS, 0x7fff348e54e0) = -1 ENOTTY (Inappropriate ioctl for device)
+2810759 ioctl(6, TCGETS, 0x7fff348e5500) = -1 ENOTTY (Inappropriate ioctl for device)
+2810759 ioctl(5, TCGETS, 0x7fff348e5500) = -1 ENOTTY (Inappropriate ioctl for device)
+2810759 ioctl(6, FIONREAD, [130])       = 0
+2810759 ioctl(6, FIONREAD, [130])       = 0
+2810759 ioctl(6, FIONREAD, [103])       = 0
+2810759 ioctl(6, FIONREAD, [291])       = 0
+2810759 ioctl(0, TCGETS, {B38400 opost isig icanon echo ...}) = 0
+2810759 ioctl(9, TIOCGPTN, [5])         = 0
+2810759 ioctl(9, TIOCSPTLCK, [0])       = 0
+2810759 ioctl(9, TIOCGPTPEER, 0x102)    = 10
+2810759 ioctl(9, TIOCGPTN, [5])         = 0
+2810759 ioctl(8, TIOCGPGRP, [2810583])  = 0
+2810759 ioctl(0, TCGETS, {B38400 opost isig icanon echo ...}) = 0
+2810759 ioctl(1, TCGETS, {B38400 opost isig icanon echo ...}) = 0
+2810759 ioctl(2, TCGETS, {B38400 opost isig icanon echo ...}) = 0
+2810759 ioctl(8, TCGETS, {B38400 opost isig icanon echo ...}) = 0
+2810759 ioctl(10, TCGETS, {B38400 opost isig icanon echo ...}) = 0
+2810759 ioctl(10, TCGETS, {B38400 opost isig icanon echo ...}) = 0
+2810759 ioctl(10, SNDCTL_TMR_CONTINUE or TCSETSF, {B38400 opost isig icanon echo ...}) = 0
+2810759 ioctl(10, TCGETS, {B38400 opost isig icanon echo ...}) = 0
+2810759 ioctl(8, TIOCGWINSZ, {ws_row=24, ws_col=86, ws_xpixel=0, ws_ypixel=0}) = 0
+2810759 ioctl(10, TIOCSWINSZ, {ws_row=24, ws_col=86, ws_xpixel=0, ws_ypixel=0}) = 0
+2810759 ioctl(8, TCGETS, {B38400 opost isig icanon echo ...}) = 0
+2810759 ioctl(8, TCGETS, {B38400 opost isig icanon echo ...}) = 0
+2810759 ioctl(8, SNDCTL_TMR_STOP or TCSETSW, {B38400 -opost -isig -icanon -echo ...}) = 0
+2810759 ioctl(8, TCGETS, {B38400 -opost -isig -icanon -echo ...}) = 0
+2810760 ioctl(10, TIOCSCTTY, 0)         = 0
+2810761 ioctl(10, TIOCGPGRP, [2810760]) = 0
+2810760 ioctl(10, TIOCSPGRP, [2810761]) = 0
+2810761 ioctl(10, TIOCGPGRP, [2810761]) = 0
+2810761 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810761, si_uid=0} ---
+2810761 bpf(BPF_BTF_LOAD, {btf="\237\353\1\0\30\0\0\0\0\0\0\0\20\0\0\0\20\0\0\0\1\0\0\0\0\0\0\0\0\0\0\1"..., btf_log_buf=NULL, btf_size=41, btf_log_size=0, btf_log_level=0}, 32) = 3
+2810761 bpf(BPF_BTF_LOAD, {btf="\237\353\1\0\30\0\0\0\0\0\0\0\30\0\0\0\30\0\0\0\3\0\0\0\0\0\0\0\0\0\0\r"..., btf_log_buf=NULL, btf_size=51, btf_log_size=0, btf_log_level=0}, 32) = 3
+2810761 bpf(BPF_BTF_LOAD, {btf="\237\353\1\0\30\0\0\0\0\0\0\0\30\0\0\0\30\0\0\0\3\0\0\0\0\0\0\0\0\0\0\r"..., btf_log_buf=NULL, btf_size=51, btf_log_size=0, btf_log_level=0}, 32) = 3
+2810761 bpf(BPF_MAP_CREATE, {map_type=BPF_MAP_TYPE_ARRAY, key_size=4, value_size=4, max_entries=1, map_flags=0, inner_map_fd=0, map_name="", map_ifindex=0, btf_fd=0, btf_key_type_id=0, btf_value_type_id=0, btf_vmlinux_value_type_id=0, map_extra=0}, 72) = 3
+2810761 bpf(BPF_MAP_CREATE, {map_type=BPF_MAP_TYPE_ARRAY, key_size=4, value_size=4, max_entries=1, map_flags=0, inner_map_fd=0, map_name="feature_test", map_ifindex=0, btf_fd=0, btf_key_type_id=0, btf_value_type_id=0, btf_vmlinux_value_type_id=0, map_extra=0}, 72) = 3
+2810761 bpf(BPF_MAP_CREATE, {map_type=BPF_MAP_TYPE_ARRAY, key_size=4, value_size=4, max_entries=1, map_flags=0, inner_map_fd=0, map_name=".test", map_ifindex=0, btf_fd=0, btf_key_type_id=0, btf_value_type_id=0, btf_vmlinux_value_type_id=0, map_extra=0}, 72) = 3
+2810761 bpf(BPF_MAP_CREATE, {map_type=BPF_MAP_TYPE_HASH, key_size=8, value_size=8, max_entries=10240, map_flags=0, inner_map_fd=0, map_name="fd_by_pid_tgid", map_ifindex=0, btf_fd=0, btf_key_type_id=0, btf_value_type_id=0, btf_vmlinux_value_type_id=0, map_extra=0}, 72) = 3
+2810761 bpf(BPF_MAP_CREATE, {map_type=BPF_MAP_TYPE_HASH, key_size=8, value_size=16, max_entries=10240, map_flags=0, inner_map_fd=0, map_name="sk_info", map_ifindex=0, btf_fd=0, btf_key_type_id=0, btf_value_type_id=0, btf_vmlinux_value_type_id=0, map_extra=0}, 72) = 7
+2810761 bpf(BPF_MAP_CREATE, {map_type=BPF_MAP_TYPE_LRU_HASH, key_size=16, value_size=8, max_entries=32768, map_flags=0, inner_map_fd=0, map_name="connection_time", map_ifindex=0, btf_fd=0, btf_key_type_id=0, btf_value_type_id=0, btf_vmlinux_value_type_id=0, map_extra=0}, 72) = 8
+2810761 bpf(BPF_MAP_CREATE, {map_type=BPF_MAP_TYPE_PERF_EVENT_ARRAY, key_size=4, value_size=4, max_entries=16, map_flags=0, inner_map_fd=0, map_name="tcp_listen_even", map_ifindex=0, btf_fd=0, btf_key_type_id=0, btf_value_type_id=0, btf_vmlinux_value_type_id=0, map_extra=0}, 72) = 9
+2810761 bpf(BPF_MAP_CREATE, {map_type=BPF_MAP_TYPE_PERF_EVENT_ARRAY, key_size=4, value_size=4, max_entries=16, map_flags=0, inner_map_fd=0, map_name="tcp_connect_eve", map_ifindex=0, btf_fd=0, btf_key_type_id=0, btf_value_type_id=0, btf_vmlinux_value_type_id=0, map_extra=0}, 72) = 10
+2810761 bpf(BPF_BTF_LOAD, {btf="\237\353\1\0\30\0\0\0\0\0\0\0<\0\0\0<\0\0\0n\6\0\0\0\0\0\0\0\0\0\2"..., btf_log_buf=NULL, btf_size=1730, btf_log_size=0, btf_log_level=0}, 32) = 11
+2810761 bpf(BPF_PROG_LOAD, {prog_type=BPF_PROG_TYPE_KPROBE, insn_cnt=6, insns=0xc0001be810, license="GPL", log_level=0, log_size=0, log_buf=NULL, kern_version=KERNEL_VERSION(0, 0, 0), prog_flags=0, prog_name="", prog_ifindex=0, expected_attach_type=BPF_CGROUP_INET_INGRESS, prog_btf_fd=0, func_info_rec_size=0, func_info=NULL, func_info_cnt=0, line_info_rec_size=0, line_info=NULL, line_info_cnt=0, attach_btf_id=0, attach_prog_fd=0, fd_array=NULL}, 144) = 12
+2810761 bpf(BPF_PROG_LOAD, {prog_type=BPF_PROG_TYPE_TRACEPOINT, insn_cnt=208, insns=0xc0001e6e00, license="Dual MIT/GPL", log_level=0, log_size=0, log_buf=NULL, kern_version=KERNEL_VERSION(0, 0, 0), prog_flags=0, prog_name="inet_sock_set_s", prog_ifindex=0, expected_attach_type=BPF_CGROUP_INET_INGRESS, prog_btf_fd=11, func_info_rec_size=8, func_info=0xc0001bb8c0, func_info_cnt=1, line_info_rec_size=16, line_info=0xc0001ee800, line_info_cnt=75, attach_btf_id=0, attach_prog_fd=0, fd_array=NULL}, 144) = 12
+2810761 bpf(BPF_BTF_LOAD, {btf="\237\353\1\0\30\0\0\0\0\0\0\0<\0\0\0<\0\0\0\225\1\0\0\0\0\0\0\0\0\0\2"..., btf_log_buf=NULL, btf_size=489, btf_log_size=0, btf_log_level=0}, 32) = 11
+2810761 bpf(BPF_PROG_LOAD, {prog_type=BPF_PROG_TYPE_TRACEPOINT, insn_cnt=33, insns=0xc0001aa120, license="Dual MIT/GPL", log_level=0, log_size=0, log_buf=NULL, kern_version=KERNEL_VERSION(0, 0, 0), prog_flags=0, prog_name="sys_enter_conne", prog_ifindex=0, expected_attach_type=BPF_CGROUP_INET_INGRESS, prog_btf_fd=11, func_info_rec_size=8, func_info=0xc0001bb940, func_info_cnt=1, line_info_rec_size=16, line_info=0xc0001ec600, line_info_cnt=19, attach_btf_id=0, attach_prog_fd=0, fd_array=NULL}, 144) = 13
+2810761 bpf(BPF_BTF_LOAD, {btf="\237\353\1\0\30\0\0\0\0\0\0\0<\0\0\0<\0\0\0\211\0\0\0\0\0\0\0\0\0\0\2"..., btf_log_buf=NULL, btf_size=221, btf_log_size=0, btf_log_level=0}, 32) = 11
+2810761 bpf(BPF_PROG_LOAD, {prog_type=BPF_PROG_TYPE_TRACEPOINT, insn_cnt=9, insns=0xc0001c0320, license="Dual MIT/GPL", log_level=0, log_size=0, log_buf=NULL, kern_version=KERNEL_VERSION(0, 0, 0), prog_flags=0, prog_name="sys_exit_connec", prog_ifindex=0, expected_attach_type=BPF_CGROUP_INET_INGRESS, prog_btf_fd=11, func_info_rec_size=8, func_info=0xc0001bb9c0, func_info_cnt=1, line_info_rec_size=16, line_info=0xc000198400, line_info_cnt=5, attach_btf_id=0, attach_prog_fd=0, fd_array=NULL}, 144) = 14
+2810763 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810761, si_uid=0} ---
+2810763 bpf(BPF_PROG_LOAD, {prog_type=BPF_PROG_TYPE_KPROBE, insn_cnt=2, insns=0xc00021b1a0, license="MIT", log_level=0, log_size=0, log_buf=NULL, kern_version=KERNEL_VERSION(5, 19, 17), prog_flags=0, prog_name="probe_bpf_perf_", prog_ifindex=0, expected_attach_type=BPF_CGROUP_INET_INGRESS, prog_btf_fd=0, func_info_rec_size=0, func_info=NULL, func_info_cnt=0, line_info_rec_size=0, line_info=NULL, line_info_cnt=0, attach_btf_id=0, attach_prog_fd=0, fd_array=NULL}, 144) = 15
+2810763 bpf(BPF_LINK_CREATE, {link_create={prog_fd=15, target_fd=0, attach_type=BPF_PERF_EVENT, flags=0}}, 48) = -1 EBADF (Bad file descriptor)
+2810763 bpf(BPF_LINK_CREATE, {link_create={prog_fd=12, target_fd=11, attach_type=BPF_PERF_EVENT, flags=0}}, 48) = 15
+2810763 bpf(BPF_LINK_CREATE, {link_create={prog_fd=13, target_fd=16, attach_type=BPF_PERF_EVENT, flags=0}}, 48) = 17
+2810763 bpf(BPF_LINK_CREATE, {link_create={prog_fd=13, target_fd=18, attach_type=BPF_PERF_EVENT, flags=0}}, 48) = 19
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=38, key=0xc000226680, value=0xc0002266c0, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=38, key=0xc000226700, value=0xc000226740, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=38, key=0xc000226780, value=0xc0002267c0, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=38, key=0xc000226800, value=0xc000226840, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=38, key=0xc000226880, value=0xc0002268c0, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=38, key=0xc000226900, value=0xc000226940, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=38, key=0xc000226980, value=0xc0002269c0, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=38, key=0xc000226a00, value=0xc000226a40, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=38, key=0xc000226a80, value=0xc000226ac0, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=38, key=0xc000226b00, value=0xc000226b40, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=38, key=0xc000226b80, value=0xc000226bc0, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=38, key=0xc000226c00, value=0xc000226c40, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=38, key=0xc000226c80, value=0xc000226cc0, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=38, key=0xc000226d00, value=0xc000226d40, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=38, key=0xc000226d80, value=0xc000226dc0, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=38, key=0xc000226e00, value=0xc000226e40, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=57, key=0xc000226e80, value=0xc000226ec0, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=57, key=0xc000226f00, value=0xc000226f40, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=57, key=0xc000226f80, value=0xc000226fc0, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=57, key=0xc000227000, value=0xc000227040, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=57, key=0xc000227080, value=0xc0002270c0, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=57, key=0xc000227100, value=0xc000227140, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=57, key=0xc000227180, value=0xc0002271c0, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=57, key=0xc000227200, value=0xc000227240, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=57, key=0xc000227280, value=0xc0002272c0, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=57, key=0xc000227300, value=0xc000227340, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=57, key=0xc000227380, value=0xc0002273c0, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=57, key=0xc000227400, value=0xc000227440, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=57, key=0xc000227480, value=0xc0002274c0, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=57, key=0xc000227500, value=0xc000227540, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=57, key=0xc000227580, value=0xc0002275c0, flags=BPF_ANY}, 32) = 0
+2810763 bpf(BPF_MAP_UPDATE_ELEM, {map_fd=57, key=0xc000227600, value=0xc000227640, flags=BPF_ANY}, 32) = 0
+2810763 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810761, si_uid=0} ---
+2810764 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810761, si_uid=0} ---
+2810764 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810761, si_uid=0} ---
+2810763 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810761, si_uid=0} ---
+2810764 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810761, si_uid=0} ---
+2810763 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810761, si_uid=0} ---
+2810763 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810761, si_uid=0} ---
+2810764 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810761, si_uid=0} ---
+2810763 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810761, si_uid=0} ---
+2810763 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810761, si_uid=0} ---
+2810763 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810761, si_uid=0} ---
+2810763 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810761, si_uid=0} ---
+2810764 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810761, si_uid=0} ---
+2810761 --- SIGINT {si_signo=SIGINT, si_code=SI_KERNEL} ---
+2810761 --- SIGINT {si_signo=SIGINT, si_code=SI_TKILL, si_pid=2810761, si_uid=0} ---
+2810761 --- SIGINT {si_signo=SIGINT, si_code=SI_TKILL, si_pid=2810761, si_uid=0} ---
+2810766 +++ killed by SIGINT +++
+2810765 +++ killed by SIGINT +++
+2810764 +++ killed by SIGINT +++
+2810763 +++ killed by SIGINT +++
+2810762 +++ killed by SIGINT +++
+2810761 +++ killed by SIGINT +++
+2810760 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_KILLED, si_pid=2810761, si_uid=0, si_status=SIGINT, si_utime=0, si_stime=2} ---
+2810760 ioctl(10, TIOCSPGRP, [2810760]) = 0
+2810760 +++ exited with 1 +++
+2810759 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=2810760, si_uid=0, si_status=1, si_utime=0, si_stime=0} ---
+2810759 ioctl(8, TCGETS, {B38400 -opost -isig -icanon -echo ...}) = 0
+2810759 ioctl(8, SNDCTL_TMR_STOP or TCSETSW, {B38400 opost isig icanon echo ...}) = 0
+2810759 ioctl(8, TCGETS, {B38400 opost isig icanon echo ...}) = 0
+2810759 --- SIGINT {si_signo=SIGINT, si_code=SI_USER, si_pid=2810759, si_uid=0} ---
+2810759 +++ killed by SIGINT +++
+2810624 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_KILLED, si_pid=2810759, si_uid=0, si_status=SIGINT, si_utime=0, si_stime=1} ---
+2810624 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810586 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810586 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810586 --- SIGURG {si_signo=SIGURG, si_code=SI_TKILL, si_pid=2810586, si_uid=0} ---
+2810638 +++ exited with 1 +++
+2810637 +++ exited with 1 +++
+2810636 +++ exited with 1 +++
+2810635 +++ exited with 1 +++
+2810634 +++ exited with 1 +++
+2810633 +++ exited with 1 +++
+2810632 +++ exited with 1 +++
+2810631 +++ exited with 1 +++
+2810630 +++ exited with 1 +++
+2810629 +++ exited with 1 +++
+2810628 +++ exited with 1 +++
+2810627 +++ exited with 1 +++
+2810626 +++ exited with 1 +++
+2810625 +++ exited with 1 +++
+2810624 +++ exited with 1 +++
+2810623 +++ exited with 1 +++
+2810622 +++ exited with 1 +++
+2810586 +++ exited with 1 +++

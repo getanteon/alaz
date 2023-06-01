@@ -23,6 +23,8 @@ typedef __u64 __be64;
 typedef __u32 __wsum;
 
 #include "bpf_helpers.h"
+#include "bpf_core_read.h"
+
 
 // TODO: check these
 #define EVENT_TYPE_PROCESS_START	1
@@ -131,39 +133,39 @@ enum {
 #define BPF_F_INDEX_MASK 0xffffffffULL
 #define BPF_F_CURRENT_CPU BPF_F_INDEX_MASK
 
-#if defined(__TARGET_ARCH_x86)
-struct pt_regs {
-	/*
-	 * C ABI says these regs are callee-preserved. They aren't saved on kernel entry
-	 * unless syscall needs a complete, fully filled "struct pt_regs".
-	 */
-	unsigned long r15;
-	unsigned long r14;
-	unsigned long r13;
-	unsigned long r12;
-	unsigned long rbp;
-	unsigned long rbx;
-	/* These regs are callee-clobbered. Always saved on kernel entry. */
-	unsigned long r11;
-	unsigned long r10;
-	unsigned long r9;
-	unsigned long r8;
-	unsigned long rax;
-	unsigned long rcx;
-	unsigned long rdx;
-	unsigned long rsi;
-	unsigned long rdi;
-	/*
-	 * On syscall entry, this is syscall#. On CPU exception, this is error code.
-	 * On hw interrupt, it's IRQ number:
-	 */
-	unsigned long orig_rax;
-	/* Return frame for iretq */
-	unsigned long rip;
-	unsigned long cs;
-	unsigned long eflags;
-	unsigned long rsp;
-	unsigned long ss;
-	/* top of stack page */
-};
-#endif /* __TARGET_ARCH_x86 */
+// #if defined(__TARGET_ARCH_x86)
+// struct pt_regs {
+// 	/*
+// 	 * C ABI says these regs are callee-preserved. They aren't saved on kernel entry
+// 	 * unless syscall needs a complete, fully filled "struct pt_regs".
+// 	 */
+// 	unsigned long r15;
+// 	unsigned long r14;
+// 	unsigned long r13;
+// 	unsigned long r12;
+// 	unsigned long rbp;
+// 	unsigned long rbx;
+// 	/* These regs are callee-clobbered. Always saved on kernel entry. */
+// 	unsigned long r11;
+// 	unsigned long r10;
+// 	unsigned long r9;
+// 	unsigned long r8;
+// 	unsigned long rax;
+// 	unsigned long rcx;
+// 	unsigned long rdx;
+// 	unsigned long rsi;
+// 	unsigned long rdi;
+// 	/*
+// 	 * On syscall entry, this is syscall#. On CPU exception, this is error code.
+// 	 * On hw interrupt, it's IRQ number:
+// 	 */
+// 	unsigned long orig_rax;
+// 	/* Return frame for iretq */
+// 	unsigned long rip;
+// 	unsigned long cs;
+// 	unsigned long eflags;
+// 	unsigned long rsp;
+// 	unsigned long ss;
+// 	/* top of stack page */
+// };
+// #endif /* __TARGET_ARCH_x86 */
