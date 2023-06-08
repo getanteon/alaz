@@ -12,3 +12,19 @@ See "/sys/kernel/debug/tracing/events" to find available tracepoints
 To generate kernel headers files necessary:
     > bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
 
+See a tracepoints format:
+    > cat /sys/kernel/debug/tracing/events/task/task_newtask/format
+
+> Printing examples:
+    // const char *msg = "Pid -> **%d**"; // 12 + specifier (2)
+    // bpf_trace_printk(msg, 14, pid);
+
+    // const char *msg2 = "Source Port: %d\n";
+    // bpf_trace_printk(msg2, 17, args.sport);
+
+    // const char *msg3 = "SAddr: %d\n";
+    // bpf_trace_printk(msg3, 11, e.saddr[0]);
+    // bpf_trace_printk(msg3, 11, e.saddr[1]);
+    // bpf_trace_printk(msg3, 11, e.saddr[2]);
+    // bpf_trace_printk(msg3, 11, e.saddr[3]);
+    // bpf_trace_printk(msg3, 11, e.saddr[4]);
