@@ -50,25 +50,6 @@ struct {
   __uint(max_entries, 32768);
 } connection_timestamps SEC(".maps");
 
-u32 getStringLength(const char *str) {
-  u32 length = 0;
-
-  while (*str != '\0') {
-    length++;
-    str++;
-  }
-
-  return length;
-}
-
-void printByteArray(const unsigned char *array, size_t length) {
-  for (size_t i = 0; i < length; i++) {
-    bpf_trace_printk(
-        "%02x ", 2,
-        array[i]); // Print each byte as a two-digit hexadecimal number
-  }
-}
-
 SEC("tracepoint/sock/inet_sock_set_state")
 int inet_sock_set_state(void *ctx) {
   struct trace_event_raw_inet_sock_set_state args = {};
@@ -170,20 +151,7 @@ int inet_sock_set_state(void *ctx) {
   e.fd = fd;
 
   __builtin_memcpy(&e.saddr, &args.saddr, sizeof(e.saddr));
-  __builtin_memcpy(&e.daddr, &args.saddr, sizeof(e.saddr));
-
-  // const char *msg = "Pid -> **%d**"; // 12 + specifier (2)
-  // bpf_trace_printk(msg, 14, pid);
-
-  // const char *msg2 = "Source Port: %d\n";
-  // bpf_trace_printk(msg2, 17, args.sport);
-
-  // const char *msg3 = "SAddr: %d\n";
-  // bpf_trace_printk(msg3, 11, e.saddr[0]);
-  // bpf_trace_printk(msg3, 11, e.saddr[1]);
-  // bpf_trace_printk(msg3, 11, e.saddr[2]);
-  // bpf_trace_printk(msg3, 11, e.saddr[3]);
-  // bpf_trace_printk(msg3, 11, e.saddr[4]);
+  __builtin_memcpy(&e.daddr, &args.daddr, sizeof(e.saddr));
 
   bpf_perf_event_output(ctx, map, BPF_F_CURRENT_CPU, &e, sizeof(e));
 

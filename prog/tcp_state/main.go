@@ -5,6 +5,7 @@
 package main
 
 import (
+	"alaz/cruntimes"
 	"fmt"
 	"log"
 	"os"
@@ -48,6 +49,9 @@ type tcpEvent struct {
 
 func main() {
 
+	// TODO: remove from here, only for testing
+	go cruntimes.ShowAllContainerd()
+
 	// Allow the current process to lock memory for eBPF resources.
 	if err := rlimit.RemoveMemlock(); err != nil {
 		log.Fatal(err)
@@ -73,7 +77,7 @@ func main() {
 
 	// Read loop reporting the total amount of times the kernel
 	// function was entered, once per second.
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(5 * time.Millisecond)
 	defer ticker.Stop()
 
 	time.Sleep(1 * time.Second)
@@ -142,6 +146,10 @@ func main() {
 
 			bpfEvent := (*tcpEvent)(unsafe.Pointer(&record.RawSample[0]))
 
+			if bpfEvent.Type != 3 {
+				continue
+			}
+
 			log.Printf("--CONNECT EVENT--")
 			log.Printf("fd: %d", bpfEvent.Fd)
 			log.Printf("timestamp: %d", bpfEvent.Timestamp)
@@ -153,6 +161,7 @@ func main() {
 
 			dest := fmt.Sprintf("%d.%d.%d.%d:%d", bpfEvent.DAddr[0], bpfEvent.DAddr[1], bpfEvent.DAddr[2], bpfEvent.DAddr[3], bpfEvent.DPort)
 			log.Printf("dest: %s", dest)
+			log.Println()
 		}
 	}()
 
