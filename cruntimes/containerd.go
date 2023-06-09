@@ -9,6 +9,25 @@ import (
 	"github.com/kylelemons/godebug/pretty"
 )
 
+// io.kubernetes.cri.container-type: "sandbox"
+type Pod struct {
+	PID       uint32
+	Name      string // io.kubernetes.cri.sandbox-name
+	Namespace string // io.kubernetes.cri.sandbox-namespace
+	PodID     string // io.kubernetes.cri.sandbox-id
+	LogDir    string // io.kubernetes.cri.sandbox-log-directory
+}
+
+// io.kubernetes.cri.container-type: "container"
+type ContainerInfo struct {
+	PID       uint32
+	Name      string // io.kubernetes.cri.container-name
+	ImageName string // io.kubernetes.cri.image-name
+	PodID     string // io.kubernetes.cri.sandbox-id
+	PodName   string // io.kubernetes.cri.sandbox-name
+	Namespace string // io.kubernetes.cri.sandbox-namespace
+}
+
 func ShowAllContainerd() {
 	// Connect to the containerd service
 
@@ -31,45 +50,62 @@ func ShowAllContainerd() {
 
 	// Print container information
 	fmt.Println("Running Containers:")
-	// TODO: moby namespace bak ...
-	for _, container := range containers {
 
-		pretty.Print("containerID: %s\n", container.ID())
-		// fmt.Printf("ID: %s\n", container.ID())
+	podInfos := []Pod{}
+	containerInfos := []ContainerInfo{}
+
+	for _, container := range containers {
+		// If HostName is not empty and io.kubernetes.cri.container-type: "sandbox" --> pod
+		// If HostName is empty and io.kubernetes.cri.container-type: "container" --> container
+
+		// id in container runtime
+		// pretty.Print("containerID: %s\n", container.ID())
+
 		task, err := container.Task(context.TODO(), nil)
 		if err != nil {
 			fmt.Println("could not create task", err)
 		} else {
-			pretty.Print(task)
-
 			pid := task.Pid()
-			fmt.Printf("PID: %d\n", pid)
+
+			// fmt.Printf("PID: %d\n", pid)
 			spec, err := task.Spec(context.TODO())
 			if err != nil {
 				fmt.Println("could not get spec")
 			}
 
-			pretty.Print(spec)
+			if spec.Annotations["io.kubernetes.cri.container-type"] == "sandbox" {
+				// Pod
+				p := Pod{
+					PID:       pid,
+					Name:      spec.Hostname,
+					Namespace: spec.Annotations["io.kubernetes.cri.sandbox-namespace"],
+					PodID:     spec.Annotations["io.kubernetes.cri.sandbox-id"],
+					LogDir:    spec.Annotations["io.kubernetes.cri.sandbox-log-directory"],
+				}
+				podInfos = append(podInfos, p)
+			} else if spec.Annotations["io.kubernetes.cri.container-type"] == "container" {
+				// Container
+				c := ContainerInfo{
+					PID:       pid,
+					Name:      spec.Annotations["io.kubernetes.cri.container-name"],
+					ImageName: spec.Annotations["io.kubernetes.cri.image-name"],
+					PodID:     spec.Annotations["io.kubernetes.cri.sandbox-id"],
+					PodName:   spec.Annotations["io.kubernetes.cri.sandbox-name"],
+					Namespace: spec.Annotations["io.kubernetes.cri.sandbox-namespace"],
+				}
+				containerInfos = append(containerInfos, c)
+			} else {
+				fmt.Println("different type of container-type :", spec.Annotations["io.kubernetes.cri.container-type"])
+			}
 
-			// fmt.Println("annotations", spec.Annotations)
-			// fmt.Println("domainName", spec.Domainname)
-			// fmt.Println("hostName", spec.Hostname)
-			// fmt.Println("process", spec.Process)
-			// fmt.Println("process-cmd", spec.Process.CommandLine)
-
+			// pretty.Print(spec)
 		}
-		// c, err := client.ContainerService().Get(ctx, container.ID())
-		// if err != nil {
-		// 	fmt.Println(err)
-		// } else {
-		// 	// fmt.Printf("%+v\n", c)
-		// 	// fmt.Printf("Image: %s\n", c.Image)
-		// }
-		// status, err := container.Status(ctx)
-		// if err != nil {
-		// 	log.Fatal(err)
-		// }
-		// fmt.Printf("Status: %s\n", status.Status)
 		fmt.Println("-------------------")
 	}
+
+	fmt.Println("------------POD_INFOS-------------")
+	pretty.Print(podInfos)
+
+	fmt.Println("------------CONTAINER_INFOS-------------")
+	pretty.Print(containerInfos)
 }
