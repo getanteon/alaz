@@ -6,6 +6,7 @@ package main
 
 import (
 	"alaz/cruntimes"
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/perf"
 	"github.com/cilium/ebpf/rlimit"
+	"github.com/kr/pretty"
 )
 
 // $BPF_CLANG and $BPF_CFLAGS are set by the Makefile.
@@ -50,7 +52,23 @@ type tcpEvent struct {
 func main() {
 
 	// TODO: remove from here, only for testing
-	go cruntimes.ShowAllContainerd()
+	go func() {
+		ct, err := cruntimes.NewContainerdTracker()
+		if err != nil {
+			log.Fatal(err)
+		}
+		ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+		km, err := ct.ListAll(ctx)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println("Running Pods on Node :", len(km.PodMetadatas))
+		pretty.Print(km.PodMetadatas)
+
+		fmt.Println("Running Containers on Node:", len(km.ContainerMetadatas))
+		pretty.Print(km.ContainerMetadatas)
+
+	}()
 
 	// Allow the current process to lock memory for eBPF resources.
 	if err := rlimit.RemoveMemlock(); err != nil {

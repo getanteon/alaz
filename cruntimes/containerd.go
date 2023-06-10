@@ -4,88 +4,101 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/containerd/containerd"
-	"github.com/kylelemons/godebug/pretty"
+	"github.com/containerd/containerd/namespaces"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	cri "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
-// io.kubernetes.cri.container-type: "sandbox"
-type Pod struct {
-	PID       uint32
-	Name      string // io.kubernetes.cri.sandbox-name
-	Namespace string // io.kubernetes.cri.sandbox-namespace
-	PodID     string // io.kubernetes.cri.sandbox-id
-	LogDir    string // io.kubernetes.cri.sandbox-log-directory
+var defaultContainerdSock string = "/run/containerd/containerd.sock"
+var containerTypeContainerdAnnotation string = "io.kubernetes.cri.container-type"
+
+type ContainerdTracker struct {
+	client         *containerd.Client
+	imageCriClient cri.ImageServiceClient
 }
 
-// io.kubernetes.cri.container-type: "container"
-type ContainerInfo struct {
-	PID       uint32
-	Name      string // io.kubernetes.cri.container-name
-	ImageName string // io.kubernetes.cri.image-name
-	PodID     string // io.kubernetes.cri.sandbox-id
-	PodName   string // io.kubernetes.cri.sandbox-name
-	Namespace string // io.kubernetes.cri.sandbox-namespace
-}
+// Direct information from containerd client has more information than
+// getting it from containerd.ContainerService. LogDir, Pid, Volumes...
 
-func ShowAllContainerd() {
+func NewContainerdTracker() (*ContainerdTracker, error) {
+	ct := &ContainerdTracker{}
 	// Connect to the containerd service
+	unixSocket := "unix://" + strings.TrimPrefix(defaultContainerdSock, "unix://")
 
-	client, err := containerd.New("/run/containerd/containerd.sock", containerd.WithDefaultNamespace("k8s.io"))
+	// To list containerd namespaces
+	// > ctr namespaces list
+	// usually k8s.io and moby
+
+	//  containerd.WithDefaultNamespace("k8s.io")
+	client, err := containerd.New(defaultContainerdSock)
 	if err != nil {
-		log.Fatal(err)
+		return ct, err
 	}
-	defer client.Close()
+	ct.client = client
 
-	// // Set the context with the default namespace
-	// ctx := namespaces.WithNamespace(context.Background(),)
-
-	// Get all containers
-	// only running ones I think ?
-	// makine ustundeki containerlari gosterdi, minikube icindekileri gostermedi, deploy edip bide bu socketi mountlamak lazim
-	containers, err := client.Containers(context.Background())
+	conn, err := grpc.Dial(unixSocket, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		log.Fatal(err)
+		if errC := client.Close(); errC != nil {
+			log.Fatal("Closing containerd connection", "error", errC)
+		}
+		log.Fatal("Could not dial grpc containerd socket", err)
 	}
 
-	// Print container information
-	fmt.Println("Running Containers:")
+	ct.imageCriClient = cri.NewImageServiceClient(conn)
+	return ct, nil
+}
 
-	podInfos := []Pod{}
-	containerInfos := []ContainerInfo{}
+func (ct ContainerdTracker) ListAll(ctx context.Context) (KubernetesMetadata, error) {
+	km := KubernetesMetadata{}
 
-	for _, container := range containers {
-		// If HostName is not empty and io.kubernetes.cri.container-type: "sandbox" --> pod
-		// If HostName is empty and io.kubernetes.cri.container-type: "container" --> container
+	nsList, err := ct.client.NamespaceService().List(ctx) // containerd namespaces
+	if err != nil {
+		return km, err
+	}
 
-		// id in container runtime
-		// pretty.Print("containerID: %s\n", container.ID())
+	podInfos := []PodMetadata{}
+	containerInfos := []ContainerMetadata{}
 
-		task, err := container.Task(context.TODO(), nil)
+	for _, ns := range nsList {
+		nsCtx := namespaces.WithNamespace(ctx, ns)
+		// Get all containers in the containerd namespace
+		cts, err := ct.client.Containers(nsCtx)
 		if err != nil {
-			fmt.Println("could not create task", err)
-		} else {
-			pid := task.Pid()
+			return km, err
+		}
 
-			// fmt.Printf("PID: %d\n", pid)
-			spec, err := task.Spec(context.TODO())
+		for _, container := range cts {
+			// Get container spec
+			task, err := container.Task(nsCtx, nil)
 			if err != nil {
-				fmt.Println("could not get spec")
+				// TODO: check error type
+				fmt.Println(" no running task found")
+				continue
 			}
 
-			if spec.Annotations["io.kubernetes.cri.container-type"] == "sandbox" {
-				// Pod
-				p := Pod{
+			pid := task.Pid()
+			spec, err := task.Spec(nsCtx)
+			if err != nil {
+				return km, err
+			}
+
+			if isPod(spec.Annotations) {
+				p := PodMetadata{
 					PID:       pid,
-					Name:      spec.Hostname,
+					Name:      spec.Annotations["io.kubernetes.cri.sandbox-name"],
 					Namespace: spec.Annotations["io.kubernetes.cri.sandbox-namespace"],
 					PodID:     spec.Annotations["io.kubernetes.cri.sandbox-id"],
 					LogDir:    spec.Annotations["io.kubernetes.cri.sandbox-log-directory"],
 				}
 				podInfos = append(podInfos, p)
-			} else if spec.Annotations["io.kubernetes.cri.container-type"] == "container" {
+			} else if isContainer(spec.Annotations) {
 				// Container
-				c := ContainerInfo{
+				c := ContainerMetadata{
 					PID:       pid,
 					Name:      spec.Annotations["io.kubernetes.cri.container-name"],
 					ImageName: spec.Annotations["io.kubernetes.cri.image-name"],
@@ -97,15 +110,18 @@ func ShowAllContainerd() {
 			} else {
 				fmt.Println("different type of container-type :", spec.Annotations["io.kubernetes.cri.container-type"])
 			}
-
-			// pretty.Print(spec)
 		}
-		fmt.Println("-------------------")
 	}
 
-	fmt.Println("------------POD_INFOS-------------")
-	pretty.Print(podInfos)
+	km.ContainerMetadatas = containerInfos
+	km.PodMetadatas = podInfos
 
-	fmt.Println("------------CONTAINER_INFOS-------------")
-	pretty.Print(containerInfos)
+	return km, nil
+}
+
+func isPod(annotations map[string]string) bool {
+	return annotations[containerTypeContainerdAnnotation] == "sandbox"
+}
+func isContainer(annotations map[string]string) bool {
+	return annotations[containerTypeContainerdAnnotation] == "container"
 }
