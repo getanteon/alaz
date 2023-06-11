@@ -16,7 +16,7 @@ import (
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/perf"
 	"github.com/cilium/ebpf/rlimit"
-	"github.com/kr/pretty"
+	"github.com/kylelemons/godebug/pretty"
 )
 
 // $BPF_CLANG and $BPF_CFLAGS are set by the Makefile.

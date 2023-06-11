@@ -38,3 +38,10 @@ See a tracepoints format:
 
 // To get first 50 lines of logs from a pod: 
 > kubectl logs -n ddosify alaz-daemonset-jvkcn | head -n 50
+
+// Build and push to amazon docker hub:
+docker build -t alaz:test1 .
+docker tag alaz:test1 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:test1
+docker push 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:test1
+
+

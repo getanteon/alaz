@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
       - name: alaz
-        image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:test1.1
+        image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:test1.2
         securityContext:
           privileged: true
           runAsUser: 0
