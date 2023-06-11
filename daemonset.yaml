@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: alaz-daemonset
+  namespace: ddosify
+spec:
+  selector:
+    matchLabels:
+      app: alaz
+  template:
+    metadata:
+      labels:
+        app: alaz
+    spec:
+      containers:
+      - name: alaz
+        image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:test1.1
+        securityContext:
+          privileged: true
+          runAsUser: 0
+          capabilities:
+            add:
+              - BPF
+              - PERFMON
+              - NET_ADMIN
+              - SYS_RESOURCE
+        volumeMounts:
+          - mountPath: /sys/kernel/debug
+            name: debugfs
+            readOnly: false
+          - mountPath: /var/run/containerd/containerd.sock
+            name: containerd-sock
+            readOnly: true
+      volumes:
+        - name: debugfs
+          hostPath:
+            path: /sys/kernel/debug
+        - name: containerd-sock
+          hostPath:
+            path: /var/run/containerd/containerd.sock

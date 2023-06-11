@@ -8,16 +8,10 @@
             "name": "Launch Package",
             "type": "go",
             "request": "launch",
-            "mode": "auto",
-            "program": "${fileDirname}",
+            "mode": "exec",
+            "program": "${workspaceFolder}/prog/tcp_state/myapp",
             "console": "integratedTerminal",
             "asRoot": true,
-            // to run as root, you need to add this line
-            // "env": {
-            //     "GOPATH": "/usr/local/go"
-            // }
-
-            // TODO: find options for debugging
         }
     ]
 }

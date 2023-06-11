@@ -28,3 +28,13 @@ See a tracepoints format:
     // bpf_trace_printk(msg3, 11, e.saddr[2]);
     // bpf_trace_printk(msg3, 11, e.saddr[3]);
     // bpf_trace_printk(msg3, 11, e.saddr[4]);
+
+// To debug program in vscode:
+    - First build the program with "go build -o myapp main.go bpf_bpfel.go"
+    -  "mode": "exec",
+        "program": "${workspaceFolder}/prog/tcp_state/myapp",
+        "console": "integratedTerminal",
+        "asRoot": true,
+
+// To get first 50 lines of logs from a pod: 
+> kubectl logs -n ddosify alaz-daemonset-jvkcn | head -n 50
