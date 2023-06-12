@@ -12,9 +12,13 @@ spec:
       labels:
         app: alaz
     spec:
+      serviceAccount: alaz-serviceaccount                                                                                                              │
+      serviceAccountName: alaz-serviceaccount
       containers:
       - name: alaz
-        image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:test1.2
+        image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:v1.2
+        ports:
+          - containerPort: 8199
         securityContext:
           privileged: true
           runAsUser: 0
