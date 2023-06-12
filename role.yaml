@@ -1,7 +1,7 @@
 ---
 # For alaz to keep track of changes in cluster, TODO: ServiceAccount must be different
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
+kind: ClusterRole
 metadata:
   name: alaz-role
   namespace: ddosify
@@ -16,13 +16,13 @@ rules:
   - "*"
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
+kind: ClusterRoleBinding
 metadata:
   name: alaz-role-binding
   namespace: ddosify
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: Role
+  kind: ClusterRole
   name: alaz-role
 subjects:
 - kind: ServiceAccount

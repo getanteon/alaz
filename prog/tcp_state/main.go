@@ -38,19 +38,9 @@ type tcpEvent struct {
 	DPort     uint16
 	SAddr     [16]byte
 	DAddr     [16]byte
-
-	// fd        uint64
-	// timestamp uint64
-	// ty        uint32 // type
-	// pid       uint32
-	// sport     uint16
-	// dport     uint16
-	// saddr     [16]byte
-	// daddr     [16]byte
 }
 
 func main() {
-
 	// TODO: remove from here, only for testing
 	go func() {
 		ct, err := cruntimes.NewContainerdTracker()
