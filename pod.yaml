@@ -1,12 +1,13 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: tcp-state-pod
+  name: k8s-informer-pod
   namespace: ddosify
 spec:
+  serviceAccountName: alaz-serviceaccount   
   containers:
-  - name: tcp-state
-    image: tcp-state:v8
+  - name: k8s-informer
+    image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:k8s-informer
     securityContext:
       privileged: true
       runAsUser: 0
