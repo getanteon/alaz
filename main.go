@@ -1,19 +1,22 @@
 package main
 
 import (
+	"alaz/aggregator"
 	"alaz/cruntimes"
+	"alaz/ebpf"
 	"alaz/k8s"
+	"os"
+
 	"alaz/log"
-	"alaz/prog/tcp_state"
 	"context"
 	"encoding/json"
 	"net/http"
-	"os"
 	"time"
 )
 
 func main() {
 
+	// var k8sCollector *k8s.K8sCollector
 	if os.Getenv("K8S_COLLECTOR_ENABLED") == "true" {
 		// k8s collector
 		k8sCollector, err := k8s.NewK8sCollector()
@@ -46,8 +49,16 @@ func main() {
 
 	log.Logger.Info().Msg("listen on 8199")
 
-	// deploy ebpf collectors
-	go tcp_state.Deploy()
+	// deploy ebpf programs
+	go ebpf.Deploy()
 
-	http.ListenAndServe(":8199", nil)
+	a := aggregator.NewAggregator(nil, nil, ebpf.EbpfEvents)
+	a.Run()
+
+	http.HandleFunc("/service-map", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(a.Advertise())
+	})
+
+	http.ListenAndServe(":8198", nil)
 }

@@ -23,7 +23,7 @@ import (
 const mapKey uint32 = 0
 
 // padding to match the kernel struct
-type tcpEvent struct {
+type TcpEvent struct {
 	// sample_type int32
 	// type_       int32
 	// config      int32
@@ -38,7 +38,19 @@ type tcpEvent struct {
 	DAddr     [16]byte
 }
 
-func Deploy() {
+// for user space
+type TcpConnectEvent struct {
+	Fd        uint64
+	Timestamp uint64
+	Type      uint32
+	Pid       uint32
+	SPort     uint16
+	DPort     uint16
+	SAddr     string
+	DAddr     string
+}
+
+func Deploy(ch chan interface{}) {
 	// Allow the current process to lock memory for eBPF resources.
 	if err := rlimit.RemoveMemlock(); err != nil {
 		log.Logger.Fatal().Err(err).Msg("failed to remove memlock limit")
@@ -110,7 +122,9 @@ func Deploy() {
 				log.Logger.Warn().Msgf("lost %d samples", record.LostSamples)
 			}
 
-			bpfEvent := (*tcpEvent)(unsafe.Pointer(&record.RawSample[0]))
+			bpfEvent := (*TcpEvent)(unsafe.Pointer(&record.RawSample[0]))
+
+			// TODO: send do channel
 
 			log.Logger.Info().
 				Uint32("pid", bpfEvent.Pid).
@@ -131,10 +145,21 @@ func Deploy() {
 				log.Logger.Warn().Msgf("lost %d samples", record.LostSamples)
 			}
 
-			bpfEvent := (*tcpEvent)(unsafe.Pointer(&record.RawSample[0]))
+			bpfEvent := (*TcpEvent)(unsafe.Pointer(&record.RawSample[0]))
 
 			if bpfEvent.Type != 3 {
 				continue
+			}
+
+			ch <- TcpConnectEvent{
+				Pid:       bpfEvent.Pid,
+				Fd:        bpfEvent.Fd,
+				Timestamp: bpfEvent.Timestamp,
+				Type:      bpfEvent.Type, // TODO: 3 is connect event, convert these to string
+				SPort:     bpfEvent.SPort,
+				DPort:     bpfEvent.DPort,
+				SAddr:     fmt.Sprintf("%d.%d.%d.%d", bpfEvent.SAddr[0], bpfEvent.SAddr[1], bpfEvent.SAddr[2], bpfEvent.SAddr[3]),
+				DAddr:     fmt.Sprintf("%d.%d.%d.%d", bpfEvent.DAddr[0], bpfEvent.DAddr[1], bpfEvent.DAddr[2], bpfEvent.DAddr[3]),
 			}
 
 			log.Logger.Info().
@@ -149,6 +174,7 @@ func Deploy() {
 		}
 	}()
 
+	// TODO: remove this
 	select {}
 }
 

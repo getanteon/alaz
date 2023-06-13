@@ -32,6 +32,7 @@ type K8sCollector struct {
 	serviceInformer v1.ServiceInformer
 
 	k8sBigPicture *K8sBigPicture
+	Events        chan interface{}
 }
 
 func (k *K8sCollector) advertiseBigPicture() {
@@ -50,6 +51,7 @@ func (k *K8sCollector) Init() error {
 	k.k8sBigPicture = &K8sBigPicture{
 		NamespaceToResources: make(map[string]K8sNamespaceResources),
 	}
+	k.Events = make(chan interface{}, 100) // TODO: make this configurable
 
 	go k.advertiseBigPicture()
 
@@ -71,13 +73,13 @@ func (k *K8sCollector) Init() error {
 
 	// Add event handlers
 	k.watchers[Pod].AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    getOnAddPodFunc(k.k8sBigPicture),
+		AddFunc:    getOnAddPodFunc(k.k8sBigPicture, k.Events),
 		UpdateFunc: getOnUpdatePodFunc(k.k8sBigPicture),
 		DeleteFunc: getOnDeleteFunc(k.k8sBigPicture),
 	})
 
 	k.watchers[Service].AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    getOnAddServiceFunc(k.k8sBigPicture),
+		AddFunc:    getOnAddServiceFunc(k.k8sBigPicture, k.Events),
 		UpdateFunc: getOnUpdateServiceFunc(k.k8sBigPicture),
 		DeleteFunc: getOnDeleteServiceFunc(k.k8sBigPicture),
 	})
@@ -120,7 +122,14 @@ type K8sBigPicture struct {
 	NamespaceToResources map[string]K8sNamespaceResources `json:"namespaceToResources"` // map[namespace]K8sNamespaceResources
 }
 
-func getOnAddPodFunc(k8sBigPicture *K8sBigPicture) func(interface{}) {
+type K8sResourceMessage struct {
+	ResourceType string      `json:"type"`
+	EventType    string      `json:"eventType"`
+	Object       interface{} `json:"object"` // TODO: make this generic, add converter ?
+}
+
+// TODO: send update and delete events to the channel
+func getOnAddPodFunc(k8sBigPicture *K8sBigPicture, ch chan interface{}) func(interface{}) {
 	return func(obj interface{}) {
 		newPod := obj.(*corev1.Pod)
 		ns := newPod.Namespace
@@ -133,6 +142,12 @@ func getOnAddPodFunc(k8sBigPicture *K8sBigPicture) func(interface{}) {
 		}
 
 		k8sBigPicture.NamespaceToResources[ns].Pods[newPod.Name] = *newPod
+
+		ch <- K8sResourceMessage{
+			ResourceType: Pod,
+			EventType:    "add",
+			Object:       newPod,
+		}
 	}
 }
 
@@ -169,7 +184,7 @@ func getOnDeleteFunc(k8sBigPicture *K8sBigPicture) func(interface{}) {
 	}
 }
 
-func getOnAddServiceFunc(k8sBigPicture *K8sBigPicture) func(interface{}) {
+func getOnAddServiceFunc(k8sBigPicture *K8sBigPicture, ch chan interface{}) func(interface{}) {
 	return func(obj interface{}) {
 		newService := obj.(*corev1.Service)
 		ns := newService.Namespace
@@ -182,6 +197,12 @@ func getOnAddServiceFunc(k8sBigPicture *K8sBigPicture) func(interface{}) {
 		}
 
 		k8sBigPicture.NamespaceToResources[ns].Services[newService.Name] = *newService
+
+		ch <- K8sResourceMessage{
+			ResourceType: Service,
+			EventType:    "add",
+			Object:       newService,
+		}
 	}
 }
 

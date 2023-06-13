@@ -16,7 +16,10 @@ spec:
       serviceAccountName: alaz-serviceaccount
       containers:
       - name: alaz
-        image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:v1.2
+        image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:v1.5
+        env:
+          - name: K8S_COLLECTOR_ENABLED
+            value: "true"
         ports:
           - containerPort: 8199
         securityContext:
