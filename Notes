@@ -45,3 +45,11 @@ docker tag alaz:test1 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:test1
 docker push 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:test1
 
 
+// Compile bpf.c files with clang and llvm
+// TODO: create our own ebpf-builder image
+> clang \
+    -target bpf \
+        -D __TARGET_ARCH_x86 \
+    -Wall \
+    -O2 -g -o hello-buffer-config.bpf.o -c kprobe.c
+> llvm-strip -g hello-buffer-config.bpf.o (strip executable from debugging symbols)
