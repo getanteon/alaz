@@ -5,7 +5,7 @@ go 1.18
 require (
 	github.com/cilium/ebpf v0.10.0
 	github.com/containerd/containerd v1.7.2
-	github.com/kylelemons/godebug v1.1.0
+	github.com/rs/zerolog v1.29.1
 	google.golang.org/grpc v1.53.0
 	k8s.io/api v0.26.2
 	k8s.io/apimachinery v0.26.2
@@ -44,6 +44,8 @@ require (
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/compress v1.16.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
+	github.com/mattn/go-colorable v0.1.12 // indirect
+	github.com/mattn/go-isatty v0.0.14 // indirect
 	github.com/moby/locker v1.0.1 // indirect
 	github.com/moby/sys/mountinfo v0.6.2 // indirect
 	github.com/moby/sys/sequential v0.5.0 // indirect

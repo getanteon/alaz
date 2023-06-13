@@ -6,10 +6,11 @@ package tcp_state
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"time"
 	"unsafe"
+
+	"alaz/log"
 
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/perf"
@@ -40,13 +41,13 @@ type tcpEvent struct {
 func Deploy() {
 	// Allow the current process to lock memory for eBPF resources.
 	if err := rlimit.RemoveMemlock(); err != nil {
-		log.Fatal(err)
+		log.Logger.Fatal().Err(err).Msg("failed to remove memlock limit")
 	}
 
 	// Load pre-compiled programs and maps into the kernel.
 	objs := bpfObjects{}
 	if err := loadBpfObjects(&objs, nil); err != nil {
-		log.Fatalf("loading objects: %v", err)
+		log.Logger.Fatal().Err(err).Msg("loading objects")
 	}
 	defer objs.Close()
 
@@ -70,52 +71,52 @@ func Deploy() {
 
 	l, err := link.Tracepoint("sock", "inet_sock_set_state", objs.bpfPrograms.InetSockSetState, nil)
 	if err != nil {
-		log.Fatalf("link inet_sock_set_state tracepoint: %s", err)
+		log.Logger.Fatal().Err(err).Msg("link inet_sock_set_state tracepoint")
 	}
 	defer l.Close()
 
 	l1, err := link.Tracepoint("syscalls", "sys_enter_connect", objs.bpfPrograms.SysEnterConnect, nil)
 	if err != nil {
-		log.Fatalf("link sys_enter_connect tracepoint: %s", err)
+		log.Logger.Fatal().Err(err).Msg("link sys_enter_connect tracepoint")
 	}
 	defer l1.Close()
 
 	l2, err := link.Tracepoint("syscalls", "sys_exit_connect", objs.bpfPrograms.SysEnterConnect, nil)
 	if err != nil {
-		log.Fatalf("link sys_exit_connect tracepoint: %s", err)
+		log.Logger.Fatal().Err(err).Msg("link sys_exit_connect tracepoint")
 	}
 	defer l2.Close()
 
 	// initialize perf event readers
 	tcpListenEvents, err := perf.NewReader(objs.TcpListenEvents, 64*os.Getpagesize())
 	if err != nil {
-		log.Fatalf("error creating perf event array reader: %w", err)
+		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
 	}
 	tcpConnectEvents, err := perf.NewReader(objs.TcpConnectEvents, 64*os.Getpagesize())
 	if err != nil {
-		log.Fatalf("error creating perf event array reader: %w", err)
+		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
 	}
 
 	go listenDebugMsgs()
-	log.Println("Waiting for events..")
 
 	go func() {
 		for range ticker.C {
 			record, err := tcpListenEvents.Read()
 			if err != nil {
-				log.Fatalf("error reading from perf array: %w", err)
+				log.Logger.Warn().Err(err).Msg("error reading from perf array")
 			}
 
 			if record.LostSamples != 0 {
-				log.Printf("lost %d samples", record.LostSamples)
+				log.Logger.Warn().Msgf("lost %d samples", record.LostSamples)
 			}
 
 			bpfEvent := (*tcpEvent)(unsafe.Pointer(&record.RawSample[0]))
 
-			log.Printf("--LISTEN EVENT--")
-			log.Printf("pid:%d", bpfEvent.Pid)
-			log.Printf("sport:%d", bpfEvent.SPort)
-			log.Printf("dport:%d", bpfEvent.DPort)
+			log.Logger.Info().
+				Uint32("pid", bpfEvent.Pid).
+				Uint16("sport", bpfEvent.SPort).
+				Uint16("dport", bpfEvent.DPort).
+				Msg("listen event")
 		}
 	}()
 
@@ -123,11 +124,11 @@ func Deploy() {
 		for range ticker.C {
 			record, err := tcpConnectEvents.Read()
 			if err != nil {
-				log.Fatalf("error reading from perf array: %w", err)
+				log.Logger.Warn().Err(err).Msg("error reading from perf array")
 			}
 
 			if record.LostSamples != 0 {
-				log.Printf("lost %d samples", record.LostSamples)
+				log.Logger.Warn().Msgf("lost %d samples", record.LostSamples)
 			}
 
 			bpfEvent := (*tcpEvent)(unsafe.Pointer(&record.RawSample[0]))
@@ -136,18 +137,15 @@ func Deploy() {
 				continue
 			}
 
-			log.Printf("--CONNECT EVENT--")
-			log.Printf("fd: %d", bpfEvent.Fd)
-			log.Printf("timestamp: %d", bpfEvent.Timestamp)
-			log.Printf("type: %d", bpfEvent.Type)
-
-			log.Printf("pid: %d", bpfEvent.Pid)
-			source := fmt.Sprintf("%d.%d.%d.%d:%d", bpfEvent.SAddr[0], bpfEvent.SAddr[1], bpfEvent.SAddr[2], bpfEvent.SAddr[3], bpfEvent.SPort)
-			log.Printf("source: %s", source)
-
-			dest := fmt.Sprintf("%d.%d.%d.%d:%d", bpfEvent.DAddr[0], bpfEvent.DAddr[1], bpfEvent.DAddr[2], bpfEvent.DAddr[3], bpfEvent.DPort)
-			log.Printf("dest: %s", dest)
-			log.Println()
+			log.Logger.Info().
+				Uint32("pid", bpfEvent.Pid).
+				Uint64("fd", bpfEvent.Fd).
+				Uint64("timestamp", bpfEvent.Timestamp).
+				Uint16("sport", bpfEvent.SPort).
+				Uint16("dport", bpfEvent.DPort).
+				Str("saddr", fmt.Sprintf("%d.%d.%d.%d", bpfEvent.SAddr[0], bpfEvent.SAddr[1], bpfEvent.SAddr[2], bpfEvent.SAddr[3])).
+				Str("daddr", fmt.Sprintf("%d.%d.%d.%d", bpfEvent.DAddr[0], bpfEvent.DAddr[1], bpfEvent.DAddr[2], bpfEvent.DAddr[3])).
+				Msg("connect event")
 		}
 	}()
 
@@ -162,7 +160,7 @@ func listenDebugMsgs() {
 
 	fd, err := os.Open(printsPath)
 	if err != nil {
-		log.Fatal(err)
+		log.Logger.Warn().Err(err).Msg("error opening trace_pipe")
 	}
 	defer fd.Close()
 
@@ -170,8 +168,8 @@ func listenDebugMsgs() {
 	for range ticker.C {
 		n, err := fd.Read(buf)
 		if err != nil {
-			log.Fatal(err)
+			log.Logger.Error().Err(err).Msg("error reading from trace_pipe")
 		}
-		log.Printf("read %d bytes: %s\n", n, buf[:n])
+		log.Logger.Info().Msgf("read %d bytes: %s\n", n, buf[:n])
 	}
 }

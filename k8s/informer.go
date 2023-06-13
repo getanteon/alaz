@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 
+	"alaz/log"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/informers"
@@ -43,7 +45,7 @@ func (k *K8sCollector) advertiseBigPicture() {
 }
 
 func (k *K8sCollector) Init() error {
-	fmt.Println("k8sCollector initializing...")
+	log.Logger.Info().Msg("k8sCollector initializing...")
 	// stop signal for the informer
 	k.k8sBigPicture = &K8sBigPicture{
 		NamespaceToResources: make(map[string]K8sNamespaceResources),

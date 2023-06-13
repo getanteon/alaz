@@ -3,32 +3,35 @@ package main
 import (
 	"alaz/cruntimes"
 	"alaz/k8s"
+	"alaz/log"
 	"alaz/prog/tcp_state"
 	"context"
 	"encoding/json"
-	"fmt"
-	"log"
 	"net/http"
+	"os"
 	"time"
 )
 
 func main() {
-	// k8s collector
-	k8sCollector, err := k8s.NewK8sCollector()
-	if err != nil {
-		panic(err)
+
+	if os.Getenv("K8S_COLLECTOR_ENABLED") == "true" {
+		// k8s collector
+		k8sCollector, err := k8s.NewK8sCollector()
+		if err != nil {
+			panic(err)
+		}
+		go k8sCollector.Init()
 	}
-	go k8sCollector.Init()
 
 	// container runtime collector
 	ct, err := cruntimes.NewContainerdTracker()
 	if err != nil {
-		log.Fatal(err)
+		log.Logger.Fatal().Err(err).Msg("failed to create containerd tracker")
 	}
 	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
 	km, err := ct.ListAll(ctx)
 	if err != nil {
-		log.Fatal(err)
+		log.Logger.Fatal().Err(err).Msg("failed to get containerd metadata")
 	}
 
 	http.HandleFunc("/cr-pods", func(w http.ResponseWriter, r *http.Request) {
@@ -41,7 +44,7 @@ func main() {
 		json.NewEncoder(w).Encode(km.ContainerMetadatas)
 	})
 
-	fmt.Println("listen on 8199")
+	log.Logger.Info().Msg("listen on 8199")
 
 	// deploy ebpf collectors
 	go tcp_state.Deploy()
