@@ -124,7 +124,7 @@ func Deploy(ch chan interface{}) {
 
 			bpfEvent := (*TcpEvent)(unsafe.Pointer(&record.RawSample[0]))
 
-			// TODO: send do channel
+			// TODO: send do channelt
 
 			log.Logger.Info().
 				Uint32("pid", bpfEvent.Pid).

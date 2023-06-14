@@ -1,15 +1,18 @@
-// go:build ignore
-
+#include "../../headers/bpf.h"
 #include "../../headers/common.h"
+#include "../../headers/tcp.h"
+
+#include <bpf/bpf_core_read.h>
+#include <bpf/bpf_helper_defs.h>
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
-struct bpf_map_def SEC("maps") output2 = {
-    .type = BPF_MAP_TYPE_PERF_EVENT_ARRAY,
-    .key_size = 0,
-    .value_size = 0,
-    .max_entries = 4096, // TODO: why 4096?
-};
+struct {
+  __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
+  __uint(key_size, 0);
+  __uint(value_size, 0);
+  __uint(max_entries,4096);
+} output2 SEC(".maps");
 
 // struct {
 //   __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);

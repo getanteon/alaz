@@ -1,5 +1,10 @@
+#include "../../headers/bpf.h"
 #include "../../headers/common.h"
-#include "../../headers/vmlinux.h"
+#include "../../headers/tcp.h"
+
+#include <bpf/bpf_core_read.h>
+#include <bpf/bpf_helper_defs.h>
+
 char __license[] SEC("license") = "Dual MIT/GPL";
 
 struct tcp_event {

@@ -1,15 +1,16 @@
-// +build !exclude
-
 #include "../../headers/common.h"
+#include "../../headers/bpf.h"
+#include <bpf/bpf_core_read.h>
+#include <bpf/bpf_helper_defs.h>
+#include "../../headers/tcp.h"
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
-struct bpf_map_def SEC("maps") counter_table = {
-    .type = BPF_MAP_TYPE_HASH,
-    .key_size = sizeof(u64),
-    .value_size = sizeof(u64),
-    .max_entries = 10240,
-};
+struct {
+  __uint(type, BPF_MAP_TYPE_HASH);
+  __uint(key_size,  sizeof(u64));
+  __uint(value_size, sizeof(u64));
+} counter_table SEC(".maps");
 
 SEC("kprobe/hello")
 int hello(void *ctx) {

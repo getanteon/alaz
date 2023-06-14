@@ -17,8 +17,8 @@ UIDGID := $(shell stat -c '%u:%g' ${REPODIR})
 CONTAINER_ENGINE ?= $(if $(shell command -v podman), podman, docker)
 CONTAINER_RUN_ARGS ?= $(if $(filter ${CONTAINER_ENGINE}, podman), --log-driver=none, --user "${UIDGID}")
 
-IMAGE := ghcr.io/cilium/ebpf-builder
-VERSION := 1666886595
+IMAGE := ebpf-builder
+VERSION := v1
 
 # clang <8 doesn't tag relocs properly (STT_NOTYPE)
 # clang 9 is the first version emitting BTF
@@ -45,11 +45,7 @@ container-shell:
 		"${IMAGE}:${VERSION}"
 
 
-format:
-	@echo "Running command format"
-	find . -type f -name "*.c" | xargs clang-format -i
-
-all: format $(addsuffix -el.elf,$(TARGETS)) $(addsuffix -eb.elf,$(TARGETS)) generate
+all: generate
 
 # $BPF_CLANG is used in go:generate invocations.
 generate: export BPF_CLANG := $(CLANG)

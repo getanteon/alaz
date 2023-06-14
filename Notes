@@ -9,6 +9,8 @@ To see bpf calls with strace:
 
 See "/sys/kernel/debug/tracing/events" to find available tracepoints
 
+> cat /sys/kernel/debug/tracing/events/sock/inet_sock_set_state/format
+
 To generate kernel headers files necessary:
     > bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
 
@@ -53,3 +55,6 @@ docker push 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:test1
     -Wall \
     -O2 -g -o hello-buffer-config.bpf.o -c kprobe.c
 > llvm-strip -g hello-buffer-config.bpf.o (strip executable from debugging symbols)
+
+
+BPF_CLANG=clang-14 BPF_CFLAGS="-O2 -g -Wall -Werror -D__TARGET_ARCH_x86"  go generate ./...
