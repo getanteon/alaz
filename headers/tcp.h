@@ -19,3 +19,27 @@ struct trace_event_raw_inet_sock_set_state {
 	__u8 daddr_v6[16];
 	char __data[0];
 };
+
+typedef unsigned short int sa_family_t;
+
+struct sockaddr
+{
+  sa_family_t sa_family;
+  char sa_data[14];
+};
+
+struct trace_event_sys_enter_connect
+{
+  struct trace_entry ent;
+  int __syscall_nr;
+  long unsigned int fd;
+  struct sockaddr *uservaddr;
+  long unsigned int addrlen;
+};
+
+
+#define EVENT_TCP_ESTABLISHED	1
+#define EVENT_TCP_CONNECT_FAILED		2
+#define EVENT_TCP_LISTEN	3
+#define EVENT_TCP_LISTEN_CLOSED	4
+#define EVENT_TCP_CLOSED	5

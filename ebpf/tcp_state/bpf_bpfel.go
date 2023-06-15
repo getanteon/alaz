@@ -63,11 +63,10 @@ type bpfProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfMapSpecs struct {
-	ConnectionTimestamps *ebpf.MapSpec `ebpf:"connection_timestamps"`
-	FdByPidTgid          *ebpf.MapSpec `ebpf:"fd_by_pid_tgid"`
-	SkInfo               *ebpf.MapSpec `ebpf:"sk_info"`
-	TcpConnectEvents     *ebpf.MapSpec `ebpf:"tcp_connect_events"`
-	TcpListenEvents      *ebpf.MapSpec `ebpf:"tcp_listen_events"`
+	FdByPidTgid      *ebpf.MapSpec `ebpf:"fd_by_pid_tgid"`
+	SockMap          *ebpf.MapSpec `ebpf:"sock_map"`
+	TcpConnectEvents *ebpf.MapSpec `ebpf:"tcp_connect_events"`
+	TcpListenEvents  *ebpf.MapSpec `ebpf:"tcp_listen_events"`
 }
 
 // bpfObjects contains all objects after they have been loaded into the kernel.
@@ -89,18 +88,16 @@ func (o *bpfObjects) Close() error {
 //
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfMaps struct {
-	ConnectionTimestamps *ebpf.Map `ebpf:"connection_timestamps"`
-	FdByPidTgid          *ebpf.Map `ebpf:"fd_by_pid_tgid"`
-	SkInfo               *ebpf.Map `ebpf:"sk_info"`
-	TcpConnectEvents     *ebpf.Map `ebpf:"tcp_connect_events"`
-	TcpListenEvents      *ebpf.Map `ebpf:"tcp_listen_events"`
+	FdByPidTgid      *ebpf.Map `ebpf:"fd_by_pid_tgid"`
+	SockMap          *ebpf.Map `ebpf:"sock_map"`
+	TcpConnectEvents *ebpf.Map `ebpf:"tcp_connect_events"`
+	TcpListenEvents  *ebpf.Map `ebpf:"tcp_listen_events"`
 }
 
 func (m *bpfMaps) Close() error {
 	return _BpfClose(
-		m.ConnectionTimestamps,
 		m.FdByPidTgid,
-		m.SkInfo,
+		m.SockMap,
 		m.TcpConnectEvents,
 		m.TcpListenEvents,
 	)

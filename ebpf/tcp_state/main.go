@@ -17,6 +17,36 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 )
 
+const (
+	EVENT_TCP_ESTABLISHED = iota + 1
+	EVENT_TCP_CONNECT_FAILED
+	EVENT_TCP_LISTEN
+	EVENT_TCP_LISTEN_CLOSED
+	EVENT_TCP_CLOSED
+)
+
+// Custom type for the enumeration
+type TcpStateConversion uint32
+
+// String representation of the enumeration values
+func (e TcpStateConversion) String() string {
+	switch e {
+	case EVENT_TCP_ESTABLISHED:
+		return "EVENT_TCP_ESTABLISHED"
+	case EVENT_TCP_CONNECT_FAILED:
+		return "EVENT_TCP_CONNECT_FAILED"
+	case EVENT_TCP_LISTEN:
+		return "EVENT_TCP_LISTEN"
+	case EVENT_TCP_LISTEN_CLOSED:
+		return "EVENT_TCP_LISTEN_CLOSED"
+	case EVENT_TCP_CLOSED:
+		return "EVENT_TCP_CLOSED"
+	default:
+		return "Unknown"
+	}
+}
+
+
 // $BPF_CLANG and $BPF_CFLAGS are set by the Makefile.
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc $BPF_CLANG -cflags $BPF_CFLAGS bpf kprobe.c -- -I../headers
 
@@ -42,7 +72,7 @@ type TcpEvent struct {
 type TcpConnectEvent struct {
 	Fd        uint64
 	Timestamp uint64
-	Type      uint32
+	Type      string
 	Pid       uint32
 	SPort     uint16
 	DPort     uint16
@@ -147,15 +177,11 @@ func Deploy(ch chan interface{}) {
 
 			bpfEvent := (*TcpEvent)(unsafe.Pointer(&record.RawSample[0]))
 
-			if bpfEvent.Type != 3 {
-				continue
-			}
-
 			ch <- TcpConnectEvent{
 				Pid:       bpfEvent.Pid,
 				Fd:        bpfEvent.Fd,
 				Timestamp: bpfEvent.Timestamp,
-				Type:      bpfEvent.Type, // TODO: 3 is connect event, convert these to string
+				Type:      TcpStateConversion(bpfEvent.Type).String(), // TODO: 3 is connect event, convert these to string
 				SPort:     bpfEvent.SPort,
 				DPort:     bpfEvent.DPort,
 				SAddr:     fmt.Sprintf("%d.%d.%d.%d", bpfEvent.SAddr[0], bpfEvent.SAddr[1], bpfEvent.SAddr[2], bpfEvent.SAddr[3]),
@@ -163,6 +189,7 @@ func Deploy(ch chan interface{}) {
 			}
 
 			log.Logger.Info().
+				Str("event_type", TcpStateConversion(bpfEvent.Type).String()).
 				Uint32("pid", bpfEvent.Pid).
 				Uint64("fd", bpfEvent.Fd).
 				Uint64("timestamp", bpfEvent.Timestamp).

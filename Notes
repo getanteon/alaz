@@ -4,6 +4,9 @@ When debugging, bpf_trace_printk's "fmt_size" is important. Otherwise, you can g
     load program: permission denied: invalid access to map value, value_size=31 off=14 size=20: R1 min value is outside of the allowed memory range (228 line(s) omitted)
 
 
+ // const char *msg = "established";
+      // bpf_trace_printk(msg, 12);
+
 To see bpf calls with strace: 
     sudo strace -o calls.txt  -f -e trace=bpf,ioctl go run -exec sudo main.go bpf_bpfel.go
 
@@ -58,3 +61,12 @@ docker push 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:test1
 
 
 BPF_CLANG=clang-14 BPF_CFLAGS="-O2 -g -Wall -Werror -D__TARGET_ARCH_x86"  go generate ./...
+
+// To see available tracepoints:
+> cat /sys/kernel/tracing/available_events (SEC definition bunlarla match ediyor)
+
+// How to take arguments of a function attached to a tracepoint:
+ 1) Look at the format from :
+    > cat /sys/kernel/debug/tracing/events/sock/inet_sock_set_state/format
+ 2) search corresponding struct in vmlinux.h file, if exists copy into your headers
+    If not, create your own struct, be careful with paddings

@@ -1,0 +1,7 @@
+Use following command for man pages for syscalls:
+> man 2 <syscall>
+
+// Libbpf docs
+https://libbpf.readthedocs.io/en/latest/
+
+// In <bpf/bpf_tracing.h>, there is macros that are helpful while declaring funcs, getting params. Ex: BPF_KPROBE
