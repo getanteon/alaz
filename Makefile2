@@ -1,0 +1,20 @@
+# Makefile
+
+IMAGE_NAME := alaz
+TAG := latest
+REGISTRY := 158138719754.dkr.ecr.eu-central-2.amazonaws.com
+
+.PHONY: build
+build:
+	docker build -t $(IMAGE_NAME):$(TAG) .
+
+.PHONY: tag
+tag:
+	docker tag $(IMAGE_NAME) $(REGISTRY)/$(IMAGE_NAME):$(TAG)
+
+.PHONY: push
+push:
+	docker push $(REGISTRY)/$(IMAGE_NAME):$(TAG)
+
+.PHONY: all
+all: build tag push

@@ -68,5 +68,39 @@ BPF_CLANG=clang-14 BPF_CFLAGS="-O2 -g -Wall -Werror -D__TARGET_ARCH_x86"  go gen
 // How to take arguments of a function attached to a tracepoint:
  1) Look at the format from :
     > cat /sys/kernel/debug/tracing/events/sock/inet_sock_set_state/format
+    or
+    > use bcc's tplife tool: 
+        > sudo tplist-bpfcc -v | grep inet_sock_set_state -A 20
  2) search corresponding struct in vmlinux.h file, if exists copy into your headers
     If not, create your own struct, be careful with paddings
+
+cat /sys/kernel/debug/tracing/events/syscalls/sys_enter_connect/format
+
+// Look for syscall:
+> man 2 connect
+    int connect(int sockfd, const struct sockaddr *addr,
+                   socklen_t addrlen);
+
+// Look format of the tracepoint:
+> cat /sys/kernel/debug/tracing/events/syscalls/sys_enter_connect/format
+    name: sys_enter_connect
+ID: 1473
+format:
+        field:unsigned short common_type;       offset:0;       size:2; signed:0;
+        field:unsigned char common_flags;       offset:2;       size:1; signed:0;
+        field:unsigned char common_preempt_count;       offset:3;       size:1; signed:0;
+        field:int common_pid;   offset:4;       size:4; signed:1;
+
+        field:int __syscall_nr; offset:8;       size:4; signed:1;
+        field:int fd;   offset:16;      size:8; signed:0;
+        field:struct sockaddr * uservaddr;      offset:24;      size:8; signed:0;
+        field:int addrlen;      offset:32;      size:8; signed:0;
+
+print fmt: "fd: 0x%08lx, uservaddr: 0x%08lx, addrlen: 0x%08lx", ((unsigned long)(REC->fd)), ((unsigned long)(REC->uservaddr)), ((unsigned long)(REC->addrlen))
+args should be the same as in the format
+
+
+Address Families : AF_INET, AF_INET6, AF_PACKET, AF_UNIX, AF_XDP
+Protocol Families : PF_INET, PF_INET6, PF_PACKET, PF_UNIX, PF_XDP
+Transport Protocols : IPPROTO_UDP or IPPROTO_TCP
+Sock Types : SOCK_STREAM, SOCK_DGRAM, or SOCK_RAW.

@@ -5,6 +5,7 @@ go 1.18
 require (
 	github.com/cilium/ebpf v0.10.0
 	github.com/containerd/containerd v1.7.2
+	github.com/emicklei/dot v1.4.2
 	github.com/rs/zerolog v1.29.1
 	google.golang.org/grpc v1.53.0
 	k8s.io/api v0.26.2

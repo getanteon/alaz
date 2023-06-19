@@ -23,8 +23,8 @@ spec:
         ports:
           - containerPort: 8199
         securityContext:
-          privileged: true
-          runAsUser: 0
+          # privileged: true
+          # runAsUser: 0
           capabilities:
             add:
               - BPF

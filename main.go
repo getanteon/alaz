@@ -15,11 +15,11 @@ import (
 )
 
 func main() {
-
-	// var k8sCollector *k8s.K8sCollector
+	var k8sCollector *k8s.K8sCollector
 	if os.Getenv("K8S_COLLECTOR_ENABLED") == "true" {
 		// k8s collector
-		k8sCollector, err := k8s.NewK8sCollector()
+		var err error
+		k8sCollector, err = k8s.NewK8sCollector()
 		if err != nil {
 			panic(err)
 		}
@@ -52,7 +52,7 @@ func main() {
 	// deploy ebpf programs
 	go ebpf.Deploy()
 
-	a := aggregator.NewAggregator(nil, nil, ebpf.EbpfEvents)
+	a := aggregator.NewAggregator(k8sCollector.Events, nil, ebpf.EbpfEvents)
 	a.Run()
 
 	http.HandleFunc("/service-map", func(w http.ResponseWriter, r *http.Request) {

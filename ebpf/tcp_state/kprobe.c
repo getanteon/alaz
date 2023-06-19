@@ -78,7 +78,7 @@ int inet_sock_set_state(void *ctx)
   }
 
   // if not tcp protocol, ignore
-  if (BPF_CORE_READ(&args, protocol) != IPPROTO_TCP)
+if (BPF_CORE_READ(&args, protocol) != IPPROTO_TCP)
   {
     return 0;
   }

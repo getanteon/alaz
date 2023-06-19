@@ -46,7 +46,6 @@ func (e TcpStateConversion) String() string {
 	}
 }
 
-
 // $BPF_CLANG and $BPF_CFLAGS are set by the Makefile.
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc $BPF_CLANG -cflags $BPF_CFLAGS bpf kprobe.c -- -I../headers
 
@@ -188,16 +187,16 @@ func Deploy(ch chan interface{}) {
 				DAddr:     fmt.Sprintf("%d.%d.%d.%d", bpfEvent.DAddr[0], bpfEvent.DAddr[1], bpfEvent.DAddr[2], bpfEvent.DAddr[3]),
 			}
 
-			log.Logger.Info().
-				Str("event_type", TcpStateConversion(bpfEvent.Type).String()).
-				Uint32("pid", bpfEvent.Pid).
-				Uint64("fd", bpfEvent.Fd).
-				Uint64("timestamp", bpfEvent.Timestamp).
-				Uint16("sport", bpfEvent.SPort).
-				Uint16("dport", bpfEvent.DPort).
-				Str("saddr", fmt.Sprintf("%d.%d.%d.%d", bpfEvent.SAddr[0], bpfEvent.SAddr[1], bpfEvent.SAddr[2], bpfEvent.SAddr[3])).
-				Str("daddr", fmt.Sprintf("%d.%d.%d.%d", bpfEvent.DAddr[0], bpfEvent.DAddr[1], bpfEvent.DAddr[2], bpfEvent.DAddr[3])).
-				Msg("connect event")
+			// log.Logger.Info().
+			// 	Str("event_type", TcpStateConversion(bpfEvent.Type).String()).
+			// 	Uint32("pid", bpfEvent.Pid).
+			// 	Uint64("fd", bpfEvent.Fd).
+			// 	Uint64("timestamp", bpfEvent.Timestamp).
+			// 	Uint16("sport", bpfEvent.SPort).
+			// 	Uint16("dport", bpfEvent.DPort).
+			// 	Str("saddr", fmt.Sprintf("%d.%d.%d.%d", bpfEvent.SAddr[0], bpfEvent.SAddr[1], bpfEvent.SAddr[2], bpfEvent.SAddr[3])).
+			// 	Str("daddr", fmt.Sprintf("%d.%d.%d.%d", bpfEvent.DAddr[0], bpfEvent.DAddr[1], bpfEvent.DAddr[2], bpfEvent.DAddr[3])).
+			// 	Msg("connect event")
 		}
 	}()
 
