@@ -16,7 +16,7 @@ spec:
       serviceAccountName: alaz-serviceaccount
       containers:
       - name: alaz
-        image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:v1.5
+        image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:v1.6
         env:
           - name: K8S_COLLECTOR_ENABLED
             value: "true"
@@ -26,7 +26,6 @@ spec:
             value: "true"
           - name: IN_CLUSTER
             value: "true"
-          // TODO: configs for postgres of selfhosted
           - name: POSTGRES_HOST
             value: "postgres-service.ddosify"
           - name: POSTGRES_PORT

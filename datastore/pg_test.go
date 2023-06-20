@@ -30,7 +30,7 @@ func TestCreatePod(t *testing.T) {
 
 }
 
-func TestCreateService(t *testing.T) {
+func TestCreateUpdateService(t *testing.T) {
 	repo := NewRepository(config.PostgresConfig{
 		Host:     "localhost",
 		Port:     "5432",
@@ -53,4 +53,10 @@ func TestCreateService(t *testing.T) {
 		t.Errorf("Error creating service: %v", err)
 	}
 
+	// update service
+	svc.Type = "type2"
+	err = repo.UpdateService(svc)
+	if err != nil {
+		t.Errorf("Error updating service: %v", err)
+	}
 }

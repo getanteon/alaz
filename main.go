@@ -41,12 +41,6 @@ func main() {
 	a.Run()
 
 	log.Logger.Info().Msg("listen on 8181")
-
-	http.HandleFunc("/service-map", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(a.Advertise())
-	})
-
 	http.ListenAndServe(":8181", nil)
 }
 

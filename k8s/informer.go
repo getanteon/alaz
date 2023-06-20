@@ -24,8 +24,14 @@ import (
 type K8SResourceType string
 
 const (
-	Service = "Service"
-	Pod     = "Pod"
+	SERVICE = "Service"
+	POD     = "Pod"
+)
+
+const (
+	ADD    = "Add"
+	UPDATE = "Update"
+	DELETE = "Delete"
 )
 
 type K8sCollector struct {
@@ -68,25 +74,25 @@ func (k *K8sCollector) Init(events chan interface{}) error {
 
 	// Pod
 	k.podInformer = k.informersFactory.Core().V1().Pods()
-	k.watchers[Pod] = k.podInformer.Informer()
+	k.watchers[POD] = k.podInformer.Informer()
 
 	// Service
 	k.serviceInformer = k.informersFactory.Core().V1().Services()
-	k.watchers[Service] = k.informersFactory.Core().V1().Services().Informer()
+	k.watchers[SERVICE] = k.informersFactory.Core().V1().Services().Informer()
 
 	defer runtime.HandleCrash()
 
 	// Add event handlers
-	k.watchers[Pod].AddEventHandler(cache.ResourceEventHandlerFuncs{
+	k.watchers[POD].AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    getOnAddPodFunc(k.k8sBigPicture, k.Events),
-		UpdateFunc: getOnUpdatePodFunc(k.k8sBigPicture),
-		DeleteFunc: getOnDeleteFunc(k.k8sBigPicture),
+		UpdateFunc: getOnUpdatePodFunc(k.k8sBigPicture, k.Events),
+		DeleteFunc: getOnDeletePodFunc(k.k8sBigPicture, k.Events),
 	})
 
-	k.watchers[Service].AddEventHandler(cache.ResourceEventHandlerFuncs{
+	k.watchers[SERVICE].AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    getOnAddServiceFunc(k.k8sBigPicture, k.Events),
-		UpdateFunc: getOnUpdateServiceFunc(k.k8sBigPicture),
-		DeleteFunc: getOnDeleteServiceFunc(k.k8sBigPicture),
+		UpdateFunc: getOnUpdateServiceFunc(k.k8sBigPicture, k.Events),
+		DeleteFunc: getOnDeleteServiceFunc(k.k8sBigPicture, k.Events),
 	})
 
 	for _, watcher := range k.watchers {
@@ -172,17 +178,16 @@ func getOnAddPodFunc(k8sBigPicture *K8sBigPicture, ch chan interface{}) func(int
 
 		log.Logger.Debug().Msgf("pod %s added", newPod.Name)
 		ch <- K8sResourceMessage{
-			ResourceType: Pod,
-			EventType:    "add",
+			ResourceType: POD,
+			EventType:    ADD,
 			Object:       newPod,
 		}
 		log.Logger.Debug().Msgf("sent to chan %s", newPod.Name)
 	}
 }
 
-func getOnUpdatePodFunc(k8sBigPicture *K8sBigPicture) func(interface{}, interface{}) {
+func getOnUpdatePodFunc(k8sBigPicture *K8sBigPicture, ch chan interface{}) func(interface{}, interface{}) {
 	return func(oldObj, newObj interface{}) {
-		// TODO: find diff ?
 		newPod := newObj.(*corev1.Pod)
 		ns := newPod.Namespace
 
@@ -194,10 +199,16 @@ func getOnUpdatePodFunc(k8sBigPicture *K8sBigPicture) func(interface{}, interfac
 		}
 
 		k8sBigPicture.NamespaceToResources[ns].Pods[newPod.Name] = *newPod
+
+		ch <- K8sResourceMessage{
+			ResourceType: POD,
+			EventType:    UPDATE,
+			Object:       newPod,
+		}
 	}
 }
 
-func getOnDeleteFunc(k8sBigPicture *K8sBigPicture) func(interface{}) {
+func getOnDeletePodFunc(k8sBigPicture *K8sBigPicture, ch chan interface{}) func(interface{}) {
 	return func(obj interface{}) {
 		deletedPod := obj.(*corev1.Pod)
 		ns := deletedPod.Namespace
@@ -210,6 +221,12 @@ func getOnDeleteFunc(k8sBigPicture *K8sBigPicture) func(interface{}) {
 		}
 
 		delete(k8sBigPicture.NamespaceToResources[ns].Pods, deletedPod.Name)
+
+		ch <- K8sResourceMessage{
+			ResourceType: POD,
+			EventType:    DELETE,
+			Object:       deletedPod,
+		}
 	}
 }
 
@@ -228,14 +245,14 @@ func getOnAddServiceFunc(k8sBigPicture *K8sBigPicture, ch chan interface{}) func
 		k8sBigPicture.NamespaceToResources[ns].Services[newService.Name] = *newService
 
 		ch <- K8sResourceMessage{
-			ResourceType: Service,
-			EventType:    "add",
+			ResourceType: SERVICE,
+			EventType:    ADD,
 			Object:       newService,
 		}
 	}
 }
 
-func getOnUpdateServiceFunc(k8sBigPicture *K8sBigPicture) func(interface{}, interface{}) {
+func getOnUpdateServiceFunc(k8sBigPicture *K8sBigPicture, ch chan interface{}) func(interface{}, interface{}) {
 	return func(oldObj, newObj interface{}) {
 		// TODO: find diff ?
 		newService := newObj.(*corev1.Service)
@@ -249,10 +266,16 @@ func getOnUpdateServiceFunc(k8sBigPicture *K8sBigPicture) func(interface{}, inte
 		}
 
 		k8sBigPicture.NamespaceToResources[ns].Services[newService.Name] = *newService
+
+		ch <- K8sResourceMessage{
+			ResourceType: SERVICE,
+			EventType:    UPDATE,
+			Object:       newService,
+		}
 	}
 }
 
-func getOnDeleteServiceFunc(k8sBigPicture *K8sBigPicture) func(interface{}) {
+func getOnDeleteServiceFunc(k8sBigPicture *K8sBigPicture, ch chan interface{}) func(interface{}) {
 	return func(obj interface{}) {
 		deletedService := obj.(*corev1.Service)
 		ns := deletedService.Namespace
@@ -265,5 +288,11 @@ func getOnDeleteServiceFunc(k8sBigPicture *K8sBigPicture) func(interface{}) {
 		}
 
 		delete(k8sBigPicture.NamespaceToResources[ns].Services, deletedService.Name)
+
+		ch <- K8sResourceMessage{
+			ResourceType: SERVICE,
+			EventType:    DELETE,
+			Object:       deletedService,
+		}
 	}
 }
