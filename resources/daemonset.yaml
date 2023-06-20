@@ -28,15 +28,15 @@ spec:
             value: "true"
           // TODO: configs for postgres of selfhosted
           - name: POSTGRES_HOST
-            value: ""
+            value: "postgres-service.ddosify"
           - name: POSTGRES_PORT
-            value: ""
+            value: "5432"
           - name: POSTGRES_USER
-            value: ""
+            value: "alazuser"
           - name: POSTGRES_PASSWORD
-            value: ""
+            value: "alazpwd"
           - name: POSTGRES_DB
-            value: ""
+            value: "alazdb"
         ports:
           - containerPort: 8181
         securityContext:
