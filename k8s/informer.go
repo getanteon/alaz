@@ -2,8 +2,11 @@ package k8s
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"alaz/log"
 
@@ -14,6 +17,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/homedir"
 )
 
 type K8SResourceType string
@@ -45,13 +50,13 @@ func (k *K8sCollector) advertiseBigPicture() {
 	})
 }
 
-func (k *K8sCollector) Init() error {
+func (k *K8sCollector) Init(events chan interface{}) error {
 	log.Logger.Info().Msg("k8sCollector initializing...")
 	// stop signal for the informer
 	k.k8sBigPicture = &K8sBigPicture{
 		NamespaceToResources: make(map[string]K8sNamespaceResources),
 	}
-	k.Events = make(chan interface{}, 100) // TODO: make this configurable
+	k.Events = events
 
 	go k.advertiseBigPicture()
 
@@ -95,9 +100,31 @@ func (k *K8sCollector) Init() error {
 
 func NewK8sCollector() (*K8sCollector, error) {
 	// get incluster kubeconfig
-	kubeConfig, err := rest.InClusterConfig()
-	if err != nil {
-		return nil, fmt.Errorf("unable to get incluster kubeconfig: %w", err)
+	var kubeconfig *string
+
+	var kubeConfig *rest.Config
+
+	if os.Getenv("IN_CLUSTER") == "false" {
+		var err error
+		if home := homedir.HomeDir(); home != "" {
+			kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
+		} else {
+			kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
+		}
+
+		flag.Parse()
+
+		kubeConfig, err = clientcmd.BuildConfigFromFlags("", *kubeconfig)
+		if err != nil {
+			panic(err)
+		}
+	} else {
+		// in cluster config, default
+		var err error
+		kubeConfig, err = rest.InClusterConfig()
+		if err != nil {
+			return nil, fmt.Errorf("unable to get incluster kubeconfig: %w", err)
+		}
 	}
 
 	clientset, err := kubernetes.NewForConfig(kubeConfig)
@@ -143,11 +170,13 @@ func getOnAddPodFunc(k8sBigPicture *K8sBigPicture, ch chan interface{}) func(int
 
 		k8sBigPicture.NamespaceToResources[ns].Pods[newPod.Name] = *newPod
 
+		log.Logger.Debug().Msgf("pod %s added", newPod.Name)
 		ch <- K8sResourceMessage{
 			ResourceType: Pod,
 			EventType:    "add",
 			Object:       newPod,
 		}
+		log.Logger.Debug().Msgf("sent to chan %s", newPod.Name)
 	}
 }
 

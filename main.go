@@ -16,6 +16,7 @@ import (
 
 func main() {
 	var k8sCollector *k8s.K8sCollector
+	kubeEvents := make(chan interface{}, 1000)
 	if os.Getenv("K8S_COLLECTOR_ENABLED") == "true" {
 		// k8s collector
 		var err error
@@ -23,10 +24,33 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		go k8sCollector.Init()
+		go k8sCollector.Init(kubeEvents)
 	}
 
 	// container runtime collector
+	if os.Getenv("CR_COLLECTOR_ENABLED") == "true" {
+		go crCollector()
+	}
+
+	// deploy ebpf programs
+	if os.Getenv("EBPF_ENABLED") == "true" {
+		go ebpf.Deploy()
+	}
+
+	a := aggregator.NewAggregator(kubeEvents, nil, ebpf.EbpfEvents)
+	a.Run()
+
+	log.Logger.Info().Msg("listen on 8181")
+
+	http.HandleFunc("/service-map", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(a.Advertise())
+	})
+
+	http.ListenAndServe(":8181", nil)
+}
+
+func crCollector() {
 	ct, err := cruntimes.NewContainerdTracker()
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("failed to create containerd tracker")
@@ -46,19 +70,4 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(km.ContainerMetadatas)
 	})
-
-	log.Logger.Info().Msg("listen on 8199")
-
-	// deploy ebpf programs
-	go ebpf.Deploy()
-
-	a := aggregator.NewAggregator(k8sCollector.Events, nil, ebpf.EbpfEvents)
-	a.Run()
-
-	http.HandleFunc("/service-map", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(a.Advertise())
-	})
-
-	http.ListenAndServe(":8198", nil)
 }

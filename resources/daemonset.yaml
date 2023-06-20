@@ -20,8 +20,25 @@ spec:
         env:
           - name: K8S_COLLECTOR_ENABLED
             value: "true"
+          - name: CR_COLLECTOR_ENABLED
+            value: "false"
+          - name: EBPF_ENABLED
+            value: "true"
+          - name: IN_CLUSTER
+            value: "true"
+          // TODO: configs for postgres of selfhosted
+          - name: POSTGRES_HOST
+            value: ""
+          - name: POSTGRES_PORT
+            value: ""
+          - name: POSTGRES_USER
+            value: ""
+          - name: POSTGRES_PASSWORD
+            value: ""
+          - name: POSTGRES_DB
+            value: ""
         ports:
-          - containerPort: 8199
+          - containerPort: 8181
         securityContext:
           # privileged: true
           # runAsUser: 0

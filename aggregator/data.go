@@ -10,8 +10,13 @@ package aggregator
 // Path: aggregator/data.go
 
 import (
+	"alaz/config"
+	"alaz/datastore"
 	"alaz/ebpf/tcp_state"
 	"alaz/graph"
+	"alaz/log"
+	"os"
+
 	"alaz/k8s"
 	"fmt"
 
@@ -24,12 +29,14 @@ type Aggregator struct {
 	crChan   <-chan interface{}
 	ebpfChan <-chan interface{}
 
+	repo datastore.Repository
+
 	serviceMap *ServiceMap
 }
 
+// Temporarily, normally write to db
 type ServiceMap struct {
 	// TODO: add port information
-
 	PodNamesWithNamespace map[string]string    `json:"podNamesWithNamespace"`
 	PodIPToPodUid         map[string]types.UID `json:"podIPToPodUid"`
 	PodIPToPodName        map[string]string    `json:"podIPToPodName"`
@@ -107,11 +114,21 @@ func NewAggregator(k8sChan <-chan interface{}, crChan <-chan interface{}, ebpfCh
 		ServiceIPToServiceUid:     map[string]types.UID{},
 		TcpConnections:            map[string]map[string]uint32{},
 	}
+
+	repo := datastore.NewRepository(config.PostgresConfig{
+		Host:     os.Getenv("POSTGRES_HOST"),
+		Port:     os.Getenv("POSTGRES_PORT"),
+		Username: os.Getenv("POSTGRES_USER"),
+		Password: os.Getenv("POSTGRES_PASSWORD"),
+		DBName:   os.Getenv("POSTGRES_DB"),
+	})
+
 	return &Aggregator{
 		k8sChan:    k8sChan,
 		crChan:     crChan,
 		ebpfChan:   ebpfChan,
 		serviceMap: serviceMap,
+		repo:       repo,
 	}
 }
 
@@ -122,20 +139,51 @@ func (a *Aggregator) Run() {
 }
 
 func (a *Aggregator) processk8s() {
+	log.Logger.Info().Any("k8sChan", a.k8sChan).
+		Msg("aggregator: processing k8s events")
 	for data := range a.k8sChan {
+		log.Logger.Debug().Msg("k8s event received")
 		// K8sResourceMessage
 		d := data.(k8s.K8sResourceMessage)
-		// TODO: add more types
-		// TODO: check event types, delete/update, assume add for now
+		// TODO: EVENT TYPES, DELETE/UPDATE, ASSUME ADD FOR NOW
+
 		switch d.ResourceType {
 		case k8s.Pod:
 			pod := d.Object.(*corev1.Pod)
+
 			a.serviceMap.PodIPToPodUid[pod.Status.PodIP] = pod.UID
 			a.serviceMap.PodIPToPodName[pod.Status.PodIP] = pod.Name
+
+			err := a.repo.CreatePod(datastore.Pod{
+				UID:       string(pod.UID),
+				Name:      pod.Name,
+				Namespace: pod.Namespace,
+				Image:     pod.Spec.Containers[0].Image,
+				IP:        pod.Status.PodIP,
+			})
+
+			if err != nil {
+				log.Logger.Debug().Err(err).Msg("error persisting pod data")
+			}
+
 		case k8s.Service:
 			service := d.Object.(*corev1.Service)
+
 			a.serviceMap.ServiceIPToServiceName[service.Spec.ClusterIP] = service.Name
 			a.serviceMap.ServiceIPToServiceUid[service.Spec.ClusterIP] = service.UID
+
+			err := a.repo.CreateService(datastore.Service{
+				UID:       string(service.UID),
+				Name:      service.Name,
+				Namespace: service.Namespace,
+				Type:      string(service.Spec.Type),
+				ClusterIP: service.Spec.ClusterIP,
+			})
+
+			if err != nil {
+				log.Logger.Debug().Err(err).Msg("error persisting service data")
+			}
+
 		}
 	}
 }
