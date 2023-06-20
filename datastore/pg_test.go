@@ -40,7 +40,7 @@ func TestCreateUpdateService(t *testing.T) {
 	})
 
 	svc := Service{
-		UID:       "uid55",
+		UID:       "uid44",
 		Name:      "name",
 		Namespace: "namespace",
 		Type:      "type",

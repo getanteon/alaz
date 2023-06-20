@@ -89,6 +89,23 @@ func (r Repository) UpdatePod(dto Pod) error {
 	return nil
 }
 
+func (r Repository) DeletePod(dto Pod) error {
+	query := fmt.Sprintf("DELETE FROM %s WHERE uid = $1", podTableName)
+	stmt, err := r.db.Prepare(query)
+	if err != nil {
+		log.Logger.Error().Err(err).Msg("error preparing query")
+		return fmt.Errorf("error preparing query")
+	}
+	defer stmt.Close()
+
+	row := stmt.QueryRow(dto.UID)
+	if row.Err() != nil {
+		log.Logger.Error().Err(row.Err()).Msg("Could not execute prepared statement")
+		return fmt.Errorf("could not execute prepared statement")
+	}
+	return nil
+}
+
 func (r Repository) CreateService(dto Service) error {
 	query := fmt.Sprintf("INSERT INTO %s (uid,name,namespace,type,cluster_ip) VALUES($1, $2,$3,$4,$5)", serviceTableName)
 	stmt, err := r.db.Prepare(query)
@@ -116,6 +133,23 @@ func (r Repository) UpdateService(dto Service) error {
 	defer stmt.Close()
 
 	row := stmt.QueryRow(dto.Name, dto.Namespace, dto.Type, dto.ClusterIP, dto.UID)
+	if row.Err() != nil {
+		log.Logger.Error().Err(row.Err()).Msg("Could not execute prepared statement")
+		return fmt.Errorf("could not execute prepared statement")
+	}
+	return nil
+}
+
+func (r Repository) DeleteService(dto Service) error {
+	query := fmt.Sprintf("DELETE FROM %s WHERE uid = $1", serviceTableName)
+	stmt, err := r.db.Prepare(query)
+	if err != nil {
+		log.Logger.Error().Err(err).Msg("error preparing query")
+		return fmt.Errorf("error preparing query")
+	}
+	defer stmt.Close()
+
+	row := stmt.QueryRow(dto.UID)
 	if row.Err() != nil {
 		log.Logger.Error().Err(row.Err()).Msg("Could not execute prepared statement")
 		return fmt.Errorf("could not execute prepared statement")

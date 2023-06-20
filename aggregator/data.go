@@ -78,43 +78,70 @@ func (a *Aggregator) Run() {
 func (a *Aggregator) processk8s() {
 	for data := range a.k8sChan {
 		d := data.(k8s.K8sResourceMessage)
-		if d.EventType == k8s.ADD && d.ResourceType == k8s.POD {
+
+		if d.ResourceType == k8s.POD {
 			pod := d.Object.(*corev1.Pod)
-			a.clusterInfo.PodIPToPodUid[pod.Status.PodIP] = pod.UID
-			err := a.repo.CreatePod(datastore.Pod{
+			dtoPod := datastore.Pod{
 				UID:       string(pod.UID),
 				Name:      pod.Name,
 				Namespace: pod.Namespace,
 				Image:     pod.Spec.Containers[0].Image,
 				IP:        pod.Status.PodIP,
-			})
-
-			if err != nil {
-				log.Logger.Debug().Err(err).Msg("error persisting pod data")
 			}
-		} else if d.EventType == k8s.ADD && d.ResourceType == k8s.SERVICE {
+			switch d.EventType {
+			case k8s.ADD:
+				a.clusterInfo.PodIPToPodUid[pod.Status.PodIP] = pod.UID
+				err := a.repo.CreatePod(dtoPod)
+				if err != nil {
+					log.Logger.Debug().Err(err).Msg("error on CreatePod call")
+				}
+			case k8s.UPDATE:
+				a.clusterInfo.PodIPToPodUid[pod.Status.PodIP] = pod.UID
+				err := a.repo.UpdatePod(dtoPod)
+				if err != nil {
+					log.Logger.Debug().Err(err).Msg("error on UpdatePod call")
+				}
+			case k8s.DELETE:
+				delete(a.clusterInfo.PodIPToPodUid, pod.Status.PodIP)
+				err := a.repo.DeletePod(dtoPod)
+				if err != nil {
+					log.Logger.Debug().Err(err).Msg("error on DeletePod call")
+				}
+			}
+
+		} else if d.ResourceType == k8s.SERVICE {
 			service := d.Object.(*corev1.Service)
-			a.clusterInfo.ServiceIPToServiceUid[service.Spec.ClusterIP] = service.UID
-			err := a.repo.CreateService(datastore.Service{
+			dtoSvc := datastore.Service{
 				UID:       string(service.UID),
 				Name:      service.Name,
 				Namespace: service.Namespace,
 				Type:      string(service.Spec.Type),
 				ClusterIP: service.Spec.ClusterIP,
-			})
-			if err != nil {
-				log.Logger.Debug().Err(err).Msg("error persisting service data")
 			}
-		} else if d.EventType == k8s.UPDATE && d.ResourceType == k8s.POD {
-			// TODO: update pod
-		} else if d.EventType == k8s.UPDATE && d.ResourceType == k8s.SERVICE {
-			// TODO: update service
-		} else if d.EventType == k8s.DELETE && d.ResourceType == k8s.POD {
-			// TODO: delete pod
-		} else if d.EventType == k8s.DELETE && d.ResourceType == k8s.SERVICE {
-			// TODO: delete service
-		}
 
+			switch d.EventType {
+			case k8s.ADD:
+				a.clusterInfo.ServiceIPToServiceUid[service.Spec.ClusterIP] = service.UID
+				err := a.repo.CreateService(dtoSvc)
+				if err != nil {
+					log.Logger.Debug().Err(err).Msg("error persisting service data")
+				}
+			case k8s.UPDATE:
+				a.clusterInfo.ServiceIPToServiceUid[service.Spec.ClusterIP] = service.UID
+				err := a.repo.UpdateService(dtoSvc)
+				if err != nil {
+					log.Logger.Debug().Err(err).Msg("error persisting service data")
+				}
+			case k8s.DELETE:
+				delete(a.clusterInfo.ServiceIPToServiceUid, service.Spec.ClusterIP)
+				err := a.repo.DeleteService(dtoSvc)
+				if err != nil {
+					log.Logger.Debug().Err(err).Msg("error persisting service data")
+				}
+			}
+		} else {
+			log.Logger.Debug().Str("resourceType", d.ResourceType).Msg("Unknown resource type")
+		}
 	}
 }
 
