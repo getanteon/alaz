@@ -109,3 +109,9 @@ Sock Types : SOCK_STREAM, SOCK_DGRAM, or SOCK_RAW.
 docker run --name postgres-alaz -e POSTGRES_USER=alazuser -e POSTGRES_PASSWORD=alazpwd -e POSTGRES_DB=alazdb -p 5432:5432 -d postgres:13.6
 
 CGO_ENABLED=0 K8S_COLLECTOR_ENABLED=true IN_CLUSTER=false POSTGRES_HOST=localhost POSTGRES_PORT=5432 POSTGRES_USER=alazuser POSTGRES_PASSWORD=alazpwd POSTGRES_DB=alazdb go run main.go
+
+
+Detaching bpf programs with bpftool
+> bpftool perf list
+then 
+> kill -9

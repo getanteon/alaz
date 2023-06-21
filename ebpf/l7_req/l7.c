@@ -281,7 +281,7 @@ struct iov {
 // enter_write is used for write, writev, sendto, sendmsg
 
 SEC("tracepoint/syscalls/sys_enter_write")
-int sys_enter_write(struct trace_event_raw_sys_enter_rw__stub* ctx) {
+int sys_enter_write(struct trace_event_raw_sys_enter_write* ctx) {
     __u64 id = bpf_get_current_pid_tgid();
 
     // this way req is allocated on the stack
@@ -297,9 +297,6 @@ int sys_enter_write(struct trace_event_raw_sys_enter_rw__stub* ctx) {
         return 0;
     }
 
-    char msg[] = "Got l7_request from l7_request_heap";
-    bpf_trace_printk(msg, sizeof(msg));
-
     req->protocol = PROTOCOL_UNKNOWN;
     req->partial = 0;
     req->request_id = 0; // TODO: request_id
@@ -312,9 +309,6 @@ int sys_enter_write(struct trace_event_raw_sys_enter_rw__stub* ctx) {
     k.stream_id = -1;
 
     if(ctx->buf){
-        char msgCtx[] = "ctx bufs - %s\n";
-        bpf_trace_printk(msgCtx, sizeof(msgCtx), ctx->buf);
-
         char b[16];
         long r = bpf_probe_read(&b, sizeof(b), (void *)(ctx->buf)) ;
         
@@ -322,25 +316,21 @@ int sys_enter_write(struct trace_event_raw_sys_enter_rw__stub* ctx) {
             char msg[] = "could not read into buffer - %ld";
             bpf_trace_printk(msg, sizeof(msg), r);
             return 0;
-        }else{
-            char msg[] = "read from buffer %ld, ->> %s\n";
-            bpf_trace_printk(msg, sizeof(msg),r,b);
         }
+
+        // TODO: get all types of http requests
+        if (!(b[0] == 'G' && b[1] == 'E' && b[2] == 'T')) {
+            return 0; // TODO: only allow GET requests for now
+        }else{
+            char msg[] = "GET request";
+            bpf_trace_printk(msg, sizeof(msg));
+        }
+        
     }else{
         char msgCtx[] = "ctxbuf null";
         bpf_trace_printk(msgCtx, sizeof(msgCtx));
+        return 0;
     }
-
-
-    // if (is_http_request(ctx->buf)) {
-    //     char msg[] = "Http request, setting protocol to HTTP";
-    //     bpf_trace_printk(msg, sizeof(msg));
-    //     req->protocol = PROTOCOL_HTTP;
-    // } else {
-    //     char msg[] = "Not an HTTP request, returning";
-    //     bpf_trace_printk(msg, sizeof(msg));
-    //     return 0;
-    // }
 
     if (req->write_time_ns == 0) {
         req->write_time_ns = bpf_ktime_get_ns();
@@ -351,18 +341,12 @@ int sys_enter_write(struct trace_event_raw_sys_enter_rw__stub* ctx) {
     long res = bpf_map_update_elem(&active_l7_requests, &k, req, BPF_ANY);
     if(res < 0)
     {
-        char msgFail[] = "Fail writing active_l7_requests";
-        bpf_trace_printk(msgFail, sizeof(msgFail));
-
 		char msg[] = "Error writing to active_l7_requests - %ld";
 		bpf_trace_printk(msg, sizeof(msg), res);
     }else
     {
         char msgSuccess[] = "success active_l7_requests";
-        bpf_trace_printk(msgSuccess, sizeof(msgSuccess));
-        
-        char msg[] = "Wrote to active_l7_requests";
-        bpf_trace_printk(msg, sizeof(msg));
+        bpf_trace_printk(msgSuccess, sizeof(msgSuccess));        
     }
 
     return 0;
