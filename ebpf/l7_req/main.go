@@ -2,7 +2,7 @@
 // The eBPF program will be attached to the start of the sys_execve
 // kernel function and prints out the number of times it has been called
 // every second.
-package main
+package l7_req
 
 import (
 	"fmt"
@@ -22,8 +22,24 @@ import (
 
 const mapKey uint32 = 0
 
-// TODO: ch
-func main() {
+// for user space
+type L7Event struct {
+	Fd       uint64
+	Pid      uint32
+	Status   uint32
+	Duration uint64
+	Protocol uint8 // TODO: match
+	Method   uint8
+	Payload  [512]uint8
+}
+
+const L7_EVENT = "l7_event"
+
+func (e L7Event) Type() string {
+	return L7_EVENT
+}
+
+func Deploy(ch chan interface{}) {
 	// Allow the current process to lock memory for eBPF resources.
 	if err := rlimit.RemoveMemlock(); err != nil {
 		log.Logger.Fatal().Err(err).Msg("failed to remove memlock limit")
@@ -46,13 +62,6 @@ func main() {
 	// pre-compiled program. Each time the kernel function enters, the program
 	// will increment the execution counter by 1. The read loop below polls this
 	// map value once per second.
-
-	// Read loop reporting the total amount of times the kernel
-	// function was entered, once per second.
-	ticker := time.NewTicker(5 * time.Millisecond)
-	defer ticker.Stop()
-
-	fmt.Println("start to link")
 
 	time.Sleep(1 * time.Second)
 
@@ -85,11 +94,13 @@ func main() {
 		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
 	}
 
-	// go listenDebugMsgs()
+	// Read loop reporting the total amount of times the kernel
+	// function was entered, once per second.
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
 
 	go func() {
 		for range ticker.C {
-			log.Logger.Debug().Msg("read perf event array")
 			record, err := l7Events.Read()
 			if err != nil {
 				log.Logger.Warn().Err(err).Msg("error reading from perf array")
@@ -101,39 +112,27 @@ func main() {
 
 			l7Event := (*bpfL7Event)(unsafe.Pointer(&record.RawSample[0]))
 			// TODO: match from pid on user space
-			log.Logger.Info().
-				Uint32("pid", l7Event.Pid).
-				Uint64("fd", l7Event.Fd).
-				Uint32("status", l7Event.Status).
-				Uint64("duration", l7Event.Duration).
-				Uint8("protocol", l7Event.Protocol).
-				Uint8("method", l7Event.Method).
-				Str("payload", string(l7Event.Payload[:])).
-				Msg("l7 event")
+			ch <- L7Event{
+				Fd:       l7Event.Fd,
+				Pid:      l7Event.Pid,
+				Status:   l7Event.Status,
+				Duration: l7Event.Duration,
+				Protocol: l7Event.Protocol,
+				Method:   l7Event.Method,
+				Payload:  l7Event.Payload,
+			}
+
+			// log.Logger.Info().
+			// 	Uint32("pid", l7Event.Pid).
+			// 	Uint64("fd", l7Event.Fd).
+			// 	Uint32("status", l7Event.Status).
+			// 	Uint64("duration", l7Event.Duration).
+			// 	Uint8("protocol", l7Event.Protocol).
+			// 	Uint8("method", l7Event.Method).
+			// 	Str("payload", string(l7Event.Payload[:])).
+			// 	Msg("l7 event")
 		}
 	}()
 
 	select {}
-}
-
-func listenDebugMsgs() {
-	printsPath := "/sys/kernel/debug/tracing/trace_pipe"
-
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	fd, err := os.Open(printsPath)
-	if err != nil {
-		log.Logger.Warn().Err(err).Msg("error opening trace_pipe")
-	}
-	defer fd.Close()
-
-	buf := make([]byte, 1024)
-	for range ticker.C {
-		n, err := fd.Read(buf)
-		if err != nil {
-			log.Logger.Error().Err(err).Msg("error reading from trace_pipe")
-		}
-		log.Logger.Info().Msgf("read %d bytes: %s\n", n, buf[:n])
-	}
 }

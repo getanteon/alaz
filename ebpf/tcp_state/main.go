@@ -17,12 +17,22 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 )
 
+// match with values in tcp_state.c
 const (
-	EVENT_TCP_ESTABLISHED = iota + 1
-	EVENT_TCP_CONNECT_FAILED
-	EVENT_TCP_LISTEN
-	EVENT_TCP_LISTEN_CLOSED
-	EVENT_TCP_CLOSED
+	BPF_EVENT_TCP_ESTABLISHED = iota + 1
+	BPF_EVENT_TCP_CONNECT_FAILED
+	BPF_EVENT_TCP_LISTEN
+	BPF_EVENT_TCP_LISTEN_CLOSED
+	BPF_EVENT_TCP_CLOSED
+)
+
+// for user space
+const (
+	EVENT_TCP_ESTABLISHED    = "EVENT_TCP_ESTABLISHED"
+	EVENT_TCP_CONNECT_FAILED = "EVENT_TCP_CONNECT_FAILED"
+	EVENT_TCP_LISTEN         = "EVENT_TCP_LISTEN"
+	EVENT_TCP_LISTEN_CLOSED  = "EVENT_TCP_LISTEN_CLOSED"
+	EVENT_TCP_CLOSED         = "EVENT_TCP_CLOSED"
 )
 
 // Custom type for the enumeration
@@ -31,16 +41,16 @@ type TcpStateConversion uint32
 // String representation of the enumeration values
 func (e TcpStateConversion) String() string {
 	switch e {
-	case EVENT_TCP_ESTABLISHED:
-		return "EVENT_TCP_ESTABLISHED"
-	case EVENT_TCP_CONNECT_FAILED:
-		return "EVENT_TCP_CONNECT_FAILED"
-	case EVENT_TCP_LISTEN:
-		return "EVENT_TCP_LISTEN"
-	case EVENT_TCP_LISTEN_CLOSED:
-		return "EVENT_TCP_LISTEN_CLOSED"
-	case EVENT_TCP_CLOSED:
-		return "EVENT_TCP_CLOSED"
+	case BPF_EVENT_TCP_ESTABLISHED:
+		return EVENT_TCP_ESTABLISHED
+	case BPF_EVENT_TCP_CONNECT_FAILED:
+		return EVENT_TCP_CONNECT_FAILED
+	case BPF_EVENT_TCP_LISTEN:
+		return EVENT_TCP_LISTEN
+	case BPF_EVENT_TCP_LISTEN_CLOSED:
+		return EVENT_TCP_LISTEN_CLOSED
+	case BPF_EVENT_TCP_CLOSED:
+		return EVENT_TCP_CLOSED
 	default:
 		return "Unknown"
 	}
@@ -53,10 +63,6 @@ const mapKey uint32 = 0
 
 // padding to match the kernel struct
 type TcpEvent struct {
-	// sample_type int32
-	// type_       int32
-	// config      int32
-
 	Fd        uint64
 	Timestamp uint64
 	Type      uint32
@@ -71,12 +77,18 @@ type TcpEvent struct {
 type TcpConnectEvent struct {
 	Fd        uint64
 	Timestamp uint64
-	Type      string
+	Type_     string
 	Pid       uint32
 	SPort     uint16
 	DPort     uint16
 	SAddr     string
 	DAddr     string
+}
+
+const TCP_CONNECT_EVENT = "tcp_connect_event"
+
+func (e TcpConnectEvent) Type() string {
+	return TCP_CONNECT_EVENT
 }
 
 func Deploy(ch chan interface{}) {
@@ -180,7 +192,7 @@ func Deploy(ch chan interface{}) {
 				Pid:       bpfEvent.Pid,
 				Fd:        bpfEvent.Fd,
 				Timestamp: bpfEvent.Timestamp,
-				Type:      TcpStateConversion(bpfEvent.Type).String(), // TODO: 3 is connect event, convert these to string
+				Type_:     TcpStateConversion(bpfEvent.Type).String(), // TODO: 3 is connect event, convert these to string
 				SPort:     bpfEvent.SPort,
 				DPort:     bpfEvent.DPort,
 				SAddr:     fmt.Sprintf("%d.%d.%d.%d", bpfEvent.SAddr[0], bpfEvent.SAddr[1], bpfEvent.SAddr[2], bpfEvent.SAddr[3]),

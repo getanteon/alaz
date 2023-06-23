@@ -63,9 +63,9 @@ struct sk_info
 struct
 {
   __uint(type, BPF_MAP_TYPE_HASH);
-  __uint(key_size, sizeof(void *));
-  __uint(value_size, sizeof(struct sk_info));
   __uint(max_entries, 10240);
+  __type(key, void *);
+  __type(value, struct sk_info);
 } sock_map SEC(".maps");
 
 SEC("tracepoint/sock/inet_sock_set_state")

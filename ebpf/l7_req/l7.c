@@ -143,8 +143,6 @@ int sys_enter_write(struct trace_event_raw_sys_enter_write* ctx) {
         bpf_trace_printk(msgCtx, sizeof(msgCtx));
         return 0;
     }
-
-
     // buffer starts with GET
     req->protocol = PROTOCOL_HTTP;
     req->method = METHOD_GET;

@@ -10,6 +10,8 @@ package aggregator
 import (
 	"alaz/config"
 	"alaz/datastore"
+	"alaz/ebpf"
+	"alaz/ebpf/l7_req"
 	"alaz/ebpf/tcp_state"
 	"alaz/log"
 	"os"
@@ -36,20 +38,47 @@ type Aggregator struct {
 // We need to keep track of the following
 // in order to build find relationships between
 // connections and pods/services
+
+type SockInfo struct {
+	Pid   uint32 `json:"pid"`
+	Fd    uint64 `json:"fd"`
+	Saddr string `json:"saddr"`
+	Sport uint16 `json:"sport"`
+	Daddr string `json:"daddr"`
+	Dport uint16 `json:"dport"`
+	// TODO: add timestamp
+}
+
+type SocketMap map[uint64]SockInfo // fd -> SockInfo
+
 type ClusterInfo struct {
 	// TODO: If pod has more than one container, we need to differentiate
 	PodIPToPodUid         map[string]types.UID `json:"podIPToPodUid"`
 	ServiceIPToServiceUid map[string]types.UID `json:"serviceIPToServiceUid"`
 
-	// IP:Port to IP:ort -> count
-	TcpConnections map[string]map[string]uint32 `json:"tcpConnections"`
+	// Pid -> SocketMap
+	// pid -> fd -> {saddr, sport, daddr, dport}
+	PidToSocketMap map[uint32]SocketMap `json:"pidToSocketMap"`
 }
+
+// If we have information from the container runtimes
+// we would have pid's of the containers within the pod
+// and we can use that to find the podUid directly
+
+// If we don't have the pid's of the containers
+// we can use the following to find the podUid
+// {saddr+sport} -> search in podIPToPodUid -> podUid
+// {daddr+dport} -> search in serviceIPToServiceUid -> serviceUid
+// or
+// {daddr+dport} -> search in podIPToPodUid -> podUid
+
+type ProcessConnectionMap map[string]SocketMap // Map to store {pid} - > SocketInfo
 
 func NewAggregator(k8sChan <-chan interface{}, crChan <-chan interface{}, ebpfChan <-chan interface{}) *Aggregator {
 	clusterInfo := &ClusterInfo{
 		PodIPToPodUid:         map[string]types.UID{},
 		ServiceIPToServiceUid: map[string]types.UID{},
-		TcpConnections:        map[string]map[string]uint32{},
+		PidToSocketMap:        map[uint32]SocketMap{},
 	}
 
 	repo := datastore.NewRepository(config.PostgresConfig{
@@ -154,10 +183,87 @@ func (a *Aggregator) processCR() {
 
 func (a *Aggregator) processEbpf() {
 	for data := range a.ebpfChan {
-		d := data.(tcp_state.TcpConnectEvent)
-		if _, ok := a.clusterInfo.TcpConnections[d.SAddr]; !ok {
-			a.clusterInfo.TcpConnections[d.SAddr] = map[string]uint32{}
+		bpfEvent, ok := data.(ebpf.BpfEvent)
+		if !ok {
+			log.Logger.Debug().Msg("error casting ebpf event")
+			continue
 		}
-		a.clusterInfo.TcpConnections[d.SAddr][d.DAddr]++
+		switch bpfEvent.Type() {
+		case tcp_state.TCP_CONNECT_EVENT:
+			a.processTcpConnect(data)
+		// TODO: TCP_CLOSE
+		case l7_req.L7_EVENT:
+			a.processL7(data)
+		}
 	}
+}
+
+func (a *Aggregator) processTcpConnect(data interface{}) {
+	d := data.(tcp_state.TcpConnectEvent)
+	if d.Type_ == tcp_state.EVENT_TCP_ESTABLISHED {
+		// {pid,fd} -> SockInfo
+		if _, ok := a.clusterInfo.PidToSocketMap[d.Pid]; !ok {
+			a.clusterInfo.PidToSocketMap[d.Pid] = SocketMap{}
+		}
+		a.clusterInfo.PidToSocketMap[d.Pid][d.Fd] = SockInfo{
+			Pid:   d.Pid,
+			Fd:    d.Fd,
+			Saddr: d.SAddr,
+			Sport: d.SPort,
+			Daddr: d.DAddr,
+			Dport: d.DPort,
+		}
+
+		// TODO: persist
+
+	} else if d.Type_ == tcp_state.EVENT_TCP_CLOSED {
+		// remove from map
+		delete(a.clusterInfo.PidToSocketMap[d.Pid], d.Fd)
+		// TODO: persist
+	}
+
+}
+
+func (a *Aggregator) processL7(data interface{}) {
+	d := data.(l7_req.L7Event)
+	// find socket info
+
+	skInfo, ok := a.clusterInfo.PidToSocketMap[d.Pid][d.Fd]
+	if !ok {
+		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("error finding socket info")
+		return
+	}
+
+	// find pod info
+	podUid, ok := a.clusterInfo.PodIPToPodUid[skInfo.Saddr]
+	if !ok {
+		log.Logger.Debug().Str("podIP", skInfo.Saddr).Msg("error finding pod info")
+		return
+	}
+
+	// find service info
+	svcUid, ok := a.clusterInfo.ServiceIPToServiceUid[skInfo.Daddr]
+	if !ok {
+		log.Logger.Debug().Str("serviceIP", skInfo.Daddr).Msg("error finding service info")
+		return
+	}
+
+	log.Logger.Debug().Any("podUid", podUid).
+		Any("svcUid", svcUid).
+		Msg("found pod and service info")
+
+	log.Logger.Debug().Int("pid", int(d.Pid)).
+		Uint64("fd", d.Fd).
+		Str("saddr", skInfo.Saddr).
+		Uint16("sport", skInfo.Sport).
+		Str("daddr", skInfo.Daddr).
+		Uint16("dport", skInfo.Dport).
+		Uint8("method", d.Method).
+		Uint64("duration", d.Duration).
+		Uint8("protocol", d.Protocol).
+		Uint32("status", d.Status).
+		Str("payload", string(d.Payload[:])).
+		Msg("l7 event success on aggregator")
+
+	// TODO: persist l7 request
 }
