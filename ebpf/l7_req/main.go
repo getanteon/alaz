@@ -22,22 +22,6 @@ import (
 
 const mapKey uint32 = 0
 
-// padding to match the kernel struct
-type L7Event struct {
-	// sample_type int32
-	// type_       int32
-	// config      int32
-
-	Fd       uint64
-	Pid      uint32
-	Status   uint32
-	Duration uint64
-	Protocol uint8
-	Method   uint8
-	Padding  uint16
-	Payload  [512]byte
-}
-
 // TODO: ch
 func main() {
 	// Allow the current process to lock memory for eBPF resources.
@@ -115,8 +99,7 @@ func main() {
 				log.Logger.Warn().Msgf("lost %d samples", record.LostSamples)
 			}
 
-			l7Event := (*L7Event)(unsafe.Pointer(&record.RawSample[0]))
-
+			l7Event := (*bpfL7Event)(unsafe.Pointer(&record.RawSample[0]))
 			// TODO: match from pid on user space
 			log.Logger.Info().
 				Uint32("pid", l7Event.Pid).

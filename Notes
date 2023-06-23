@@ -124,3 +124,21 @@ __type(value, struct sk_info);
 seklinde tanimlaman lazim map icin
 // sk_info icinde pointer olursa  executing "common" at <$.TypeDeclaration>: error calling TypeDeclaration: Struct:"rw_args_t": field 1: type *btf.Pointer: not supported 
 --> uint ile yazcan
+
+
+
+// Ebpf error: 
+https://github.com/cilium/ebpf/blob/master/btf/core.go  0xbad2310
+invalid func unknown#195896080: 
+195896080 -> 0xbad2310
+
+"bad relo"
+
+it means libbpf couldn't relocate a struct field reference against the current running kernel's layout
+basically, your vmlinux.h defines a struct field that wasn't defined when your kernel was built
+
+yani kerneldaki struct fieldina erismiyorsun. kendin tanimlamissin ama kernelde yok. bunu core_read yapmaya
+calisirsan kernelda bulamadigi icin mapping de yapamiyor error veriyor.
+
+core -> kernel structurelarina erisirken 
+kendi 

@@ -21,25 +21,22 @@ type bpfL7Event struct {
 	Protocol uint8
 	Method   uint8
 	Padding  uint16
-	Payload  [512]int8
+	Payload  [512]uint8
 	_        [4]byte
 }
 
 type bpfL7Request struct {
 	WriteTimeNs uint64
 	Protocol    uint8
-	Partial     uint8
-	RequestType uint8
-	_           [1]byte
-	RequestId   int32
-	Payload     [512]int8
+	Method      uint8
+	Payload     [512]uint8
+	_           [6]byte
 }
 
 type bpfSocketKey struct {
-	Fd       uint64
-	Pid      uint32
-	StreamId int16
-	_        [2]byte
+	Fd  uint64
+	Pid uint32
+	_   [4]byte
 }
 
 // loadBpf returns the embedded CollectionSpec for bpf.
