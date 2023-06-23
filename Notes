@@ -115,3 +115,12 @@ Detaching bpf programs with bpftool
 > bpftool perf list
 then 
 > kill -9
+
+
+bpftool map dump ile human readable formatta gorebilmek icin
+__type(key, void *);
+__type(value, struct sk_info);
+
+seklinde tanimlaman lazim map icin
+// sk_info icinde pointer olursa  executing "common" at <$.TypeDeclaration>: error calling TypeDeclaration: Struct:"rw_args_t": field 1: type *btf.Pointer: not supported 
+--> uint ile yazcan

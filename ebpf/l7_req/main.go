@@ -87,11 +87,13 @@ func main() {
 	fmt.Println("sys_enter_write linked")
 	defer l1.Close()
 
-	// l2, err := link.Tracepoint("syscalls", "sys_exit_read", objs.bpfPrograms.SysExitRead, nil)
-	// if err != nil {
-	// 	log.Logger.Fatal().Err(err).Msg("link sys_exit_read tracepoint")
-	// }
-	// defer l2.Close()
+	l2, err := link.Tracepoint("syscalls", "sys_exit_read", objs.bpfPrograms.SysExitRead, nil)
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("link sys_exit_read tracepoint")
+	}
+	fmt.Println("sys_exit_read linked")
+
+	defer l2.Close()
 
 	// initialize perf event readers
 	l7Events, err := perf.NewReader(objs.L7Events, 64*os.Getpagesize())
@@ -103,6 +105,7 @@ func main() {
 
 	go func() {
 		for range ticker.C {
+			log.Logger.Debug().Msg("read perf event array")
 			record, err := l7Events.Read()
 			if err != nil {
 				log.Logger.Warn().Err(err).Msg("error reading from perf array")
@@ -114,7 +117,6 @@ func main() {
 
 			l7Event := (*L7Event)(unsafe.Pointer(&record.RawSample[0]))
 
-			// TODO: send do channelt
 			// TODO: match from pid on user space
 			log.Logger.Info().
 				Uint32("pid", l7Event.Pid).

@@ -12,29 +12,26 @@ struct trace_event_raw_sys_exit {
 	char __data[0];
 };
 
-struct trace_event_raw_sys_enter_rw__stub {
-    __u64 unused;
-    long int id;
-    __u64 fd;
-    char* buf;
-    __u64 size;
-};
-
 struct trace_event_raw_sys_enter_write {
 	struct trace_entry ent;
     int __syscall_nr;
-    unsigned int fd;
-    char * buf; // TODO
+    unsigned long int fd;
+    char * buf;
     __u64 count;
 };
 
 struct trace_event_raw_sys_enter_read{
     struct trace_entry ent;
     int __syscall_nr;
-    unsigned int fd;
+    unsigned long int fd;
     char * buf;
     __u64 count;
 };
 
+struct trace_event_raw_sys_exit_read {
+    __u64 unused;
+    int id;
+    long ret;
+};
 
 

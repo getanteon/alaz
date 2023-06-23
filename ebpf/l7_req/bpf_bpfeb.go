@@ -35,6 +35,13 @@ type bpfL7Request struct {
 	Payload     [512]int8
 }
 
+type bpfSocketKey struct {
+	Fd       uint64
+	Pid      uint32
+	StreamId int16
+	_        [2]byte
+}
+
 // loadBpf returns the embedded CollectionSpec for bpf.
 func loadBpf() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_BpfBytes)
@@ -78,6 +85,7 @@ type bpfSpecs struct {
 type bpfProgramSpecs struct {
 	SysEnterRead  *ebpf.ProgramSpec `ebpf:"sys_enter_read"`
 	SysEnterWrite *ebpf.ProgramSpec `ebpf:"sys_enter_write"`
+	SysExitRead   *ebpf.ProgramSpec `ebpf:"sys_exit_read"`
 }
 
 // bpfMapSpecs contains maps before they are loaded into the kernel.
@@ -133,12 +141,14 @@ func (m *bpfMaps) Close() error {
 type bpfPrograms struct {
 	SysEnterRead  *ebpf.Program `ebpf:"sys_enter_read"`
 	SysEnterWrite *ebpf.Program `ebpf:"sys_enter_write"`
+	SysExitRead   *ebpf.Program `ebpf:"sys_exit_read"`
 }
 
 func (p *bpfPrograms) Close() error {
 	return _BpfClose(
 		p.SysEnterRead,
 		p.SysEnterWrite,
+		p.SysExitRead,
 	)
 }
 
