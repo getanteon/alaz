@@ -12,21 +12,6 @@ create table if not exists public.deployment
 alter table public.deployment
     owner to alazuser;
 
-create table if not exists public.pod
-(
-    uid             text not null
-        constraint "Pod_pk"
-            primary key,
-    name            text,
-    namespace       text,
-    image           text,
-    "deploymentUid" text,
-    ip              text
-);
-
-alter table public.pod
-    owner to alazuser;
-
 create table if not exists public.service
 (
     uid        text not null
@@ -66,5 +51,42 @@ create table if not exists public.endpoint_target
 );
 
 alter table public.endpoint_target
+    owner to alazuser;
+
+create table if not exists public.pod
+(
+    uid             text not null
+        constraint "Pod_pk"
+            primary key,
+    name            text,
+    namespace       text,
+    image           text,
+    "deploymentUid" text,
+    ip              text
+);
+
+alter table public.pod
+    owner to alazuser;
+
+create table if not exists public.request
+(
+    start_time  numeric,
+    pk          integer generated always as identity
+        constraint request_pk
+            primary key,
+    latency     integer,
+    from_ip     text,
+    from_type   text,
+    from_uid    text,
+    to_ip       text,
+    to_type     text,
+    to_uid      text,
+    protocol    text,
+    completed   boolean,
+    status_code integer,
+    fail_reason text
+);
+
+alter table public.request
     owner to alazuser;
 

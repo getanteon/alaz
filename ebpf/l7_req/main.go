@@ -17,6 +17,29 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 )
 
+// match with values in l7_req.c
+const (
+	BPF_L7_PROTOCOL_HTTP = iota + 1
+)
+
+// for user space
+const (
+	L7_PROTOCOL_HTTP = "L7_PROTOCOL_HTTP"
+)
+
+// Custom type for the enumeration
+type L7ProtocolConversion uint32
+
+// String representation of the enumeration values
+func (e L7ProtocolConversion) String() string {
+	switch e {
+	case BPF_L7_PROTOCOL_HTTP:
+		return L7_PROTOCOL_HTTP
+	default:
+		return "Unknown"
+	}
+}
+
 // $BPF_CLANG and $BPF_CFLAGS are set by the Makefile.
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc $BPF_CLANG -cflags $BPF_CFLAGS bpf l7.c -- -I../headers
 
@@ -28,7 +51,7 @@ type L7Event struct {
 	Pid      uint32
 	Status   uint32
 	Duration uint64
-	Protocol uint8 // TODO: match
+	Protocol string // L7_PROTOCOL_HTTP
 	Method   uint8
 	Payload  [512]uint8
 }
@@ -111,13 +134,13 @@ func Deploy(ch chan interface{}) {
 			}
 
 			l7Event := (*bpfL7Event)(unsafe.Pointer(&record.RawSample[0]))
-			// TODO: match from pid on user space
+
 			ch <- L7Event{
 				Fd:       l7Event.Fd,
 				Pid:      l7Event.Pid,
 				Status:   l7Event.Status,
 				Duration: l7Event.Duration,
-				Protocol: l7Event.Protocol,
+				Protocol: L7ProtocolConversion(l7Event.Protocol).String(),
 				Method:   l7Event.Method,
 				Payload:  l7Event.Payload,
 			}

@@ -12,6 +12,7 @@ import (
 
 const podTableName = "pod"
 const serviceTableName = "service"
+const requestTableName = "request"
 
 func connectToPostgresDb(psqlconn string) (*sql.DB, error) {
 	// open database
@@ -150,6 +151,23 @@ func (r Repository) DeleteService(dto Service) error {
 	defer stmt.Close()
 
 	row := stmt.QueryRow(dto.UID)
+	if row.Err() != nil {
+		log.Logger.Error().Err(row.Err()).Msg("Could not execute prepared statement")
+		return fmt.Errorf("could not execute prepared statement")
+	}
+	return nil
+}
+
+func (r Repository) PersistRequest(dto Request) error {
+	query := fmt.Sprintf("INSERT INTO %s (start_time,latency,from_ip,from_type,from_uid,to_ip,to_type,to_uid,protocol,completed,status_code,fail_reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)", requestTableName)
+	stmt, err := r.db.Prepare(query)
+	if err != nil {
+		log.Logger.Error().Err(err).Msg("error preparing query")
+		return fmt.Errorf("error preparing query")
+	}
+	defer stmt.Close()
+
+	row := stmt.QueryRow(dto.StartTime.UnixMilli(), dto.Latency, dto.FromIP, dto.FromType, dto.FromUID, dto.ToIP, dto.ToType, dto.ToUID, dto.Protocol, dto.Completed, dto.StatusCode, dto.FailReason)
 	if row.Err() != nil {
 		log.Logger.Error().Err(row.Err()).Msg("Could not execute prepared statement")
 		return fmt.Errorf("could not execute prepared statement")

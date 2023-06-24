@@ -15,6 +15,7 @@ import (
 	"alaz/ebpf/tcp_state"
 	"alaz/log"
 	"os"
+	"time"
 
 	"alaz/k8s"
 
@@ -234,6 +235,20 @@ func (a *Aggregator) processL7(data interface{}) {
 		return
 	}
 
+	// assuming successful request
+	// TODO: handle failed request, timeout case ?
+
+	reqDto := datastore.Request{
+		StartTime:  time.Now(),
+		Latency:    d.Duration,
+		FromIP:     skInfo.Saddr,
+		ToIP:       skInfo.Daddr,
+		Protocol:   d.Protocol,
+		Completed:  true,
+		StatusCode: d.Status,
+		FailReason: "",
+	}
+
 	// find pod info
 	podUid, ok := a.clusterInfo.PodIPToPodUid[skInfo.Saddr]
 	if !ok {
@@ -241,16 +256,17 @@ func (a *Aggregator) processL7(data interface{}) {
 		return
 	}
 
+	reqDto.FromUID = string(podUid)
+	reqDto.FromType = "pod"
+
 	// find service info
 	svcUid, ok := a.clusterInfo.ServiceIPToServiceUid[skInfo.Daddr]
-	if !ok {
-		log.Logger.Debug().Str("serviceIP", skInfo.Daddr).Msg("error finding service info")
-		return
+	if ok {
+		reqDto.ToUID = string(svcUid)
+		reqDto.ToType = "service"
 	}
-
-	log.Logger.Debug().Any("podUid", podUid).
-		Any("svcUid", svcUid).
-		Msg("found pod and service info")
+	// if not found, it's 3rd party url or something else
+	// ToUID and ToType will be empty
 
 	log.Logger.Debug().Int("pid", int(d.Pid)).
 		Uint64("fd", d.Fd).
@@ -260,10 +276,13 @@ func (a *Aggregator) processL7(data interface{}) {
 		Uint16("dport", skInfo.Dport).
 		Uint8("method", d.Method).
 		Uint64("duration", d.Duration).
-		Uint8("protocol", d.Protocol).
+		Str("protocol", d.Protocol).
 		Uint32("status", d.Status).
 		Str("payload", string(d.Payload[:])).
 		Msg("l7 event success on aggregator")
 
-	// TODO: persist l7 request
+	err := a.repo.PersistRequest(reqDto)
+	if err != nil {
+		log.Logger.Debug().Err(err).Msg("error persisting request")
+	}
 }
