@@ -275,7 +275,7 @@ func (a *Aggregator) processL7(data interface{}) {
 		Uint16("sport", skInfo.Sport).
 		Str("daddr", skInfo.Daddr).
 		Uint16("dport", skInfo.Dport).
-		Uint8("method", d.Method).
+		Str("method", d.Method).
 		Uint64("duration", d.Duration).
 		Str("protocol", d.Protocol).
 		Uint32("status", d.Status).
