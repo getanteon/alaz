@@ -2,10 +2,12 @@ package datastore
 
 import (
 	"alaz/config"
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 
 	_ "github.com/lib/pq"
 
@@ -153,7 +155,9 @@ func (r Repository) Close() {
 
 func (r Repository) CreatePod(dto Pod) error {
 	stmt := r.stmts["create_pod"]
-	row := stmt.QueryRow(dto.UID, dto.Name, dto.Namespace, dto.Image, dto.IP)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	row := stmt.QueryRowContext(ctx, dto.UID, dto.Name, dto.Namespace, dto.Image, dto.IP)
 	if row.Err() != nil {
 		log.Logger.Error().Err(row.Err()).Msg("Could not execute prepared statement")
 		return fmt.Errorf("could not execute prepared statement")
@@ -163,7 +167,9 @@ func (r Repository) CreatePod(dto Pod) error {
 
 func (r Repository) UpdatePod(dto Pod) error {
 	stmt := r.stmts["update_pod"]
-	row := stmt.QueryRow(dto.Name, dto.Namespace, dto.Image, dto.IP, dto.UID)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	row := stmt.QueryRowContext(ctx, dto.Name, dto.Namespace, dto.Image, dto.IP, dto.UID)
 	if row.Err() != nil {
 		log.Logger.Error().Err(row.Err()).Msg("Could not execute prepared statement")
 		return fmt.Errorf("could not execute prepared statement")
@@ -173,7 +179,9 @@ func (r Repository) UpdatePod(dto Pod) error {
 
 func (r Repository) DeletePod(dto Pod) error {
 	stmt := r.stmts["delete_pod"]
-	row := stmt.QueryRow(dto.UID)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	row := stmt.QueryRowContext(ctx, dto.UID)
 	if row.Err() != nil {
 		log.Logger.Error().Err(row.Err()).Msg("Could not execute prepared statement")
 		return fmt.Errorf("could not execute prepared statement")
@@ -183,7 +191,9 @@ func (r Repository) DeletePod(dto Pod) error {
 
 func (r Repository) CreateService(dto Service) error {
 	stmt := r.stmts["create_service"]
-	row := stmt.QueryRow(dto.UID, dto.Name, dto.Namespace, dto.Type, dto.ClusterIP)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	row := stmt.QueryRow(ctx, dto.UID, dto.Name, dto.Namespace, dto.Type, dto.ClusterIP)
 	if row.Err() != nil {
 		log.Logger.Error().Err(row.Err()).Msg("Could not execute prepared statement")
 		return fmt.Errorf("could not execute prepared statement")
@@ -193,7 +203,9 @@ func (r Repository) CreateService(dto Service) error {
 
 func (r Repository) UpdateService(dto Service) error {
 	stmt := r.stmts["update_service"]
-	row := stmt.QueryRow(dto.Name, dto.Namespace, dto.Type, dto.ClusterIP, dto.UID)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	row := stmt.QueryRow(ctx, dto.Name, dto.Namespace, dto.Type, dto.ClusterIP, dto.UID)
 	if row.Err() != nil {
 		log.Logger.Error().Err(row.Err()).Msg("Could not execute prepared statement")
 		return fmt.Errorf("could not execute prepared statement")
@@ -203,7 +215,9 @@ func (r Repository) UpdateService(dto Service) error {
 
 func (r Repository) DeleteService(dto Service) error {
 	stmt := r.stmts["delete_service"]
-	row := stmt.QueryRow(dto.UID)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	row := stmt.QueryRow(ctx, dto.UID)
 	if row.Err() != nil {
 		log.Logger.Error().Err(row.Err()).Msg("Could not execute prepared statement")
 		return fmt.Errorf("could not execute prepared statement")
@@ -213,10 +227,13 @@ func (r Repository) DeleteService(dto Service) error {
 
 func (r Repository) PersistRequest(dto Request) error {
 	stmt := r.stmts["create_request"]
-	row := stmt.QueryRow(dto.StartTime.UnixMilli(), dto.Latency, dto.FromIP, dto.FromType, dto.FromUID, dto.ToIP, dto.ToType, dto.ToUID, dto.Protocol, dto.Completed, dto.StatusCode, dto.FailReason, dto.Method)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	row := stmt.QueryRowContext(ctx, dto.StartTime.UnixMilli(), dto.Latency, dto.FromIP, dto.FromType, dto.FromUID, dto.ToIP, dto.ToType, dto.ToUID, dto.Protocol, dto.Completed, dto.StatusCode, dto.FailReason, dto.Method)
 	if row.Err() != nil {
 		log.Logger.Error().Err(row.Err()).Msg("Could not execute prepared statement")
 		return fmt.Errorf("could not execute prepared statement")
 	}
+	log.Logger.Info().Msg("Persisted request")
 	return nil
 }
