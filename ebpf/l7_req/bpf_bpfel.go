@@ -14,23 +14,28 @@ import (
 )
 
 type bpfL7Event struct {
-	Fd       uint64
-	Pid      uint32
-	Status   uint32
-	Duration uint64
-	Protocol uint8
-	Method   uint8
-	Padding  uint16
-	Payload  [512]uint8
-	_        [4]byte
+	Fd                  uint64
+	Pid                 uint32
+	Status              uint32
+	Duration            uint64
+	Protocol            uint8
+	Method              uint8
+	Padding             uint16
+	Payload             [512]uint8
+	PayloadSize         uint32
+	PayloadReadComplete uint8
+	_                   [7]byte
 }
 
 type bpfL7Request struct {
-	WriteTimeNs uint64
-	Protocol    uint8
-	Method      uint8
-	Payload     [512]uint8
-	_           [6]byte
+	WriteTimeNs         uint64
+	Protocol            uint8
+	Method              uint8
+	Payload             [512]uint8
+	_                   [2]byte
+	PayloadSize         uint32
+	PayloadReadComplete uint8
+	_                   [7]byte
 }
 
 type bpfSocketKey struct {

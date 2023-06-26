@@ -31,4 +31,5 @@ type Request struct {
 	Completed  bool
 	StatusCode uint32
 	FailReason string
+	Method     string
 }

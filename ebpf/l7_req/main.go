@@ -40,6 +40,29 @@ func (e L7ProtocolConversion) String() string {
 	}
 }
 
+// match with values in l7_req.c
+const (
+	BPF_GET = iota + 1
+)
+
+// for user space
+const (
+	GET = "GET"
+)
+
+// Custom type for the enumeration
+type HTTPMethodConversion uint32
+
+// String representation of the enumeration values
+func (e HTTPMethodConversion) String() string {
+	switch e {
+	case BPF_GET:
+		return GET
+	default:
+		return "Unknown"
+	}
+}
+
 // $BPF_CLANG and $BPF_CFLAGS are set by the Makefile.
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc $BPF_CLANG -cflags $BPF_CFLAGS bpf l7.c -- -I../headers
 
@@ -47,13 +70,15 @@ const mapKey uint32 = 0
 
 // for user space
 type L7Event struct {
-	Fd       uint64
-	Pid      uint32
-	Status   uint32
-	Duration uint64
-	Protocol string // L7_PROTOCOL_HTTP
-	Method   uint8
-	Payload  [512]uint8
+	Fd                  uint64
+	Pid                 uint32
+	Status              uint32
+	Duration            uint64
+	Protocol            string // L7_PROTOCOL_HTTP
+	Method              string
+	Payload             [512]uint8
+	PayloadSize         uint32 // How much of the payload was copied
+	PayloadReadComplete bool   // Whether the payload was copied completely
 }
 
 const L7_EVENT = "l7_event"
@@ -136,13 +161,15 @@ func Deploy(ch chan interface{}) {
 			l7Event := (*bpfL7Event)(unsafe.Pointer(&record.RawSample[0]))
 
 			ch <- L7Event{
-				Fd:       l7Event.Fd,
-				Pid:      l7Event.Pid,
-				Status:   l7Event.Status,
-				Duration: l7Event.Duration,
-				Protocol: L7ProtocolConversion(l7Event.Protocol).String(),
-				Method:   l7Event.Method,
-				Payload:  l7Event.Payload,
+				Fd:                  l7Event.Fd,
+				Pid:                 l7Event.Pid,
+				Status:              l7Event.Status,
+				Duration:            l7Event.Duration,
+				Protocol:            L7ProtocolConversion(l7Event.Protocol).String(),
+				Method:              HTTPMethodConversion(l7Event.Method).String(),
+				Payload:             l7Event.Payload,
+				PayloadSize:         l7Event.PayloadSize,
+				PayloadReadComplete: uint8ToBool(l7Event.PayloadReadComplete),
 			}
 
 			// log.Logger.Info().
@@ -158,4 +185,8 @@ func Deploy(ch chan interface{}) {
 	}()
 
 	select {}
+}
+
+func uint8ToBool(num uint8) bool {
+	return num != 0
 }

@@ -247,6 +247,7 @@ func (a *Aggregator) processL7(data interface{}) {
 		Completed:  true,
 		StatusCode: d.Status,
 		FailReason: "",
+		Method:     d.Method,
 	}
 
 	// find pod info

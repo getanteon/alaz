@@ -15,6 +15,8 @@
 
 
 #define MAX_PAYLOAD_SIZE 512
+#define PAYLOAD_PREFIX_SIZE 16
+
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
@@ -27,6 +29,8 @@ struct l7_event {
     __u8 method;
     __u16 padding;
     unsigned char payload[MAX_PAYLOAD_SIZE];
+    __u32 payload_size;
+    __u8 payload_read_complete;
 };
 
 struct l7_request {
@@ -34,6 +38,8 @@ struct l7_request {
     __u8 protocol;
     __u8 method;
     unsigned char payload[MAX_PAYLOAD_SIZE];
+    __u32 payload_size;
+    __u8 payload_read_complete;
 };
 
 struct socket_key {
@@ -83,7 +89,7 @@ struct read_args {
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, __u64);
+    __type(key, __u64); // pid_tgid
     __uint(value_size, sizeof(struct read_args));
     __uint(max_entries, 10240);
 } active_reads SEC(".maps");
@@ -121,8 +127,9 @@ int sys_enter_write(struct trace_event_raw_sys_enter_write* ctx) {
     k.pid = id >> 32;
     k.fd = ctx->fd;
 
-    if(ctx->buf){
-        char buf_prefix[16];
+    if(ctx->buf && ctx->count > PAYLOAD_PREFIX_SIZE){
+        // read first 16 bytes of write buffer
+        char buf_prefix[PAYLOAD_PREFIX_SIZE];
         long r = bpf_probe_read(&buf_prefix, sizeof(buf_prefix), (void *)(ctx->buf)) ;
         
         if (r < 0) {
@@ -139,16 +146,31 @@ int sys_enter_write(struct trace_event_raw_sys_enter_write* ctx) {
             // bpf_trace_printk(msg, sizeof(msg));
         }
     }else{
-        char msgCtx[] = "write buffer is null";
+        char msgCtx[] = "write buffer is null or too small";
         bpf_trace_printk(msgCtx, sizeof(msgCtx));
         return 0;
     }
+    
     // buffer starts with GET
     req->protocol = PROTOCOL_HTTP;
     req->method = METHOD_GET;
     
+   
     // copy request payload
-    bpf_probe_read(&req->payload, sizeof(req->payload), (const void *)ctx->buf);
+    // we should copy as much as the size of write buffer, 
+    // if we copy more, we will get a kernel error ?
+
+    if(ctx->count >= MAX_PAYLOAD_SIZE){
+        // will not be able to copy all of it
+        bpf_probe_read(&req->payload, sizeof(req->payload), (const void *)ctx->buf);
+        req->payload_size = MAX_PAYLOAD_SIZE;
+        req->payload_read_complete = 0;
+    }else{
+        // copy only the first ctx->count bytes (all we have)
+        bpf_probe_read(&req->payload, ctx->count, (const void *)ctx->buf);
+        req->payload_size = ctx->count;
+        req->payload_read_complete = 1;
+    }
     
     long res = bpf_map_update_elem(&active_l7_requests, &k, req, BPF_ANY);
     if(res < 0)
@@ -187,10 +209,30 @@ int sys_enter_read(struct trace_event_raw_sys_enter_read* ctx) {
 
 SEC("tracepoint/syscalls/sys_exit_read")
 int sys_exit_read(struct trace_event_raw_sys_exit_read* ctx) {
-    if (ctx->ret <= 0) { // read failed
-        return 0; // TODO: failure handling, timeout etc.
-        // TODO: delete from active_reads ??
-        // TODO: delete from active_l7_requests ??
+    if (ctx->ret < 0) { // read failed
+        // -ERRNO
+        __u64 id = bpf_get_current_pid_tgid();
+
+        // check if this read was initiated by us
+        struct read_args *read_info = bpf_map_lookup_elem(&active_reads, &id);
+        if (!read_info) {
+            return 0;
+        }
+
+        struct socket_key k = {};
+        k.pid = id >> 32;
+        k.fd = read_info->fd;
+
+        // request failed 
+        bpf_map_delete_elem(&active_reads, &id);
+        bpf_map_delete_elem(&active_l7_requests, &k);
+
+        // print error
+        char msg[] = "read failed - %ld";
+        bpf_trace_printk(msg, sizeof(msg), ctx->ret);
+
+        // TODO: send error to user space, request failed
+        return 0;
     }
 
     __u64 id = bpf_get_current_pid_tgid();
@@ -231,6 +273,8 @@ int sys_exit_read(struct trace_event_raw_sys_exit_read* ctx) {
 
     e->protocol = active_req->protocol;
     e->duration = bpf_ktime_get_ns() - active_req->write_time_ns;
+    e->payload_size = active_req->payload_size;
+    e->payload_read_complete = active_req->payload_read_complete;
     
 
     // TODO: get status from buffer
