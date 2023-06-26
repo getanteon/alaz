@@ -4,6 +4,8 @@ import (
 	"alaz/config"
 	"database/sql"
 	"fmt"
+	"os"
+	"strconv"
 
 	_ "github.com/lib/pq"
 
@@ -28,8 +30,11 @@ func connectToPostgresDb(psqlconn string) (*sql.DB, error) {
 	}
 
 	db.SetMaxIdleConns(10)
-	// db.SetConnMaxLifetime(30 * time.Second)
-	db.SetMaxOpenConns(500) // stage db 1000
+	nConn, err := strconv.Atoi(os.Getenv("POSTGRES_MAX_OPEN_CONN"))
+	if err != nil {
+		nConn = 30
+	}
+	db.SetMaxOpenConns(nConn)
 
 	return db, nil
 }
