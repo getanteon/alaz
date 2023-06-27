@@ -19,12 +19,14 @@ import (
 
 // match with values in l7_req.c
 const (
-	BPF_L7_PROTOCOL_HTTP = iota + 1
+	BPF_L7_PROTOCOL_UNKNOWN = iota
+	BPF_L7_PROTOCOL_HTTP
 )
 
 // for user space
 const (
-	L7_PROTOCOL_HTTP = "L7_PROTOCOL_HTTP"
+	L7_PROTOCOL_HTTP    = "L7_PROTOCOL_HTTP"
+	L7_PROTOCOL_UNKNOWN = "L7_PROTOCOL_UNKNOWN"
 )
 
 // Custom type for the enumeration
@@ -35,19 +37,38 @@ func (e L7ProtocolConversion) String() string {
 	switch e {
 	case BPF_L7_PROTOCOL_HTTP:
 		return L7_PROTOCOL_HTTP
+	case BPF_L7_PROTOCOL_UNKNOWN:
+		return L7_PROTOCOL_UNKNOWN
 	default:
 		return "Unknown"
 	}
 }
 
-// match with values in l7_req.c
+// match with values in l7_req.c, order is important
 const (
-	BPF_GET = iota + 1
+	BPF_METHOD_UNKNOWN = iota
+	BPF_METHOD_GET
+	BPF_METHOD_POST
+	BPF_METHOD_PUT
+	BPF_METHOD_PATCH
+	BPF_METHOD_DELETE
+	BPF_METHOD_HEAD
+	BPF_METHOD_CONNECT
+	BPF_METHOD_OPTIONS
+	BPF_METHOD_TRACE
 )
 
 // for user space
 const (
-	GET = "GET"
+	GET     = "GET"
+	POST    = "POST"
+	PUT     = "PUT"
+	PATCH   = "PATCH"
+	DELETE  = "DELETE"
+	HEAD    = "HEAD"
+	CONNECT = "CONNECT"
+	OPTIONS = "OPTIONS"
+	TRACE   = "TRACE"
 )
 
 // Custom type for the enumeration
@@ -56,8 +77,24 @@ type HTTPMethodConversion uint32
 // String representation of the enumeration values
 func (e HTTPMethodConversion) String() string {
 	switch e {
-	case BPF_GET:
+	case BPF_METHOD_GET:
 		return GET
+	case BPF_METHOD_POST:
+		return POST
+	case BPF_METHOD_PUT:
+		return PUT
+	case BPF_METHOD_PATCH:
+		return PATCH
+	case BPF_METHOD_DELETE:
+		return DELETE
+	case BPF_METHOD_HEAD:
+		return HEAD
+	case BPF_METHOD_CONNECT:
+		return CONNECT
+	case BPF_METHOD_OPTIONS:
+		return OPTIONS
+	case BPF_METHOD_TRACE:
+		return TRACE
 	default:
 		return "Unknown"
 	}
@@ -156,6 +193,11 @@ func Deploy(ch chan interface{}) {
 
 			if record.LostSamples != 0 {
 				log.Logger.Warn().Msgf("lost %d samples", record.LostSamples)
+			}
+
+			// TODO: investigate why this is happening
+			if record.RawSample == nil || len(record.RawSample) == 0 {
+				continue
 			}
 
 			l7Event := (*bpfL7Event)(unsafe.Pointer(&record.RawSample[0]))

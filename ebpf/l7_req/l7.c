@@ -12,6 +12,14 @@
 
 #define METHOD_UNKNOWN      0
 #define METHOD_GET          1
+#define METHOD_POST         2
+#define METHOD_PUT         3
+#define METHOD_PATCH        4
+#define METHOD_DELETE       5
+#define METHOD_HEAD       6
+#define METHOD_CONNECT    7
+#define METHOD_OPTIONS       8
+#define METHOD_TRACE       9
 
 
 #define MAX_PAYLOAD_SIZE 512
@@ -138,12 +146,37 @@ int sys_enter_write(struct trace_event_raw_sys_enter_write* ctx) {
             return 0;
         }
 
-        // TODO: get all types of http requests
-        if (!(buf_prefix[0] == 'G' && buf_prefix[1] == 'E' && buf_prefix[2] == 'T')) {
-            return 0; // TODO: only allow GET requests for now
+        // TODO: make a function to check if buf_prefix is a valid http request
+        if (buf_prefix[0] == 'G' && buf_prefix[1] == 'E' && buf_prefix[2] == 'T') {
+            req->protocol = PROTOCOL_HTTP;
+            req->method = METHOD_GET;
+        }else if(buf_prefix[0] == 'P' && buf_prefix[1] == 'O' && buf_prefix[2] == 'S' && buf_prefix[3] == 'T'){
+            req->protocol = PROTOCOL_HTTP;
+            req->method = METHOD_POST;
+        }else if(buf_prefix[0] == 'P' && buf_prefix[1] == 'U' && buf_prefix[2] == 'T'){
+            req->protocol = PROTOCOL_HTTP;
+            req->method = METHOD_PUT;
+        }else if(buf_prefix[0] == 'P' && buf_prefix[1] == 'A' && buf_prefix[2] == 'T' && buf_prefix[3] == 'C' && buf_prefix[4] == 'H'){
+            req->protocol = PROTOCOL_HTTP;
+            req->method = METHOD_PATCH;
+        }else if(buf_prefix[0] == 'D' && buf_prefix[1] == 'E' && buf_prefix[2] == 'L' && buf_prefix[3] == 'E' && buf_prefix[4] == 'T' && buf_prefix[5] == 'E'){
+            req->protocol = PROTOCOL_HTTP;
+            req->method = METHOD_DELETE;
+        }else if(buf_prefix[0] == 'H' && buf_prefix[1] == 'E' && buf_prefix[2] == 'A' && buf_prefix[3] == 'D'){
+            req->protocol = PROTOCOL_HTTP;
+            req->method = METHOD_HEAD;
+        }else if (buf_prefix[0] == 'C' && buf_prefix[1] == 'O' && buf_prefix[2] == 'N' && buf_prefix[3] == 'N' && buf_prefix[4] == 'E' && buf_prefix[5] == 'C' && buf_prefix[6] == 'T'){
+            req->protocol = PROTOCOL_HTTP;
+            req->method = METHOD_CONNECT;
+        }else if(buf_prefix[0] == 'O' && buf_prefix[1] == 'P' && buf_prefix[2] == 'T' && buf_prefix[3] == 'I' && buf_prefix[4] == 'O' && buf_prefix[5] == 'N' && buf_prefix[6] == 'S'){
+            req->protocol = PROTOCOL_HTTP;
+            req->method = METHOD_OPTIONS;
+        }else if(buf_prefix[0] == 'T' && buf_prefix[1] == 'R' && buf_prefix[2] == 'A' && buf_prefix[3] == 'C' && buf_prefix[4] == 'E'){
+            req->protocol = PROTOCOL_HTTP;
+            req->method = METHOD_TRACE;
         }else{
-            // char msg[] = "GET request";
-            // bpf_trace_printk(msg, sizeof(msg));
+            req->protocol = PROTOCOL_UNKNOWN;
+            req->method = METHOD_UNKNOWN;
         }
     }else{
         char msgCtx[] = "write buffer is null or too small";
@@ -151,11 +184,6 @@ int sys_enter_write(struct trace_event_raw_sys_enter_write* ctx) {
         return 0;
     }
     
-    // buffer starts with GET
-    req->protocol = PROTOCOL_HTTP;
-    req->method = METHOD_GET;
-    
-   
     // copy request payload
     // we should copy as much as the size of write buffer, 
     // if we copy more, we will get a kernel error ?
