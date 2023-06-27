@@ -24,7 +24,6 @@ func Deploy() {
 	go l7_req.Deploy(EbpfEvents)
 
 	go listenDebugMsgs()
-
 }
 
 func listenDebugMsgs() {

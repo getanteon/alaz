@@ -39,6 +39,7 @@ func main() {
 
 	a := aggregator.NewAggregator(kubeEvents, nil, ebpf.EbpfEvents)
 	a.Run()
+	a.AdvertisePidSockMap()
 
 	log.Logger.Info().Msg("listen on 8181")
 	http.ListenAndServe(":8181", nil)

@@ -78,7 +78,7 @@ func main() {
 		log.Fatalf("error creating perf ring buffer: %w", err)
 	}
 
-	go listenDebugMsgs()
+	// go listenDebugMsgs()
 	log.Println("Waiting for events..")
 
 	go func() {

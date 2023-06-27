@@ -16,12 +16,12 @@ spec:
       serviceAccountName: alaz-serviceaccount
       containers:
       - name: alaz
-        image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:v1.6
+        image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:v2.0
         env:
           - name: K8S_COLLECTOR_ENABLED
             value: "true"
           - name: CR_COLLECTOR_ENABLED
-            value: "false"
+            value: "true"
           - name: EBPF_ENABLED
             value: "true"
           - name: IN_CLUSTER

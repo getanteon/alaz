@@ -58,7 +58,7 @@ func main() {
 
 	log.Println("Waiting for events..")
 
-	go listenDebugMsgs()
+	// go listenDebugMsgs()
 
 	for range ticker.C {
 		var value uint64

@@ -150,7 +150,7 @@ func Deploy(ch chan interface{}) {
 		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
 	}
 
-	go listenDebugMsgs()
+	// go listenDebugMsgs()
 
 	go func() {
 		for range ticker.C {

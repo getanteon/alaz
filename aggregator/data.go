@@ -14,6 +14,8 @@ import (
 	"alaz/ebpf/l7_req"
 	"alaz/ebpf/tcp_state"
 	"alaz/log"
+	"encoding/json"
+	"net/http"
 	"os"
 	"time"
 
@@ -57,6 +59,9 @@ type ClusterInfo struct {
 	PodIPToPodUid         map[string]types.UID `json:"podIPToPodUid"`
 	ServiceIPToServiceUid map[string]types.UID `json:"serviceIPToServiceUid"`
 
+	PodIPToNamespace     map[string]string `json:"podIPToNamespace"`
+	ServiceIPToNamespace map[string]string `json:"serviceIPToNamespace"`
+
 	// Pid -> SocketMap
 	// pid -> fd -> {saddr, sport, daddr, dport}
 	PidToSocketMap map[uint32]SocketMap `json:"pidToSocketMap"`
@@ -73,13 +78,13 @@ type ClusterInfo struct {
 // or
 // {daddr+dport} -> search in podIPToPodUid -> podUid
 
-type ProcessConnectionMap map[string]SocketMap // Map to store {pid} - > SocketInfo
-
 func NewAggregator(k8sChan <-chan interface{}, crChan <-chan interface{}, ebpfChan <-chan interface{}) *Aggregator {
 	clusterInfo := &ClusterInfo{
 		PodIPToPodUid:         map[string]types.UID{},
 		ServiceIPToServiceUid: map[string]types.UID{},
 		PidToSocketMap:        map[uint32]SocketMap{},
+		PodIPToNamespace:      map[string]string{},
+		ServiceIPToNamespace:  map[string]string{},
 	}
 
 	repo := datastore.NewRepository(config.PostgresConfig{
@@ -105,10 +110,20 @@ func (a *Aggregator) Run() {
 	go a.processEbpf()
 }
 
+func (a *Aggregator) AdvertisePidSockMap() {
+	http.HandleFunc("/pid-sock-map",
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(a.clusterInfo.PidToSocketMap)
+		},
+	)
+}
+
 func (a *Aggregator) processk8s() {
 	for data := range a.k8sChan {
 		d := data.(k8s.K8sResourceMessage)
-
+		// TODO: handle using resource uids instead of ip ?
 		if d.ResourceType == k8s.POD {
 			pod := d.Object.(*corev1.Pod)
 			dtoPod := datastore.Pod{
@@ -121,18 +136,21 @@ func (a *Aggregator) processk8s() {
 			switch d.EventType {
 			case k8s.ADD:
 				a.clusterInfo.PodIPToPodUid[pod.Status.PodIP] = pod.UID
+				a.clusterInfo.PodIPToNamespace[pod.Status.PodIP] = pod.Namespace
 				err := a.repo.CreatePod(dtoPod)
 				if err != nil {
 					log.Logger.Debug().Err(err).Msg("error on CreatePod call")
 				}
 			case k8s.UPDATE:
 				a.clusterInfo.PodIPToPodUid[pod.Status.PodIP] = pod.UID
+				a.clusterInfo.PodIPToNamespace[pod.Status.PodIP] = pod.Namespace
 				err := a.repo.UpdatePod(dtoPod)
 				if err != nil {
 					log.Logger.Debug().Err(err).Msg("error on UpdatePod call")
 				}
 			case k8s.DELETE:
 				delete(a.clusterInfo.PodIPToPodUid, pod.Status.PodIP)
+				delete(a.clusterInfo.PodIPToNamespace, pod.Status.PodIP)
 				err := a.repo.DeletePod(dtoPod)
 				if err != nil {
 					log.Logger.Debug().Err(err).Msg("error on DeletePod call")
@@ -152,18 +170,21 @@ func (a *Aggregator) processk8s() {
 			switch d.EventType {
 			case k8s.ADD:
 				a.clusterInfo.ServiceIPToServiceUid[service.Spec.ClusterIP] = service.UID
+				a.clusterInfo.ServiceIPToNamespace[service.Spec.ClusterIP] = service.Namespace
 				err := a.repo.CreateService(dtoSvc)
 				if err != nil {
 					log.Logger.Debug().Err(err).Msg("error persisting service data")
 				}
 			case k8s.UPDATE:
 				a.clusterInfo.ServiceIPToServiceUid[service.Spec.ClusterIP] = service.UID
+				a.clusterInfo.ServiceIPToNamespace[service.Spec.ClusterIP] = service.Namespace
 				err := a.repo.UpdateService(dtoSvc)
 				if err != nil {
 					log.Logger.Debug().Err(err).Msg("error persisting service data")
 				}
 			case k8s.DELETE:
 				delete(a.clusterInfo.ServiceIPToServiceUid, service.Spec.ClusterIP)
+				delete(a.clusterInfo.ServiceIPToNamespace, service.Spec.ClusterIP)
 				err := a.repo.DeleteService(dtoSvc)
 				if err != nil {
 					log.Logger.Debug().Err(err).Msg("error persisting service data")
@@ -199,10 +220,22 @@ func (a *Aggregator) processEbpf() {
 	}
 }
 
+// TODO: prioritize this
 func (a *Aggregator) processTcpConnect(data interface{}) {
 	d := data.(tcp_state.TcpConnectEvent)
 	if d.Type_ == tcp_state.EVENT_TCP_ESTABLISHED {
 		// {pid,fd} -> SockInfo
+
+		// filter out localhost connections
+		if d.SAddr == "127.0.0.1" || d.DAddr == "127.0.0.1" {
+			return
+		}
+
+		// filter out kube-system namespace
+		if a.clusterInfo.PodIPToNamespace[d.SAddr] == "kube-system" || a.clusterInfo.PodIPToNamespace[d.DAddr] == "kube-system" {
+			return
+		}
+
 		if _, ok := a.clusterInfo.PidToSocketMap[d.Pid]; !ok {
 			a.clusterInfo.PidToSocketMap[d.Pid] = SocketMap{}
 		}
@@ -253,7 +286,18 @@ func (a *Aggregator) processL7(data interface{}) {
 	// find pod info
 	podUid, ok := a.clusterInfo.PodIPToPodUid[skInfo.Saddr]
 	if !ok {
-		log.Logger.Debug().Str("podIP", skInfo.Saddr).Msg("error finding pod info")
+		log.Logger.Debug().Str("podIP", skInfo.Saddr).
+			Int("pid", int(d.Pid)).
+			Uint64("fd", d.Fd).
+			Uint16("sport", skInfo.Sport).
+			Str("daddr", skInfo.Daddr).
+			Uint16("dport", skInfo.Dport).
+			Str("method", d.Method).
+			Uint64("duration", d.Duration).
+			Str("protocol", d.Protocol).
+			Uint32("status", d.Status).
+			Str("payload", string(d.Payload[0:d.PayloadSize])).
+			Msg("error finding pod info")
 		return
 	}
 

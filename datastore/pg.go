@@ -234,6 +234,5 @@ func (r Repository) PersistRequest(dto Request) error {
 		log.Logger.Error().Err(row.Err()).Msg("Could not execute prepared statement")
 		return fmt.Errorf("could not execute prepared statement")
 	}
-	log.Logger.Info().Msg("Persisted request")
 	return nil
 }

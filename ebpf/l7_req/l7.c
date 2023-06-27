@@ -203,7 +203,12 @@ int sys_enter_read(struct trace_event_raw_sys_enter_read* ctx) {
     args.buf = ctx->buf;
     args.size = ctx->count;
 
-    bpf_map_update_elem(&active_reads, &id, &args, BPF_ANY);
+    long res = bpf_map_update_elem(&active_reads, &id, &args, BPF_ANY);
+    if(res < 0)
+    {
+        char msg[] = "Error writing to active_reads - %ld";
+        bpf_trace_printk(msg, sizeof(msg), res);
+    }
     return 0;
 }
 
@@ -263,10 +268,8 @@ int sys_exit_read(struct trace_event_raw_sys_exit_read* ctx) {
 
     e->fd = k.fd;
     e->pid = k.pid;
-    
 
     e->method = active_req->method;
-
 
     // copy req payload
     bpf_probe_read(e->payload, MAX_PAYLOAD_SIZE, active_req->payload);
