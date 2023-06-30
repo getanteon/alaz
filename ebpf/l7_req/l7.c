@@ -28,6 +28,30 @@
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
+static __always_inline
+int parse_http_method(char *buf_prefix) {
+    if (buf_prefix[0] == 'G' && buf_prefix[1] == 'E' && buf_prefix[2] == 'T') {
+            return METHOD_GET;
+    }else if(buf_prefix[0] == 'P' && buf_prefix[1] == 'O' && buf_prefix[2] == 'S' && buf_prefix[3] == 'T'){
+        return METHOD_POST;
+    }else if(buf_prefix[0] == 'P' && buf_prefix[1] == 'U' && buf_prefix[2] == 'T'){
+        return METHOD_PUT;
+    }else if(buf_prefix[0] == 'P' && buf_prefix[1] == 'A' && buf_prefix[2] == 'T' && buf_prefix[3] == 'C' && buf_prefix[4] == 'H'){
+        return METHOD_PATCH;
+    }else if(buf_prefix[0] == 'D' && buf_prefix[1] == 'E' && buf_prefix[2] == 'L' && buf_prefix[3] == 'E' && buf_prefix[4] == 'T' && buf_prefix[5] == 'E'){
+        return METHOD_DELETE;
+    }else if(buf_prefix[0] == 'H' && buf_prefix[1] == 'E' && buf_prefix[2] == 'A' && buf_prefix[3] == 'D'){
+        return METHOD_HEAD;
+    }else if (buf_prefix[0] == 'C' && buf_prefix[1] == 'O' && buf_prefix[2] == 'N' && buf_prefix[3] == 'N' && buf_prefix[4] == 'E' && buf_prefix[5] == 'C' && buf_prefix[6] == 'T'){
+        return METHOD_CONNECT;
+    }else if(buf_prefix[0] == 'O' && buf_prefix[1] == 'P' && buf_prefix[2] == 'T' && buf_prefix[3] == 'I' && buf_prefix[4] == 'O' && buf_prefix[5] == 'N' && buf_prefix[6] == 'S'){
+        return METHOD_OPTIONS;
+    }else if(buf_prefix[0] == 'T' && buf_prefix[1] == 'R' && buf_prefix[2] == 'A' && buf_prefix[3] == 'C' && buf_prefix[4] == 'E'){
+        return METHOD_TRACE;
+    }
+    return -1;
+}
+
 struct l7_event {
     __u64 fd;
     __u32 pid;
@@ -146,37 +170,13 @@ int sys_enter_write(struct trace_event_raw_sys_enter_write* ctx) {
             return 0;
         }
 
-        // TODO: make a function to check if buf_prefix is a valid http request
-        if (buf_prefix[0] == 'G' && buf_prefix[1] == 'E' && buf_prefix[2] == 'T') {
-            req->protocol = PROTOCOL_HTTP;
-            req->method = METHOD_GET;
-        }else if(buf_prefix[0] == 'P' && buf_prefix[1] == 'O' && buf_prefix[2] == 'S' && buf_prefix[3] == 'T'){
-            req->protocol = PROTOCOL_HTTP;
-            req->method = METHOD_POST;
-        }else if(buf_prefix[0] == 'P' && buf_prefix[1] == 'U' && buf_prefix[2] == 'T'){
-            req->protocol = PROTOCOL_HTTP;
-            req->method = METHOD_PUT;
-        }else if(buf_prefix[0] == 'P' && buf_prefix[1] == 'A' && buf_prefix[2] == 'T' && buf_prefix[3] == 'C' && buf_prefix[4] == 'H'){
-            req->protocol = PROTOCOL_HTTP;
-            req->method = METHOD_PATCH;
-        }else if(buf_prefix[0] == 'D' && buf_prefix[1] == 'E' && buf_prefix[2] == 'L' && buf_prefix[3] == 'E' && buf_prefix[4] == 'T' && buf_prefix[5] == 'E'){
-            req->protocol = PROTOCOL_HTTP;
-            req->method = METHOD_DELETE;
-        }else if(buf_prefix[0] == 'H' && buf_prefix[1] == 'E' && buf_prefix[2] == 'A' && buf_prefix[3] == 'D'){
-            req->protocol = PROTOCOL_HTTP;
-            req->method = METHOD_HEAD;
-        }else if (buf_prefix[0] == 'C' && buf_prefix[1] == 'O' && buf_prefix[2] == 'N' && buf_prefix[3] == 'N' && buf_prefix[4] == 'E' && buf_prefix[5] == 'C' && buf_prefix[6] == 'T'){
-            req->protocol = PROTOCOL_HTTP;
-            req->method = METHOD_CONNECT;
-        }else if(buf_prefix[0] == 'O' && buf_prefix[1] == 'P' && buf_prefix[2] == 'T' && buf_prefix[3] == 'I' && buf_prefix[4] == 'O' && buf_prefix[5] == 'N' && buf_prefix[6] == 'S'){
-            req->protocol = PROTOCOL_HTTP;
-            req->method = METHOD_OPTIONS;
-        }else if(buf_prefix[0] == 'T' && buf_prefix[1] == 'R' && buf_prefix[2] == 'A' && buf_prefix[3] == 'C' && buf_prefix[4] == 'E'){
-            req->protocol = PROTOCOL_HTTP;
-            req->method = METHOD_TRACE;
-        }else{
+        int m = parse_http_method(buf_prefix);
+        if (m == -1){
             req->protocol = PROTOCOL_UNKNOWN;
             req->method = METHOD_UNKNOWN;
+        }else{
+            req->protocol = PROTOCOL_HTTP;
+            req->method = m;
         }
     }else{
         char msgCtx[] = "write buffer is null or too small";
@@ -319,3 +319,5 @@ int sys_exit_read(struct trace_event_raw_sys_exit_read* ctx) {
     bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
     return 0;
 }
+
+
