@@ -32,4 +32,5 @@ type Request struct {
 	StatusCode uint32
 	FailReason string
 	Method     string
+	Path       string
 }

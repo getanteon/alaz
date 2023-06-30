@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"alaz/k8s"
@@ -258,6 +259,18 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 
 }
 
+func parseHttpPayload(request string) (method string, path string, httpVersion string) {
+	// Find the first space character
+	requestFirstLine := strings.Split(request, "\n")[0]
+	parts := strings.Split(requestFirstLine, " ")
+	if len(parts) >= 3 {
+		method = parts[0]
+		path = parts[1]
+		httpVersion = parts[2]
+	}
+	return method, path, httpVersion
+}
+
 func (a *Aggregator) processL7(data interface{}) {
 	d := data.(l7_req.L7Event)
 	// find socket info
@@ -281,6 +294,13 @@ func (a *Aggregator) processL7(data interface{}) {
 		StatusCode: d.Status,
 		FailReason: "",
 		Method:     d.Method,
+	}
+
+	// parse http payload, extract path, query params, headers
+	if d.Protocol == l7_req.L7_PROTOCOL_HTTP {
+		_, reqDto.Path, _ = parseHttpPayload(string(d.Payload[0:d.PayloadSize]))
+		//
+		log.Logger.Debug().Str("path", reqDto.Path).Msg("path extracted from http payload")
 	}
 
 	// find pod info
