@@ -94,7 +94,7 @@ func (r Repository) prepareUpdatePodStatement() *sql.Stmt {
 }
 
 func (r Repository) prepareDeletePodStatement() *sql.Stmt {
-	query := fmt.Sprintf("DELETE FROM %s WHERE uid = $1", podTableName)
+	query := fmt.Sprintf("UPDATE %s SET deleted = true WHERE uid = $1", podTableName)
 	stmt, err := r.db.Prepare(query)
 	if err != nil {
 		log.Logger.Error().Err(err).Msg("error preparing delete-pod query")
@@ -124,7 +124,7 @@ func (r Repository) prepareUpdateServiceStatement() *sql.Stmt {
 }
 
 func (r Repository) prepareDeleteServiceStatement() *sql.Stmt {
-	query := fmt.Sprintf("DELETE FROM %s WHERE uid = $1", serviceTableName)
+	query := fmt.Sprintf("UPDATE %s SET deleted = true WHERE uid = $1", serviceTableName)
 	stmt, err := r.db.Prepare(query)
 	if err != nil {
 		log.Logger.Error().Err(err).Msg("error preparing delete-service query")
