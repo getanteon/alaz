@@ -20,7 +20,8 @@ create table if not exists public.service
     name       text,
     namespace  text,
     type       text,
-    cluster_ip text
+    cluster_ip text,
+    deleted    boolean
 );
 
 alter table public.service
@@ -62,7 +63,8 @@ create table if not exists public.pod
     namespace       text,
     image           text,
     "deploymentUid" text,
-    ip              text
+    ip              text,
+    deleted         boolean
 );
 
 alter table public.pod
@@ -74,7 +76,7 @@ create table if not exists public.request
     pk          integer generated always as identity
         constraint request_pk
             primary key,
-    latency     integer,
+    latency     bigint,
     from_ip     text,
     from_type   text,
     from_uid    text,
@@ -84,7 +86,9 @@ create table if not exists public.request
     protocol    text,
     completed   boolean,
     status_code integer,
-    fail_reason text
+    fail_reason text,
+    method      text,
+    path        text
 );
 
 alter table public.request
