@@ -163,9 +163,15 @@ func Deploy(ch chan interface{}) {
 				log.Logger.Warn().Msgf("lost %d samples", record.LostSamples)
 			}
 
+			// TODO: investigate why this is happening
+			// sometimes the record is empty
+			if record.RawSample == nil || len(record.RawSample) == 0 {
+				continue
+			}
+
 			bpfEvent := (*TcpEvent)(unsafe.Pointer(&record.RawSample[0]))
 
-			// TODO: send do channelt
+			// TODO: send to channel, and process listen events in aggreagator
 
 			log.Logger.Info().
 				Uint32("pid", bpfEvent.Pid).
@@ -184,6 +190,10 @@ func Deploy(ch chan interface{}) {
 
 			if record.LostSamples != 0 {
 				log.Logger.Warn().Msgf("lost %d samples", record.LostSamples)
+			}
+
+			if record.RawSample == nil || len(record.RawSample) == 0 {
+				continue
 			}
 
 			bpfEvent := (*TcpEvent)(unsafe.Pointer(&record.RawSample[0]))
