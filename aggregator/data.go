@@ -277,7 +277,8 @@ func (a *Aggregator) processL7(data interface{}) {
 
 	skInfo, ok := a.clusterInfo.PidToSocketMap[d.Pid][d.Fd]
 	if !ok {
-		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("error finding socket info")
+		// log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("error finding socket info")
+		// TODO: detect early establisted connections
 		return
 	}
 
@@ -345,6 +346,8 @@ func (a *Aggregator) processL7(data interface{}) {
 		Uint32("status", d.Status).
 		Str("payload", string(d.Payload[:])).
 		Msg("l7 event success on aggregator")
+
+	reqDto.Completed = !d.Failed
 
 	err := a.repo.PersistRequest(reqDto)
 	if err != nil {

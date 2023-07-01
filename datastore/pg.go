@@ -193,7 +193,7 @@ func (r Repository) CreateService(dto Service) error {
 	stmt := r.stmts["create_service"]
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	row := stmt.QueryRow(ctx, dto.UID, dto.Name, dto.Namespace, dto.Type, dto.ClusterIP)
+	row := stmt.QueryRowContext(ctx, dto.UID, dto.Name, dto.Namespace, dto.Type, dto.ClusterIP)
 	if row.Err() != nil {
 		log.Logger.Error().Err(row.Err()).Msg("Could not execute prepared statement")
 		return fmt.Errorf("could not execute prepared statement")
@@ -205,7 +205,7 @@ func (r Repository) UpdateService(dto Service) error {
 	stmt := r.stmts["update_service"]
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	row := stmt.QueryRow(ctx, dto.Name, dto.Namespace, dto.Type, dto.ClusterIP, dto.UID)
+	row := stmt.QueryRowContext(ctx, dto.Name, dto.Namespace, dto.Type, dto.ClusterIP, dto.UID)
 	if row.Err() != nil {
 		log.Logger.Error().Err(row.Err()).Msg("Could not execute prepared statement")
 		return fmt.Errorf("could not execute prepared statement")
@@ -217,7 +217,7 @@ func (r Repository) DeleteService(dto Service) error {
 	stmt := r.stmts["delete_service"]
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	row := stmt.QueryRow(ctx, dto.UID)
+	row := stmt.QueryRowContext(ctx, dto.UID)
 	if row.Err() != nil {
 		log.Logger.Error().Err(row.Err()).Msg("Could not execute prepared statement")
 		return fmt.Errorf("could not execute prepared statement")
