@@ -51,17 +51,24 @@ func crCollector() {
 		log.Logger.Fatal().Err(err).Msg("failed to create containerd tracker")
 	}
 	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
-	km, err := ct.ListAll(ctx)
-	if err != nil {
-		log.Logger.Fatal().Err(err).Msg("failed to get containerd metadata")
-	}
 
 	http.HandleFunc("/cr-pods", func(w http.ResponseWriter, r *http.Request) {
+		km, err := ct.ListAll(ctx)
+		if err != nil {
+			w.Write([]byte(err.Error()))
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(km.PodMetadatas)
 	})
 
 	http.HandleFunc("/cr-containers", func(w http.ResponseWriter, r *http.Request) {
+		km, err := ct.ListAll(ctx)
+		if err != nil {
+			w.Write([]byte(err.Error()))
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(km.ContainerMetadatas)
 	})

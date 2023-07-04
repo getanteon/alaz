@@ -142,3 +142,17 @@ calisirsan kernelda bulamadigi icin mapping de yapamiyor error veriyor.
 
 core -> kernel structurelarina erisirken 
 kendi 
+
+
+exlude on strace:
+    sudo strace -o hammercalls.txt -f -e 'trace=!epoll_pwait,nanosleep,futex,setsockopt,getsockopt,epoll_ctl' -p 17555
+
+filter on strace:
+    sudo strace -f -e trace=socket,connect,write,read,accept -p 805247
+
+
+
+write, read , close
+timeout case -> write , close ??
+
+sudo strace -o myappclient-calls.txt -f -e 'trace=!epoll_pwait,nanosleep,futex,setsockopt,getsockopt,epoll_ctl' -p 28347
