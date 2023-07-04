@@ -24,7 +24,8 @@ type bpfL7Event struct {
 	Payload             [512]uint8
 	PayloadSize         uint32
 	PayloadReadComplete uint8
-	_                   [7]byte
+	Failed              uint8
+	_                   [6]byte
 }
 
 type bpfL7Request struct {
@@ -85,6 +86,7 @@ type bpfSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfProgramSpecs struct {
+	SysEnterClose *ebpf.ProgramSpec `ebpf:"sys_enter_close"`
 	SysEnterRead  *ebpf.ProgramSpec `ebpf:"sys_enter_read"`
 	SysEnterWrite *ebpf.ProgramSpec `ebpf:"sys_enter_write"`
 	SysExitRead   *ebpf.ProgramSpec `ebpf:"sys_exit_read"`
@@ -141,6 +143,7 @@ func (m *bpfMaps) Close() error {
 //
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfPrograms struct {
+	SysEnterClose *ebpf.Program `ebpf:"sys_enter_close"`
 	SysEnterRead  *ebpf.Program `ebpf:"sys_enter_read"`
 	SysEnterWrite *ebpf.Program `ebpf:"sys_enter_write"`
 	SysExitRead   *ebpf.Program `ebpf:"sys_exit_read"`
@@ -148,6 +151,7 @@ type bpfPrograms struct {
 
 func (p *bpfPrograms) Close() error {
 	return _BpfClose(
+		p.SysEnterClose,
 		p.SysEnterRead,
 		p.SysEnterWrite,
 		p.SysExitRead,

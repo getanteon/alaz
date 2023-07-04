@@ -63,6 +63,7 @@ struct l7_event {
     unsigned char payload[MAX_PAYLOAD_SIZE];
     __u32 payload_size;
     __u8 payload_read_complete;
+    __u8 failed;
 };
 
 struct l7_request {
@@ -255,16 +256,15 @@ int sys_exit_read(struct trace_event_raw_sys_exit_read* ctx) {
         struct socket_key k = {};
         k.pid = id >> 32;
         k.fd = read_info->fd;
-
-        // request failed 
-        bpf_map_delete_elem(&active_reads, &id);
-        bpf_map_delete_elem(&active_l7_requests, &k);
-
+        
         // print error
         char msg[] = "read failed - %ld";
         bpf_trace_printk(msg, sizeof(msg), ctx->ret);
 
-        // TODO: send error to user space, request failed
+        // clean up
+        bpf_map_delete_elem(&active_reads, &id);
+        bpf_map_delete_elem(&active_l7_requests, &k);
+
         return 0;
     }
 
@@ -306,7 +306,8 @@ int sys_exit_read(struct trace_event_raw_sys_exit_read* ctx) {
     e->duration = bpf_ktime_get_ns() - active_req->write_time_ns;
     e->payload_size = active_req->payload_size;
     e->payload_read_complete = active_req->payload_read_complete;
-    
+    e->failed = 0; // success
+
 
     // TODO: get status from buffer
     // char *buf = args->buf;

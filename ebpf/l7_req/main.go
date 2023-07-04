@@ -116,6 +116,7 @@ type L7Event struct {
 	Payload             [512]uint8
 	PayloadSize         uint32 // How much of the payload was copied
 	PayloadReadComplete bool   // Whether the payload was copied completely
+	Failed              bool   // Request failed
 }
 
 const L7_EVENT = "l7_event"
@@ -181,7 +182,7 @@ func Deploy(ch chan interface{}) {
 
 	// Read loop reporting the total amount of times the kernel
 	// function was entered, once per second.
-	ticker := time.NewTicker(5 * time.Millisecond)
+	ticker := time.NewTicker(20 * time.Nanosecond)
 	defer ticker.Stop()
 
 	go func() {
@@ -192,7 +193,7 @@ func Deploy(ch chan interface{}) {
 			}
 
 			if record.LostSamples != 0 {
-				log.Logger.Warn().Msgf("lost %d samples", record.LostSamples)
+				log.Logger.Warn().Msgf("lost samples l7-event %d", record.LostSamples)
 			}
 
 			// TODO: investigate why this is happening
@@ -212,6 +213,7 @@ func Deploy(ch chan interface{}) {
 				Payload:             l7Event.Payload,
 				PayloadSize:         l7Event.PayloadSize,
 				PayloadReadComplete: uint8ToBool(l7Event.PayloadReadComplete),
+				Failed:              uint8ToBool(l7Event.Failed),
 			}
 
 			// log.Logger.Info().
@@ -229,6 +231,7 @@ func Deploy(ch chan interface{}) {
 	select {}
 }
 
+// 0 is false, 1 is true
 func uint8ToBool(num uint8) bool {
 	return num != 0
 }

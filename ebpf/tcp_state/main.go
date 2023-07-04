@@ -117,7 +117,7 @@ func Deploy(ch chan interface{}) {
 
 	// Read loop reporting the total amount of times the kernel
 	// function was entered, once per second.
-	ticker := time.NewTicker(5 * time.Millisecond)
+	ticker := time.NewTicker(20 * time.Nanosecond)
 	defer ticker.Stop()
 
 	time.Sleep(1 * time.Second)
@@ -160,7 +160,7 @@ func Deploy(ch chan interface{}) {
 			}
 
 			if record.LostSamples != 0 {
-				log.Logger.Warn().Msgf("lost %d samples", record.LostSamples)
+				log.Logger.Warn().Msgf("lost samples tcp-listen %d", record.LostSamples)
 			}
 
 			// TODO: investigate why this is happening
@@ -189,7 +189,7 @@ func Deploy(ch chan interface{}) {
 			}
 
 			if record.LostSamples != 0 {
-				log.Logger.Warn().Msgf("lost %d samples", record.LostSamples)
+				log.Logger.Warn().Msgf("lost samples tcp-connect %d", record.LostSamples)
 			}
 
 			if record.RawSample == nil || len(record.RawSample) == 0 {
