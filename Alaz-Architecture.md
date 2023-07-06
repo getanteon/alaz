@@ -41,14 +41,18 @@ Used packages from cilium are :
  - `github.com/cilium/ebpf/link`
  - `github.com/cilium/ebpf/perf`
  - `github.com/cilium/ebpf/rlimit`
+
+ ebpf programs: 
+ - `tcp_state` : Detects newly established, closed, and listened TCP connections. The number of sockets associated with the program's PID depends on the remote IP address. Keeping this data together with the file descriptor is useful.
+ - `l7_req` : Monitors both incoming and outgoing payloads by tracking the write and read syscalls. Then use `tcp_state` to aggregate the data we receive, allowing us to determine who sent which request to where.
  
 Current  programs are generally attached to kernel tracepoints like:
- - tracepoint/syscalls/sys_enter_write
- - tracepoint/syscalls/sys_enter_read
- - tracepoint/syscalls/sys_exit_read
- - tracepoint/sock/inet_sock_set_state
- - tracepoint/syscalls/sys_enter_connect
- - tracepoint/syscalls/sys_exit_connect
+ - tracepoint/syscalls/sys_enter_write (l7_req)
+ - tracepoint/syscalls/sys_enter_read (l7_req)
+ - tracepoint/syscalls/sys_exit_read (l7_req)
+ - tracepoint/sock/inet_sock_set_state (tcp_state)
+ - tracepoint/syscalls/sys_enter_connect (tcp_state)
+ - tracepoint/syscalls/sys_exit_connect (tcp_state)
 
 #### How to Build Alaz
 Alaz embeds compiled eBPF programs in it. After compilation process on ebpf-builder is done, compiled programs are located in project structure.
