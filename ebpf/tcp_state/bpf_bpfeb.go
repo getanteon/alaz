@@ -71,6 +71,7 @@ type bpfProgramSpecs struct {
 type bpfMapSpecs struct {
 	FdByPidTgid      *ebpf.MapSpec `ebpf:"fd_by_pid_tgid"`
 	SockMap          *ebpf.MapSpec `ebpf:"sock_map"`
+	SockMapTemp      *ebpf.MapSpec `ebpf:"sock_map_temp"`
 	TcpConnectEvents *ebpf.MapSpec `ebpf:"tcp_connect_events"`
 	TcpListenEvents  *ebpf.MapSpec `ebpf:"tcp_listen_events"`
 }
@@ -96,6 +97,7 @@ func (o *bpfObjects) Close() error {
 type bpfMaps struct {
 	FdByPidTgid      *ebpf.Map `ebpf:"fd_by_pid_tgid"`
 	SockMap          *ebpf.Map `ebpf:"sock_map"`
+	SockMapTemp      *ebpf.Map `ebpf:"sock_map_temp"`
 	TcpConnectEvents *ebpf.Map `ebpf:"tcp_connect_events"`
 	TcpListenEvents  *ebpf.Map `ebpf:"tcp_listen_events"`
 }
@@ -104,6 +106,7 @@ func (m *bpfMaps) Close() error {
 	return _BpfClose(
 		m.FdByPidTgid,
 		m.SockMap,
+		m.SockMapTemp,
 		m.TcpConnectEvents,
 		m.TcpListenEvents,
 	)

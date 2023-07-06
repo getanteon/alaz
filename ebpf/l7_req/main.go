@@ -182,7 +182,7 @@ func Deploy(ch chan interface{}) {
 
 	// Read loop reporting the total amount of times the kernel
 	// function was entered, once per second.
-	ticker := time.NewTicker(20 * time.Nanosecond)
+	ticker := time.NewTicker(1 * time.Millisecond)
 	defer ticker.Stop()
 
 	go func() {
@@ -216,15 +216,6 @@ func Deploy(ch chan interface{}) {
 				Failed:              uint8ToBool(l7Event.Failed),
 			}
 
-			// log.Logger.Info().
-			// 	Uint32("pid", l7Event.Pid).
-			// 	Uint64("fd", l7Event.Fd).
-			// 	Uint32("status", l7Event.Status).
-			// 	Uint64("duration", l7Event.Duration).
-			// 	Uint8("protocol", l7Event.Protocol).
-			// 	Uint8("method", l7Event.Method).
-			// 	Str("payload", string(l7Event.Payload[:])).
-			// 	Msg("l7 event")
 		}
 	}()
 

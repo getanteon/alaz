@@ -54,9 +54,7 @@ struct sk_info
   __u32 pid;
 };
 
-// keeps sockets at SYN_SENT state
-// so we can get the pid and fd when the connection is established
-// and we can send the event
+// keeps open sockets
 // key: skaddr
 // value: sk_info
 // remove when connection is established or when socket is closed
@@ -67,6 +65,16 @@ struct
   __type(key, void *);
   __type(value, struct sk_info);
 } sock_map SEC(".maps");
+
+
+// opening sockets, delete when connection is established or connection fails
+struct
+{
+  __uint(type, BPF_MAP_TYPE_HASH);
+  __uint(max_entries, 10240);
+  __type(key, void *);
+  __type(value, struct sk_info);
+} sock_map_temp SEC(".maps");
 
 SEC("tracepoint/sock/inet_sock_set_state")
 int inet_sock_set_state(void *ctx)
@@ -113,17 +121,17 @@ if (BPF_CORE_READ(&args, protocol) != IPPROTO_TCP)
 
     // remove from fd_by_pid_tgid map, we are going to keep fdp
     bpf_map_delete_elem(&fd_by_pid_tgid, &id);
-    bpf_map_update_elem(&sock_map, &skaddr, &i, BPF_ANY);
+    bpf_map_update_elem(&sock_map_temp, &skaddr, &i, BPF_ANY);
     return 0;
   }
 
   __u64 fd = 0;
   __u32 type = 0;
-  __u64 timestamp = 0;
+  __u64 timestamp = bpf_ktime_get_ns();
   void *map = &tcp_connect_events;
   if (oldstate == BPF_TCP_SYN_SENT)
   {
-    struct sk_info *i = bpf_map_lookup_elem(&sock_map, &skaddr);
+    struct sk_info *i = bpf_map_lookup_elem(&sock_map_temp, &skaddr);
     if (!i)
     {
       return 0;
@@ -131,20 +139,40 @@ if (BPF_CORE_READ(&args, protocol) != IPPROTO_TCP)
     if (newstate == BPF_TCP_ESTABLISHED)
     {
       type = EVENT_TCP_ESTABLISHED;
+      pid = i->pid;
+      fd = i->fd;
+      bpf_map_delete_elem(&sock_map_temp, &skaddr);
+
+      // add to sock_map
+      struct sk_info si = {};
+      si.pid = i->pid;
+      si.fd = i->fd;
+      bpf_map_update_elem(&sock_map, &skaddr, &si, BPF_ANY);
     }
     else if (newstate == BPF_TCP_CLOSE)
     {
       type = EVENT_TCP_CONNECT_FAILED;
-    }
-    pid = i->pid;
-    fd = i->fd;
-    bpf_map_delete_elem(&sock_map, &skaddr);
+      pid = i->pid;
+      fd = i->fd;
+      bpf_map_delete_elem(&sock_map_temp, &skaddr);
+    } 
   }
 
   if (oldstate == BPF_TCP_ESTABLISHED &&
       (newstate == BPF_TCP_FIN_WAIT1 || newstate == BPF_TCP_CLOSE_WAIT))
   {
     type = EVENT_TCP_CLOSED;
+    
+    struct sk_info *i = bpf_map_lookup_elem(&sock_map, &skaddr);
+    if (!i)
+    {
+      return 0;
+    }
+    pid = i->pid;
+    fd = i->fd;
+
+    // delete from sock_map
+    bpf_map_delete_elem(&sock_map, &skaddr);
   }
   if (oldstate == BPF_TCP_CLOSE && newstate == BPF_TCP_LISTEN)
   {
@@ -170,7 +198,6 @@ if (BPF_CORE_READ(&args, protocol) != IPPROTO_TCP)
   e.dport = BPF_CORE_READ(&args, dport);
   e.fd = fd;
 
-  // TODO: use core_read 
   __builtin_memcpy(&e.saddr, &args.saddr, sizeof(e.saddr));
   __builtin_memcpy(&e.daddr, &args.daddr, sizeof(e.saddr));
 

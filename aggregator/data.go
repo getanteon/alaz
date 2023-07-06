@@ -214,9 +214,22 @@ func (a *Aggregator) processEbpf() {
 		switch bpfEvent.Type() {
 		case tcp_state.TCP_CONNECT_EVENT:
 			a.processTcpConnect(data)
-		// TODO: TCP_CLOSE
 		case l7_req.L7_EVENT:
-			a.processL7(data)
+			d := data.(l7_req.L7Event) // copy data's value
+			l7Event := l7_req.L7Event{
+				Fd:                  d.Fd,
+				Pid:                 d.Pid,
+				Status:              d.Status,
+				Duration:            d.Duration,
+				Protocol:            d.Protocol,
+				Method:              d.Method,
+				Payload:             d.Payload,
+				PayloadSize:         d.PayloadSize,
+				PayloadReadComplete: d.PayloadReadComplete,
+				Failed:              d.Failed,
+			}
+			// TODO: make this concurrent, thats why we copy the data
+			a.processL7(l7Event)
 		}
 	}
 }
@@ -233,9 +246,9 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 		}
 
 		// filter out kube-system namespace
-		if a.clusterInfo.PodIPToNamespace[d.SAddr] == "kube-system" || a.clusterInfo.PodIPToNamespace[d.DAddr] == "kube-system" {
-			return
-		}
+		// if a.clusterInfo.PodIPToNamespace[d.SAddr] == "kube-system" || a.clusterInfo.PodIPToNamespace[d.DAddr] == "kube-system" {
+		// 	return
+		// }
 
 		if _, ok := a.clusterInfo.PidToSocketMap[d.Pid]; !ok {
 			a.clusterInfo.PidToSocketMap[d.Pid] = SocketMap{}
@@ -253,6 +266,15 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 
 	} else if d.Type_ == tcp_state.EVENT_TCP_CLOSED {
 		// remove from map
+
+		// TODO: fd 0 ???
+		if d.Pid == 28319 {
+			log.Logger.Warn().Uint32("pid", d.Pid).Uint64("fd", d.Fd).
+				Str("saddr", d.SAddr).Uint16("sport", d.SPort).
+				Str("daddr", d.DAddr).Uint16("dport", d.DPort).
+				Msg("TCP_CLOSED event")
+		}
+
 		delete(a.clusterInfo.PidToSocketMap[d.Pid], d.Fd)
 		// TODO: persist
 	}
@@ -271,20 +293,16 @@ func parseHttpPayload(request string) (method string, path string, httpVersion s
 	return method, path, httpVersion
 }
 
-func (a *Aggregator) processL7(data interface{}) {
-	d := data.(l7_req.L7Event)
+func (a *Aggregator) processL7(d l7_req.L7Event) {
 	// find socket info
-
 	skInfo, ok := a.clusterInfo.PidToSocketMap[d.Pid][d.Fd]
 	if !ok {
-		// log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("error finding socket info")
+		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("error finding socket info")
 		// TODO: detect early establisted connections
 		return
 	}
 
 	// assuming successful request
-	// TODO: handle failed request, timeout case ?
-
 	reqDto := datastore.Request{
 		StartTime:  time.Now(),
 		Latency:    d.Duration,
@@ -301,13 +319,13 @@ func (a *Aggregator) processL7(data interface{}) {
 	if d.Protocol == l7_req.L7_PROTOCOL_HTTP {
 		_, reqDto.Path, _ = parseHttpPayload(string(d.Payload[0:d.PayloadSize]))
 		//
-		log.Logger.Debug().Str("path", reqDto.Path).Msg("path extracted from http payload")
+		log.Logger.Info().Str("path", reqDto.Path).Msg("path extracted from http payload")
 	}
 
 	// find pod info
 	podUid, ok := a.clusterInfo.PodIPToPodUid[skInfo.Saddr]
 	if !ok {
-		log.Logger.Debug().Str("podIP", skInfo.Saddr).
+		log.Logger.Warn().Str("podIP", skInfo.Saddr).
 			Int("pid", int(d.Pid)).
 			Uint64("fd", d.Fd).
 			Uint16("sport", skInfo.Sport).
@@ -334,23 +352,19 @@ func (a *Aggregator) processL7(data interface{}) {
 	// if not found, it's 3rd party url or something else
 	// ToUID and ToType will be empty
 
-	log.Logger.Debug().Int("pid", int(d.Pid)).
-		Uint64("fd", d.Fd).
-		Str("saddr", skInfo.Saddr).
-		Uint16("sport", skInfo.Sport).
-		Str("daddr", skInfo.Daddr).
-		Uint16("dport", skInfo.Dport).
-		Str("method", d.Method).
-		Uint64("duration", d.Duration).
-		Str("protocol", d.Protocol).
-		Uint32("status", d.Status).
-		Str("payload", string(d.Payload[:])).
-		Msg("l7 event success on aggregator")
+	// log.Logger.Debug().Interface("reqDto", reqDto).
+	// 	Msg("l7 event success on aggregator")
+
+	if d.Pid == 28319 {
+		log.Logger.Warn().
+			Str("payload", string(d.Payload[0:d.PayloadSize])).
+			Msg("payload of 28319")
+	}
 
 	reqDto.Completed = !d.Failed
 
 	err := a.repo.PersistRequest(reqDto)
 	if err != nil {
-		log.Logger.Debug().Err(err).Msg("error persisting request")
+		log.Logger.Error().Err(err).Msg("error persisting request")
 	}
 }

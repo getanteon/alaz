@@ -117,7 +117,7 @@ func Deploy(ch chan interface{}) {
 
 	// Read loop reporting the total amount of times the kernel
 	// function was entered, once per second.
-	ticker := time.NewTicker(20 * time.Nanosecond)
+	ticker := time.NewTicker(1 * time.Millisecond)
 	defer ticker.Stop()
 
 	time.Sleep(1 * time.Second)
@@ -169,15 +169,15 @@ func Deploy(ch chan interface{}) {
 				continue
 			}
 
-			bpfEvent := (*TcpEvent)(unsafe.Pointer(&record.RawSample[0]))
+			// bpfEvent := (*TcpEvent)(unsafe.Pointer(&record.RawSample[0]))
 
 			// TODO: send to channel, and process listen events in aggreagator
 
-			log.Logger.Info().
-				Uint32("pid", bpfEvent.Pid).
-				Uint16("sport", bpfEvent.SPort).
-				Uint16("dport", bpfEvent.DPort).
-				Msg("listen event")
+			// log.Logger.Info().
+			// 	Uint32("pid", bpfEvent.Pid).
+			// 	Uint16("sport", bpfEvent.SPort).
+			// 	Uint16("dport", bpfEvent.DPort).
+			// 	Msg("listen event")
 		}
 	}()
 

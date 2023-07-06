@@ -52,6 +52,30 @@ int parse_http_method(char *buf_prefix) {
     return -1;
 }
 
+static __always_inline
+int parse_http_status(char *b) {
+    // HTTP/1.1 200 OK
+    if (b[0] != 'H' || b[1] != 'T' || b[2] != 'T' || b[3] != 'P' || b[4] != '/') {
+        return -1;
+    }
+    if (b[5] < '0' || b[5] > '9') {
+        return -1;
+    }
+    if (b[6] != '.') {
+        return -1;
+    }
+    if (b[7] < '0' || b[7] > '9') {
+        return -1;
+    }
+    if (b[8] != ' ') {
+        return -1;
+    }
+    if (b[9] < '0' || b[9] > '9' || b[10] < '0' || b[10] > '9' || b[11] < '0' || b[11] > '9') {
+        return -1;
+    }
+    return (b[9]-'0')*100 + (b[10]-'0')*10 + (b[11]-'0');
+}
+
 struct l7_event {
     __u64 fd;
     __u32 pid;
@@ -103,14 +127,12 @@ struct {
     __type(value, struct l7_request);
 } active_l7_requests SEC(".maps");
 
-
 // send l7 events to userspace
 struct {
     __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
     __uint(key_size, sizeof(int));
     __uint(value_size, sizeof(int));
 } l7_events SEC(".maps");
-
 
 // when given with __type macro below
 // type *btf.Pointer not supported
@@ -156,6 +178,8 @@ int sys_enter_write(struct trace_event_raw_sys_enter_write* ctx) {
     req->protocol = PROTOCOL_UNKNOWN;
     req->write_time_ns = bpf_ktime_get_ns();
 
+    // TODO: If socket is not tcp (SOCK_STREAM), we are not interested in it
+
     struct socket_key k = {};
     k.pid = id >> 32;
     k.fd = ctx->fd;
@@ -170,11 +194,27 @@ int sys_enter_write(struct trace_event_raw_sys_enter_write* ctx) {
             bpf_trace_printk(msg, sizeof(msg), r);
             return 0;
         }
+        // We are tracking tcp connections (sockets) on tcp_state bpf program, sending them to userspace
+        // and then we are tracking http requests on this bpf program, sending them to userspace
+
+        // We should not send l7_events that is not related to a tcp connection,
+        // otherwise we will have a lot of events that are not related to a tcp connection
+        // and we will not be able to match them with a tcp connection.
+        // Also, file descriptors are reused, so tcp and udp sockets can have the same fd at different times.
+        // This can cause mismatched events. (udp request with tcp connection)
+        // Userspace only knows about tcp connections, so we should only send l7_events that are related to a tcp connection. 
+
+        // TODO: check other protocols than http, for now we only support http
+        // kafka, redis, elasticsearch, etc.
 
         int m = parse_http_method(buf_prefix);
         if (m == -1){
             req->protocol = PROTOCOL_UNKNOWN;
             req->method = METHOD_UNKNOWN;
+            return 0; // do not continue processing for now (udp requests are flowing and overlaps with http requests)
+            // TODO: we should continue to send events that are unknown, could be kafka, redis, etc.
+            // But we should not send udp events to userspace, we should only send tcp events
+            // Need a way to distinguish tcp and udp sockets. Maybe tracking socket syscalls ?
         }else{
             req->protocol = PROTOCOL_HTTP;
             req->method = m;
@@ -189,7 +229,7 @@ int sys_enter_write(struct trace_event_raw_sys_enter_write* ctx) {
     // we should copy as much as the size of write buffer, 
     // if we copy more, we will get a kernel error ?
 
-    if(ctx->count >= MAX_PAYLOAD_SIZE){
+    if(ctx->count > MAX_PAYLOAD_SIZE){
         // will not be able to copy all of it
         bpf_probe_read(&req->payload, sizeof(req->payload), (const void *)ctx->buf);
         req->payload_size = MAX_PAYLOAD_SIZE;
@@ -256,7 +296,7 @@ int sys_exit_read(struct trace_event_raw_sys_exit_read* ctx) {
         struct socket_key k = {};
         k.pid = id >> 32;
         k.fd = read_info->fd;
-        
+
         // print error
         char msg[] = "read failed - %ld";
         bpf_trace_printk(msg, sizeof(msg), ctx->ret);
@@ -284,9 +324,6 @@ int sys_exit_read(struct trace_event_raw_sys_exit_read* ctx) {
         return 0;
     }
 
-    bpf_map_delete_elem(&active_reads, &id);
-    bpf_map_delete_elem(&active_l7_requests, &k);
-
     // Instead of allocating on bpf stack, use cpu map
     int zero = 0;
     struct l7_event *e = bpf_map_lookup_elem(&l7_event_heap, &zero);
@@ -299,24 +336,46 @@ int sys_exit_read(struct trace_event_raw_sys_exit_read* ctx) {
 
     e->method = active_req->method;
 
+    e->protocol = active_req->protocol;
+    e->duration = bpf_ktime_get_ns() - active_req->write_time_ns;
+    
+    // request payload
+    e->payload_size = active_req->payload_size;
+    e->payload_read_complete = active_req->payload_read_complete;
+    
     // copy req payload
     bpf_probe_read(e->payload, MAX_PAYLOAD_SIZE, active_req->payload);
 
-    e->protocol = active_req->protocol;
-    e->duration = bpf_ktime_get_ns() - active_req->write_time_ns;
-    e->payload_size = active_req->payload_size;
-    e->payload_read_complete = active_req->payload_read_complete;
     e->failed = 0; // success
 
 
-    // TODO: get status from buffer
-    // char *buf = args->buf;
-    // __u64 size = args->size;   
+    e->status = 0;
+    if(read_info->buf && read_info->size > PAYLOAD_PREFIX_SIZE){
+        if(e->protocol==PROTOCOL_HTTP){ // if http, try to parse status code
+            // read first 16 bytes of read buffer
+            char buf_prefix[PAYLOAD_PREFIX_SIZE];
+            long r = bpf_probe_read(&buf_prefix, sizeof(buf_prefix), (void *)(read_info->buf)) ;
+            
+            if (r < 0) {
+                char msg[] = "could not read into buf_prefix - %ld";
+                bpf_trace_printk(msg, sizeof(msg), r);
+                return 0;
+            }
 
-    // if (e->protocol == PROTOCOL_HTTP) {
-    //     e->status = parse_http_status(buf);
-    // } 
+            int status = parse_http_status(buf_prefix);
+            if (status != -1){
+                e->status = status;
+            }
+        }
+    }else{
+        char msgCtx[] = "read buffer is null or too small";
+        bpf_trace_printk(msgCtx, sizeof(msgCtx));
+        return 0;
+    }
        
+    bpf_map_delete_elem(&active_reads, &id);
+    bpf_map_delete_elem(&active_l7_requests, &k);
+
     bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
     return 0;
 }
