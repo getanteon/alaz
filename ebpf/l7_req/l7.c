@@ -376,7 +376,12 @@ int sys_exit_read(struct trace_event_raw_sys_exit_read* ctx) {
     bpf_map_delete_elem(&active_reads, &id);
     bpf_map_delete_elem(&active_l7_requests, &k);
 
-    bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
+    long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
+    if (r < 0) {
+        char msg[] = "could not write to l7_events - %ld";
+        bpf_trace_printk(msg, sizeof(msg), r);
+    }
+
     return 0;
 }
 

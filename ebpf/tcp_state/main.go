@@ -170,14 +170,7 @@ func Deploy(ch chan interface{}) {
 			}
 
 			// bpfEvent := (*TcpEvent)(unsafe.Pointer(&record.RawSample[0]))
-
-			// TODO: send to channel, and process listen events in aggreagator
-
-			// log.Logger.Info().
-			// 	Uint32("pid", bpfEvent.Pid).
-			// 	Uint16("sport", bpfEvent.SPort).
-			// 	Uint16("dport", bpfEvent.DPort).
-			// 	Msg("listen event")
+			// log.Logger.Info().Msgf("tcp listen event: %+v", bpfEvent)
 		}
 	}()
 

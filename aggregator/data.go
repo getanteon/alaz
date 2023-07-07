@@ -140,21 +140,21 @@ func (a *Aggregator) processk8s() {
 				a.clusterInfo.PodIPToNamespace[pod.Status.PodIP] = pod.Namespace
 				err := a.repo.CreatePod(dtoPod)
 				if err != nil {
-					log.Logger.Debug().Err(err).Msg("error on CreatePod call")
+					log.Logger.Error().Err(err).Msg("error on CreatePod call")
 				}
 			case k8s.UPDATE:
 				a.clusterInfo.PodIPToPodUid[pod.Status.PodIP] = pod.UID
 				a.clusterInfo.PodIPToNamespace[pod.Status.PodIP] = pod.Namespace
 				err := a.repo.UpdatePod(dtoPod)
 				if err != nil {
-					log.Logger.Debug().Err(err).Msg("error on UpdatePod call")
+					log.Logger.Error().Err(err).Msg("error on UpdatePod call")
 				}
 			case k8s.DELETE:
 				delete(a.clusterInfo.PodIPToPodUid, pod.Status.PodIP)
 				delete(a.clusterInfo.PodIPToNamespace, pod.Status.PodIP)
 				err := a.repo.DeletePod(dtoPod)
 				if err != nil {
-					log.Logger.Debug().Err(err).Msg("error on DeletePod call")
+					log.Logger.Error().Err(err).Msg("error on DeletePod call")
 				}
 			}
 
@@ -192,7 +192,7 @@ func (a *Aggregator) processk8s() {
 				}
 			}
 		} else {
-			log.Logger.Debug().Str("resourceType", d.ResourceType).Msg("Unknown resource type")
+			log.Logger.Warn().Str("resourceType", d.ResourceType).Msg("Unknown resource type")
 		}
 	}
 }
@@ -208,7 +208,7 @@ func (a *Aggregator) processEbpf() {
 	for data := range a.ebpfChan {
 		bpfEvent, ok := data.(ebpf.BpfEvent)
 		if !ok {
-			log.Logger.Debug().Msg("error casting ebpf event")
+			log.Logger.Error().Interface("ebpfData", data).Msg("error casting ebpf event")
 			continue
 		}
 		switch bpfEvent.Type() {
@@ -245,10 +245,10 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 			return
 		}
 
-		// filter out kube-system namespace
-		// if a.clusterInfo.PodIPToNamespace[d.SAddr] == "kube-system" || a.clusterInfo.PodIPToNamespace[d.DAddr] == "kube-system" {
-		// 	return
-		// }
+		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).
+			Str("saddr", d.SAddr).Uint16("sport", d.SPort).
+			Str("daddr", d.DAddr).Uint16("dport", d.DPort).
+			Msg("TCP_ESTABLISHED event")
 
 		if _, ok := a.clusterInfo.PidToSocketMap[d.Pid]; !ok {
 			a.clusterInfo.PidToSocketMap[d.Pid] = SocketMap{}
@@ -261,22 +261,13 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 			Daddr: d.DAddr,
 			Dport: d.DPort,
 		}
-
-		// TODO: persist
-
 	} else if d.Type_ == tcp_state.EVENT_TCP_CLOSED {
-		// remove from map
-
-		// TODO: fd 0 ???
-		if d.Pid == 28319 {
-			log.Logger.Warn().Uint32("pid", d.Pid).Uint64("fd", d.Fd).
-				Str("saddr", d.SAddr).Uint16("sport", d.SPort).
-				Str("daddr", d.DAddr).Uint16("dport", d.DPort).
-				Msg("TCP_CLOSED event")
-		}
+		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).
+			Str("saddr", d.SAddr).Uint16("sport", d.SPort).
+			Str("daddr", d.DAddr).Uint16("dport", d.DPort).
+			Msg("TCP_CLOSED event")
 
 		delete(a.clusterInfo.PidToSocketMap[d.Pid], d.Fd)
-		// TODO: persist
 	}
 
 }
@@ -297,7 +288,7 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 	// find socket info
 	skInfo, ok := a.clusterInfo.PidToSocketMap[d.Pid][d.Fd]
 	if !ok {
-		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("error finding socket info")
+		log.Logger.Info().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("error finding socket info")
 		// TODO: detect early establisted connections
 		return
 	}
@@ -318,25 +309,16 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 	// parse http payload, extract path, query params, headers
 	if d.Protocol == l7_req.L7_PROTOCOL_HTTP {
 		_, reqDto.Path, _ = parseHttpPayload(string(d.Payload[0:d.PayloadSize]))
-		//
-		log.Logger.Info().Str("path", reqDto.Path).Msg("path extracted from http payload")
+		log.Logger.Debug().Str("path", reqDto.Path).Msg("path extracted from http payload")
 	}
 
 	// find pod info
 	podUid, ok := a.clusterInfo.PodIPToPodUid[skInfo.Saddr]
 	if !ok {
-		log.Logger.Warn().Str("podIP", skInfo.Saddr).
+		log.Logger.Warn().Str("Saddr", skInfo.Saddr).
 			Int("pid", int(d.Pid)).
 			Uint64("fd", d.Fd).
-			Uint16("sport", skInfo.Sport).
-			Str("daddr", skInfo.Daddr).
-			Uint16("dport", skInfo.Dport).
-			Str("method", d.Method).
-			Uint64("duration", d.Duration).
-			Str("protocol", d.Protocol).
-			Uint32("status", d.Status).
-			Str("payload", string(d.Payload[0:d.PayloadSize])).
-			Msg("error finding pod info")
+			Msg("error finding pod with sockets saddr")
 		return
 	}
 
@@ -351,15 +333,6 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 	}
 	// if not found, it's 3rd party url or something else
 	// ToUID and ToType will be empty
-
-	// log.Logger.Debug().Interface("reqDto", reqDto).
-	// 	Msg("l7 event success on aggregator")
-
-	if d.Pid == 28319 {
-		log.Logger.Warn().
-			Str("payload", string(d.Payload[0:d.PayloadSize])).
-			Msg("payload of 28319")
-	}
 
 	reqDto.Completed = !d.Failed
 

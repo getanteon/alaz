@@ -34,7 +34,7 @@ func listenDebugMsgs() {
 
 	fd, err := os.Open(printsPath)
 	if err != nil {
-		log.Logger.Warn().Err(err).Msg("error opening trace_pipe")
+		log.Logger.Warn().Err(err).Msg("error opening trace_pipe to listen for ebpf debug messages")
 	}
 	defer fd.Close()
 
@@ -44,6 +44,6 @@ func listenDebugMsgs() {
 		if err != nil {
 			log.Logger.Error().Err(err).Msg("error reading from trace_pipe")
 		}
-		log.Logger.Info().Msgf("read %d bytes: %s\n", n, buf[:n])
+		log.Logger.Info().Msgf("%s\n", n, buf[:n])
 	}
 }
