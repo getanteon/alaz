@@ -117,6 +117,7 @@ type L7Event struct {
 	PayloadSize         uint32 // How much of the payload was copied
 	PayloadReadComplete bool   // Whether the payload was copied completely
 	Failed              bool   // Request failed
+	WriteTimeNs         uint64 // start time of write syscall
 }
 
 const L7_EVENT = "l7_event"
@@ -214,6 +215,7 @@ func Deploy(ch chan interface{}) {
 				PayloadSize:         l7Event.PayloadSize,
 				PayloadReadComplete: uint8ToBool(l7Event.PayloadReadComplete),
 				Failed:              uint8ToBool(l7Event.Failed),
+				WriteTimeNs:         l7Event.WriteTimeNs,
 			}
 
 		}

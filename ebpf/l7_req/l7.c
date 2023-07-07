@@ -78,6 +78,7 @@ int parse_http_status(char *b) {
 
 struct l7_event {
     __u64 fd;
+    __u64 write_time_ns;
     __u32 pid;
     __u32 status;
     __u64 duration;
@@ -88,6 +89,7 @@ struct l7_event {
     __u32 payload_size;
     __u8 payload_read_complete;
     __u8 failed;
+    
 };
 
 struct l7_request {
@@ -338,6 +340,8 @@ int sys_exit_read(struct trace_event_raw_sys_exit_read* ctx) {
 
     e->protocol = active_req->protocol;
     e->duration = bpf_ktime_get_ns() - active_req->write_time_ns;
+    
+    e->write_time_ns = active_req->write_time_ns;
     
     // request payload
     e->payload_size = active_req->payload_size;

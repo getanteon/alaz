@@ -44,6 +44,6 @@ func listenDebugMsgs() {
 		if err != nil {
 			log.Logger.Error().Err(err).Msg("error reading from trace_pipe")
 		}
-		log.Logger.Info().Msgf("%s\n", n, buf[:n])
+		log.Logger.Info().Msgf("%s\n", buf[:n])
 	}
 }

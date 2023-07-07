@@ -26,6 +26,7 @@ type bpfL7Event struct {
 	PayloadReadComplete uint8
 	Failed              uint8
 	_                   [6]byte
+	WriteTimeNs         uint64
 }
 
 type bpfL7Request struct {
