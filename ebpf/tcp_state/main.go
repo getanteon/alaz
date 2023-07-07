@@ -191,16 +191,18 @@ func Deploy(ch chan interface{}) {
 
 			bpfEvent := (*TcpEvent)(unsafe.Pointer(&record.RawSample[0]))
 
-			ch <- TcpConnectEvent{
-				Pid:       bpfEvent.Pid,
-				Fd:        bpfEvent.Fd,
-				Timestamp: bpfEvent.Timestamp,
-				Type_:     TcpStateConversion(bpfEvent.Type).String(), // TODO: 3 is connect event, convert these to string
-				SPort:     bpfEvent.SPort,
-				DPort:     bpfEvent.DPort,
-				SAddr:     fmt.Sprintf("%d.%d.%d.%d", bpfEvent.SAddr[0], bpfEvent.SAddr[1], bpfEvent.SAddr[2], bpfEvent.SAddr[3]),
-				DAddr:     fmt.Sprintf("%d.%d.%d.%d", bpfEvent.DAddr[0], bpfEvent.DAddr[1], bpfEvent.DAddr[2], bpfEvent.DAddr[3]),
-			}
+			go func() {
+				ch <- TcpConnectEvent{
+					Pid:       bpfEvent.Pid,
+					Fd:        bpfEvent.Fd,
+					Timestamp: bpfEvent.Timestamp,
+					Type_:     TcpStateConversion(bpfEvent.Type).String(), // TODO: 3 is connect event, convert these to string
+					SPort:     bpfEvent.SPort,
+					DPort:     bpfEvent.DPort,
+					SAddr:     fmt.Sprintf("%d.%d.%d.%d", bpfEvent.SAddr[0], bpfEvent.SAddr[1], bpfEvent.SAddr[2], bpfEvent.SAddr[3]),
+					DAddr:     fmt.Sprintf("%d.%d.%d.%d", bpfEvent.DAddr[0], bpfEvent.DAddr[1], bpfEvent.DAddr[2], bpfEvent.DAddr[3]),
+				}
+			}()
 
 			// log.Logger.Info().
 			// 	Str("event_type", TcpStateConversion(bpfEvent.Type).String()).

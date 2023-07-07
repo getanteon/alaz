@@ -16,7 +16,7 @@ type BpfEvent interface {
 }
 
 func init() {
-	EbpfEvents = make(chan interface{}, 1000) // TODO: make configurable
+	EbpfEvents = make(chan interface{}, 100000) // TODO: make configurable
 }
 
 func Deploy() {

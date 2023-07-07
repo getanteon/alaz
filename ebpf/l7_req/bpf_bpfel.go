@@ -15,6 +15,7 @@ import (
 
 type bpfL7Event struct {
 	Fd                  uint64
+	WriteTimeNs         uint64
 	Pid                 uint32
 	Status              uint32
 	Duration            uint64
@@ -26,7 +27,6 @@ type bpfL7Event struct {
 	PayloadReadComplete uint8
 	Failed              uint8
 	_                   [6]byte
-	WriteTimeNs         uint64
 }
 
 type bpfL7Request struct {

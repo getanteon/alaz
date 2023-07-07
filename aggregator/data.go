@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"alaz/k8s"
@@ -54,7 +55,10 @@ type SockInfo struct {
 }
 
 // type SocketMap
-type SocketMap map[uint64]*SocketLine // fd -> SockLine
+type SocketMap struct {
+	mu sync.RWMutex
+	m  map[uint64]*SocketLine // fd -> SockLine
+}
 
 type ClusterInfo struct {
 	// TODO: If pod has more than one container, we need to differentiate
@@ -66,7 +70,7 @@ type ClusterInfo struct {
 
 	// Pid -> SocketMap
 	// pid -> fd -> {saddr, sport, daddr, dport}
-	PidToSocketMap map[uint32]SocketMap `json:"pidToSocketMap"`
+	PidToSocketMap map[uint32]*SocketMap `json:"pidToSocketMap"`
 }
 
 // If we have information from the container runtimes
@@ -84,7 +88,7 @@ func NewAggregator(k8sChan <-chan interface{}, crChan <-chan interface{}, ebpfCh
 	clusterInfo := &ClusterInfo{
 		PodIPToPodUid:         map[string]types.UID{},
 		ServiceIPToServiceUid: map[string]types.UID{},
-		PidToSocketMap:        map[uint32]SocketMap{},
+		PidToSocketMap:        make(map[uint32]*SocketMap, 0),
 		PodIPToNamespace:      map[string]string{},
 		ServiceIPToNamespace:  map[string]string{},
 	}
@@ -214,9 +218,25 @@ func (a *Aggregator) processEbpf() {
 		}
 		switch bpfEvent.Type() {
 		case tcp_state.TCP_CONNECT_EVENT:
-			a.processTcpConnect(data)
+			d := data.(tcp_state.TcpConnectEvent) // copy data's value
+			tcpConnectEvent := tcp_state.TcpConnectEvent{
+				Fd:        d.Fd,
+				Timestamp: d.Timestamp,
+				Type_:     d.Type_,
+				Pid:       d.Pid,
+				SPort:     d.SPort,
+				DPort:     d.DPort,
+				SAddr:     d.SAddr,
+				DAddr:     d.DAddr,
+			}
+			go a.processTcpConnect(tcpConnectEvent)
 		case l7_req.L7_EVENT:
 			d := data.(l7_req.L7Event) // copy data's value
+
+			// copy payload slice
+			payload := [512]uint8{}
+			copy(payload[:], d.Payload[:])
+
 			l7Event := l7_req.L7Event{
 				Fd:                  d.Fd,
 				Pid:                 d.Pid,
@@ -224,19 +244,18 @@ func (a *Aggregator) processEbpf() {
 				Duration:            d.Duration,
 				Protocol:            d.Protocol,
 				Method:              d.Method,
-				Payload:             d.Payload,
+				Payload:             payload,
 				PayloadSize:         d.PayloadSize,
 				PayloadReadComplete: d.PayloadReadComplete,
 				Failed:              d.Failed,
 				WriteTimeNs:         d.WriteTimeNs,
 			}
 			// TODO: make this concurrent, thats why we copy the data
-			a.processL7(l7Event)
+			go a.processL7(l7Event)
 		}
 	}
 }
 
-// TODO: prioritize this
 func (a *Aggregator) processTcpConnect(data interface{}) {
 	d := data.(tcp_state.TcpConnectEvent)
 	if d.Type_ == tcp_state.EVENT_TCP_ESTABLISHED {
@@ -252,17 +271,27 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 			Str("daddr", d.DAddr).Uint16("dport", d.DPort).
 			Msg("TCP_ESTABLISHED event")
 
-		if _, ok := a.clusterInfo.PidToSocketMap[d.Pid]; !ok {
-			a.clusterInfo.PidToSocketMap[d.Pid] = SocketMap{}
+		var sockMap *SocketMap
+		var ok bool
+		if sockMap, ok = a.clusterInfo.PidToSocketMap[d.Pid]; !ok {
+			sockMap = &SocketMap{
+				m:  make(map[uint64]*SocketLine),
+				mu: sync.RWMutex{},
+			}
+			a.clusterInfo.PidToSocketMap[d.Pid] = sockMap
 		}
 
-		if _, ok := a.clusterInfo.PidToSocketMap[d.Pid][d.Fd]; !ok {
-			a.clusterInfo.PidToSocketMap[d.Pid][d.Fd] = &SocketLine{
+		sockMap.mu.Lock() // lock for writing
+		if _, ok := sockMap.m[d.Fd]; !ok {
+			sockMap.m[d.Fd] = &SocketLine{
+				mu:     sync.RWMutex{},
 				Values: make([]TimestampedSocket, 0),
 			}
 		}
+		sockMap.mu.Unlock() // unlock for writing
 
-		a.clusterInfo.PidToSocketMap[d.Pid][d.Fd].AddValue(
+		sockMap.mu.Lock() // lock for writing
+		sockMap.m[d.Fd].AddValue(
 			d.Timestamp, // get connection timestamp from ebpf
 			&SockInfo{
 				Pid:   d.Pid,
@@ -273,32 +302,43 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 				Dport: d.DPort,
 			},
 		)
+		sockMap.mu.Unlock() // unlock for writing
+
 	} else if d.Type_ == tcp_state.EVENT_TCP_CLOSED {
 		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).
 			Str("saddr", d.SAddr).Uint16("sport", d.SPort).
 			Str("daddr", d.DAddr).Uint16("dport", d.DPort).
 			Msg("TCP_CLOSED event")
 
-		// delete(a.clusterInfo.PidToSocketMap[d.Pid], d.Fd)
-
-		if _, ok := a.clusterInfo.PidToSocketMap[d.Pid]; !ok {
-			a.clusterInfo.PidToSocketMap[d.Pid] = SocketMap{}
+		var sockMap *SocketMap
+		var ok bool
+		if sockMap, ok = a.clusterInfo.PidToSocketMap[d.Pid]; !ok {
+			sockMap = &SocketMap{
+				m:  make(map[uint64]*SocketLine),
+				mu: sync.RWMutex{},
+			}
+			a.clusterInfo.PidToSocketMap[d.Pid] = sockMap
 			return
 		}
 
-		if _, ok := a.clusterInfo.PidToSocketMap[d.Pid][d.Fd]; !ok {
-			a.clusterInfo.PidToSocketMap[d.Pid][d.Fd] = &SocketLine{
+		sockMap.mu.Lock() // lock for writing
+		if _, ok := sockMap.m[d.Fd]; !ok {
+			sockMap.m[d.Fd] = &SocketLine{
+				mu:     sync.RWMutex{},
 				Values: make([]TimestampedSocket, 0),
 			}
+			sockMap.mu.Unlock() // unlock for writing
 			return
 		}
+		sockMap.mu.Unlock() // unlock for writing
 
 		// If connection is established before, add the close event
-		a.clusterInfo.PidToSocketMap[d.Pid][d.Fd].AddValue(
+		sockMap.mu.Lock() // lock for writing
+		sockMap.m[d.Fd].AddValue(
 			d.Timestamp, // get connection close timestamp from ebpf
 			nil,         // closed
 		)
-
+		sockMap.mu.Unlock() // unlock for writing
 	}
 }
 
@@ -321,17 +361,22 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 
 	// When request comes before TCP_ESTABLISHED event, we don't have socket info
 
-	sockMap, ok := a.clusterInfo.PidToSocketMap[d.Pid]
+	var sockMap *SocketMap
+	var ok bool
+
+	sockMap, ok = a.clusterInfo.PidToSocketMap[d.Pid]
 	if !ok {
 		log.Logger.Info().Uint32("pid", d.Pid).Msg("error finding socket map")
 		return
 	}
 
-	skLine, ok := sockMap[d.Fd]
+	sockMap.mu.RLock() // lock for reading
+	skLine, ok := sockMap.m[d.Fd]
 	if !ok {
 		log.Logger.Info().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("error finding skLine")
 		return
 	}
+	sockMap.mu.RUnlock() // unlock for reading
 
 	// In case of late request, we don't have socket info
 	// ESTABLISHED
@@ -348,8 +393,8 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 	// Request ...
 	// CLOSED
 
-	retryCount := 5
-	retryTime := 10 * time.Millisecond
+	retryCount := 10
+	retryTime := 100 * time.Millisecond
 	var skInfo *SockInfo
 	var err error
 	for skInfo, err = skLine.GetValue(d.WriteTimeNs); (err != nil || skInfo == nil) && retryCount > 0; {
@@ -360,6 +405,11 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 		retryTime = retryTime * 2 // exponential backoff
 		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Uint64("writeTimeNs", d.WriteTimeNs).
 			Msg("retrying getting socket info fro skLine")
+	}
+
+	if retryCount < 10 && skInfo != nil {
+		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Uint64("writeTimeNs", d.WriteTimeNs).
+			Msg("found socket info with retry")
 	}
 
 	if err != nil || skInfo == nil {
@@ -412,8 +462,9 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 
 	reqDto.Completed = !d.Failed
 
-	err = a.repo.PersistRequest(reqDto)
-	if err != nil {
-		log.Logger.Error().Err(err).Msg("error persisting request")
-	}
+	go a.repo.PersistRequest(reqDto)
+	// err = a.repo.PersistRequest(reqDto)
+	// if err != nil {
+	// 	log.Logger.Error().Err(err).Msg("error persisting request")
+	// }
 }

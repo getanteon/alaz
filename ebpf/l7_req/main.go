@@ -183,7 +183,7 @@ func Deploy(ch chan interface{}) {
 
 	// Read loop reporting the total amount of times the kernel
 	// function was entered, once per second.
-	ticker := time.NewTicker(1 * time.Millisecond)
+	ticker := time.NewTicker(1 * time.Millisecond) // TODO: lower this
 	defer ticker.Stop()
 
 	go func() {
@@ -199,24 +199,27 @@ func Deploy(ch chan interface{}) {
 
 			// TODO: investigate why this is happening
 			if record.RawSample == nil || len(record.RawSample) == 0 {
+				log.Logger.Warn().Msgf("read sample l7-event nil or empty")
 				continue
 			}
 
 			l7Event := (*bpfL7Event)(unsafe.Pointer(&record.RawSample[0]))
 
-			ch <- L7Event{
-				Fd:                  l7Event.Fd,
-				Pid:                 l7Event.Pid,
-				Status:              l7Event.Status,
-				Duration:            l7Event.Duration,
-				Protocol:            L7ProtocolConversion(l7Event.Protocol).String(),
-				Method:              HTTPMethodConversion(l7Event.Method).String(),
-				Payload:             l7Event.Payload,
-				PayloadSize:         l7Event.PayloadSize,
-				PayloadReadComplete: uint8ToBool(l7Event.PayloadReadComplete),
-				Failed:              uint8ToBool(l7Event.Failed),
-				WriteTimeNs:         l7Event.WriteTimeNs,
-			}
+			go func() {
+				ch <- L7Event{
+					Fd:                  l7Event.Fd,
+					Pid:                 l7Event.Pid,
+					Status:              l7Event.Status,
+					Duration:            l7Event.Duration,
+					Protocol:            L7ProtocolConversion(l7Event.Protocol).String(),
+					Method:              HTTPMethodConversion(l7Event.Method).String(),
+					Payload:             l7Event.Payload,
+					PayloadSize:         l7Event.PayloadSize,
+					PayloadReadComplete: uint8ToBool(l7Event.PayloadReadComplete),
+					Failed:              uint8ToBool(l7Event.Failed),
+					WriteTimeNs:         l7Event.WriteTimeNs,
+				}
+			}()
 
 		}
 	}()

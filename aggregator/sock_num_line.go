@@ -3,6 +3,7 @@ package aggregator
 import (
 	"fmt"
 	"sort"
+	"sync"
 )
 
 type TimestampedSocket struct {
@@ -11,10 +12,13 @@ type TimestampedSocket struct {
 }
 
 type SocketLine struct {
+	mu     sync.RWMutex
 	Values []TimestampedSocket
 }
 
 func (nl *SocketLine) AddValue(timestamp uint64, sockInfo *SockInfo) {
+	nl.mu.Lock()
+	defer nl.mu.Unlock()
 	nl.Values = append(nl.Values, TimestampedSocket{Timestamp: timestamp, SockInfo: sockInfo})
 	sort.Slice(nl.Values, func(i, j int) bool {
 		return nl.Values[i].Timestamp < nl.Values[j].Timestamp
@@ -22,6 +26,9 @@ func (nl *SocketLine) AddValue(timestamp uint64, sockInfo *SockInfo) {
 }
 
 func (nl *SocketLine) GetValue(timestamp uint64) (*SockInfo, error) {
+	nl.mu.Lock()
+	defer nl.mu.Unlock()
+
 	if len(nl.Values) == 0 {
 		return nil, fmt.Errorf("sock line is empty")
 	}
