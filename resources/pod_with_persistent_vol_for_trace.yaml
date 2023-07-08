@@ -1,0 +1,191 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: my-pvc3
+  namespace: ddosify
+spec:
+  storageClassName: gp2
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - ip-192-168-46-151.eu-central-1.compute.internal
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: /mnt/data
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: my-pvc3
+  namespace: ddosify
+spec:
+  volumeName: my-pvc3
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: alaz-pod
+  namespace: ddosify
+spec:
+  serviceAccount: alaz-serviceaccount                                                                                                              │
+  serviceAccountName: alaz-serviceaccount
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: kubernetes.io/hostname
+            operator: In
+            values:
+            - ip-192-168-46-151.eu-central-1.compute.internal
+  containers:
+  - name: alaz-pod
+    image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:v3.0.2
+    env:
+      - name: K8S_COLLECTOR_ENABLED
+        value: "true"
+      - name: CR_COLLECTOR_ENABLED
+        value: "true"
+      - name: EBPF_ENABLED
+        value: "true"
+      - name: IN_CLUSTER
+        value: "true"
+      - name: POSTGRES_HOST
+        value: "postgres-service.ddosify"
+      - name: POSTGRES_PORT
+        value: "5432"
+      - name: POSTGRES_USER
+        value: "alazuser"
+      - name: POSTGRES_PASSWORD
+        value: "alazpwd"
+      - name: POSTGRES_DB
+        value: "alazdb"
+      - name: LOG_LEVEL
+        value: "0"
+      - name: DISABLE_LOGS
+        value: "true"
+    ports:
+      - containerPort: 8181
+    securityContext:
+      # privileged: true
+      # runAsUser: 0
+      capabilities:
+        add:
+          - BPF
+          - PERFMON
+          - NET_ADMIN
+          - SYS_RESOURCE
+    volumeMounts:
+      - mountPath: /sys/kernel/debug
+        name: debugfs
+        readOnly: false
+      - mountPath: /var/run/containerd/containerd.sock
+        name: containerd-sock
+        readOnly: true
+      - name: data-volume
+        mountPath: /mnt/data
+  volumes:
+    - name: debugfs
+      hostPath:
+        path: /sys/kernel/debug
+    - name: containerd-sock
+      hostPath:
+        path: /var/run/containerd/containerd.sock
+    - name: data-volume
+      persistentVolumeClaim:
+        claimName: my-pvc3
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alaz-deployment
+  namespace: ddosify
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alaz-app
+  template:
+    metadata:
+      labels:
+        app: alaz-app
+    spec:
+      serviceAccount: alaz-serviceaccount
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                - key: kubernetes.io/hostname
+                  operator: In
+                  values:
+                    - ip-192-168-46-151.eu-central-1.compute.internal
+      containers:
+        - name: alaz-pod
+          image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:v3.0.2
+          env:
+            - name: K8S_COLLECTOR_ENABLED
+              value: "true"
+            - name: CR_COLLECTOR_ENABLED
+              value: "true"
+            - name: EBPF_ENABLED
+              value: "true"
+            - name: IN_CLUSTER
+              value: "true"
+            - name: POSTGRES_HOST
+              value: "postgres-service.ddosify"
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_USER
+              value: "alazuser"
+            - name: POSTGRES_PASSWORD
+              value: "alazpwd"
+            - name: POSTGRES_DB
+              value: "alazdb"
+            - name: LOG_LEVEL
+              value: "0"
+            - name: DISABLE_LOGS
+              value: "true"
+          ports:
+            - containerPort: 8181
+          securityContext:
+            capabilities:
+              add:
+                - BPF
+                - PERFMON
+                - NET_ADMIN
+                - SYS_RESOURCE
+          volumeMounts:
+            - mountPath: /sys/kernel/debug
+              name: debugfs
+              readOnly: false
+            - mountPath: /var/run/containerd/containerd.sock
+              name: containerd-sock
+              readOnly: true
+            - name: data-volume
+              mountPath: /mnt/data
+      volumes:
+        - name: debugfs
+          hostPath:
+            path: /sys/kernel/debug
+        - name: containerd-sock
+          hostPath:
+            path: /var/run/containerd/containerd.sock
+        - name: data-volume
+          persistentVolumeClaim:
+            claimName: my-pvc3

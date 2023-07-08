@@ -6,6 +6,7 @@ import (
 	"alaz/ebpf"
 	"alaz/k8s"
 	"os"
+	"runtime/trace"
 
 	"alaz/log"
 	"context"
@@ -40,6 +41,25 @@ func main() {
 	a := aggregator.NewAggregator(kubeEvents, nil, ebpf.EbpfEvents)
 	a.Run()
 	a.AdvertisePidSockMap()
+
+	traceFile, err := os.Create("/mnt/data/trace.out")
+	if err != nil {
+		log.Logger.Fatal().Msgf("failed to create trace output file: %v", err)
+	}
+	defer func() {
+		if err := traceFile.Close(); err != nil {
+			log.Logger.Fatal().Msgf("failed to close trace file: %v", err)
+		}
+	}()
+
+	if err := trace.Start(traceFile); err != nil {
+		log.Logger.Fatal().Msgf("failed to start trace: %v", err)
+	}
+	// defer trace.Stop()
+
+	http.HandleFunc("/stop-trace", func(w http.ResponseWriter, r *http.Request) {
+		trace.Stop()
+	})
 
 	log.Logger.Info().Msg("listen on 8181")
 	http.ListenAndServe(":8181", nil)

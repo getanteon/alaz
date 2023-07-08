@@ -7,6 +7,12 @@ import (
 	"github.com/rs/zerolog"
 )
 
+type NoopLogger struct{}
+
+func (NoopLogger) Write(p []byte) (n int, err error) {
+	return 0, nil
+}
+
 var (
 	// Logger is the global logger.
 	Logger zerolog.Logger
@@ -29,5 +35,10 @@ func init() {
 	zerolog.SetGlobalLevel(defaultLevel)
 
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	Logger = zerolog.New(os.Stdout).With().Timestamp().Logger()
+
+	if os.Getenv("DISABLE_LOGS") == "true" {
+		Logger = zerolog.New(NoopLogger{})
+	} else {
+		Logger = zerolog.New(os.Stdout).With().Timestamp().Logger()
+	}
 }

@@ -156,3 +156,6 @@ write, read , close
 timeout case -> write , close ??
 
 sudo strace -o myappclient-calls.txt -f -e 'trace=!epoll_pwait,nanosleep,futex,setsockopt,getsockopt,epoll_ctl' -p 28347
+
+To profile:
+> curl http://localhost:8181/stop-trace && scp -r ec2-user@18.197.20.20:/mnt/data/trace.out ~/trace.out && go tool trace trace.out
