@@ -281,17 +281,23 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 			a.clusterInfo.PidToSocketMap[d.Pid] = sockMap
 		}
 
-		sockMap.mu.Lock() // lock for writing
-		if _, ok := sockMap.m[d.Fd]; !ok {
-			sockMap.m[d.Fd] = &SocketLine{
+		var skLine *SocketLine
+
+		sockMap.mu.RLock() // lock for reading
+		skLine, ok = sockMap.m[d.Fd]
+		sockMap.mu.RUnlock() // unlock for reading
+
+		if !ok {
+			skLine = &SocketLine{
 				mu:     sync.RWMutex{},
 				Values: make([]TimestampedSocket, 0),
 			}
+			sockMap.mu.Lock() // lock for writing
+			sockMap.m[d.Fd] = skLine
+			sockMap.mu.Unlock() // unlock for writing
 		}
-		sockMap.mu.Unlock() // unlock for writing
 
-		sockMap.mu.Lock() // lock for writing
-		sockMap.m[d.Fd].AddValue(
+		skLine.AddValue(
 			d.Timestamp, // get connection timestamp from ebpf
 			&SockInfo{
 				Pid:   d.Pid,
@@ -302,7 +308,6 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 				Dport: d.DPort,
 			},
 		)
-		sockMap.mu.Unlock() // unlock for writing
 
 	} else if d.Type_ == tcp_state.EVENT_TCP_CLOSED {
 		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).
@@ -321,24 +326,21 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 			return
 		}
 
-		sockMap.mu.Lock() // lock for writing
-		if _, ok := sockMap.m[d.Fd]; !ok {
-			sockMap.m[d.Fd] = &SocketLine{
-				mu:     sync.RWMutex{},
-				Values: make([]TimestampedSocket, 0),
-			}
-			sockMap.mu.Unlock() // unlock for writing
+		var skLine *SocketLine
+
+		sockMap.mu.RLock() // lock for reading
+		skLine, ok = sockMap.m[d.Fd]
+		sockMap.mu.RUnlock() // unlock for reading
+
+		if !ok {
 			return
 		}
-		sockMap.mu.Unlock() // unlock for writing
 
 		// If connection is established before, add the close event
-		sockMap.mu.Lock() // lock for writing
-		sockMap.m[d.Fd].AddValue(
+		skLine.AddValue(
 			d.Timestamp, // get connection close timestamp from ebpf
 			nil,         // closed
 		)
-		sockMap.mu.Unlock() // unlock for writing
 	}
 }
 
@@ -370,7 +372,7 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 		return
 	}
 
-	sockMap.mu.RLock() // lock for reading
+	sockMap.mu.RLock() // lock for reading // !!lock-contention
 	skLine, ok := sockMap.m[d.Fd]
 	if !ok {
 		log.Logger.Info().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("error finding skLine")

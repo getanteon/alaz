@@ -12,9 +12,9 @@ spec:
             - key: kubernetes.io/hostname
               operator: In
               values:
-                - ip-192-168-46-151.eu-central-1.compute.internal
+                - ip-192-168-44-45.eu-central-1.compute.internal
   capacity:
-    storage: 1Gi
+    storage: 200Mi
   accessModes:
     - ReadWriteOnce
   hostPath:
@@ -32,7 +32,7 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 1Gi
+      storage: 200Mi
 ---
 
 apiVersion: v1
@@ -51,10 +51,10 @@ spec:
           - key: kubernetes.io/hostname
             operator: In
             values:
-            - ip-192-168-46-151.eu-central-1.compute.internal
+            - ip-192-168-44-45.eu-central-1.compute.internal
   containers:
   - name: alaz-pod
-    image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:v3.0.2
+    image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:v3.1
     env:
       - name: K8S_COLLECTOR_ENABLED
         value: "true"
@@ -134,10 +134,10 @@ spec:
                 - key: kubernetes.io/hostname
                   operator: In
                   values:
-                    - ip-192-168-46-151.eu-central-1.compute.internal
+                    - ip-192-168-44-45.eu-central-1.compute.internal
       containers:
         - name: alaz-pod
-          image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:v3.0.2
+          image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:v3.1.1
           env:
             - name: K8S_COLLECTOR_ENABLED
               value: "true"
@@ -158,9 +158,9 @@ spec:
             - name: POSTGRES_DB
               value: "alazdb"
             - name: LOG_LEVEL
-              value: "0"
+              value: "2"
             - name: DISABLE_LOGS
-              value: "true"
+              value: "false"
           ports:
             - containerPort: 8181
           securityContext:
