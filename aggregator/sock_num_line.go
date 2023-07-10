@@ -16,6 +16,9 @@ type SocketLine struct {
 	Values []TimestampedSocket
 }
 
+// TODO: delete old values
+// for memory usage and performance reasons, we should delete old values
+
 func (nl *SocketLine) AddValue(timestamp uint64, sockInfo *SockInfo) {
 	nl.mu.Lock()
 	defer nl.mu.Unlock()
@@ -26,8 +29,8 @@ func (nl *SocketLine) AddValue(timestamp uint64, sockInfo *SockInfo) {
 }
 
 func (nl *SocketLine) GetValue(timestamp uint64) (*SockInfo, error) {
-	nl.mu.Lock()
-	defer nl.mu.Unlock()
+	nl.mu.RLock()
+	defer nl.mu.RUnlock()
 
 	if len(nl.Values) == 0 {
 		return nil, fmt.Errorf("sock line is empty")

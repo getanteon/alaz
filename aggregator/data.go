@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -45,22 +46,23 @@ type Aggregator struct {
 // connections and pods/services
 
 type SockInfo struct {
-	Pid   uint32 `json:"pid"`
-	Fd    uint64 `json:"fd"`
-	Saddr string `json:"saddr"`
-	Sport uint16 `json:"sport"`
-	Daddr string `json:"daddr"`
-	Dport uint16 `json:"dport"`
-	// TODO: add timestamp
+	Pid           uint32 `json:"pid"`
+	Fd            uint64 `json:"fd"`
+	Saddr         string `json:"saddr"`
+	Sport         uint16 `json:"sport"`
+	Daddr         string `json:"daddr"`
+	Dport         uint16 `json:"dport"`
+	EstablishTime uint64 `json:"establishTime"`
 }
 
 // type SocketMap
 type SocketMap struct {
 	mu sync.RWMutex
-	m  map[uint64]*SocketLine // fd -> SockLine
+	M  map[uint64]*SocketLine `json:"fdToSockLine"` // fd -> SockLine
 }
 
 type ClusterInfo struct {
+	mu sync.RWMutex
 	// TODO: If pod has more than one container, we need to differentiate
 	PodIPToPodUid         map[string]types.UID `json:"podIPToPodUid"`
 	ServiceIPToServiceUid map[string]types.UID `json:"serviceIPToServiceUid"`
@@ -83,6 +85,14 @@ type ClusterInfo struct {
 // {daddr+dport} -> search in serviceIPToServiceUid -> serviceUid
 // or
 // {daddr+dport} -> search in podIPToPodUid -> podUid
+
+var (
+	// default exponential backoff (*2)
+	retryInterval = 20 * time.Millisecond
+	retryLimit    = 10
+
+	// 20 + 40 + 80 + 160 + 320 + 640 + 1280 + 2560 + 5120 + 10240 = 20470 ms = 20.47 s
+)
 
 func NewAggregator(k8sChan <-chan interface{}, crChan <-chan interface{}, ebpfChan <-chan interface{}) *Aggregator {
 	clusterInfo := &ClusterInfo{
@@ -119,9 +129,29 @@ func (a *Aggregator) Run() {
 func (a *Aggregator) AdvertisePidSockMap() {
 	http.HandleFunc("/pid-sock-map",
 		func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(a.clusterInfo.PidToSocketMap)
+			queryParam := r.URL.Query().Get("number")
+			if queryParam == "" {
+				http.Error(w, "Missing query parameter 'number'", http.StatusBadRequest)
+				return
+			}
+			number, err := strconv.ParseUint(queryParam, 10, 32)
+			if err != nil {
+				http.Error(w, "Invalid query parameter 'number'", http.StatusBadRequest)
+				return
+			}
+			pid := uint32(number)
+
+			a.clusterInfo.mu.RLock()
+			defer a.clusterInfo.mu.RUnlock()
+
+			if sockMap, ok := a.clusterInfo.PidToSocketMap[pid]; !ok {
+				http.Error(w, "Pid not found", http.StatusNotFound)
+				return
+			} else {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_ = json.NewEncoder(w).Encode(sockMap)
+			}
 		},
 	)
 }
@@ -269,13 +299,14 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).
 			Str("saddr", d.SAddr).Uint16("sport", d.SPort).
 			Str("daddr", d.DAddr).Uint16("dport", d.DPort).
+			Uint64("establishTime", d.Timestamp).
 			Msg("TCP_ESTABLISHED event")
 
 		var sockMap *SocketMap
 		var ok bool
 		if sockMap, ok = a.clusterInfo.PidToSocketMap[d.Pid]; !ok {
 			sockMap = &SocketMap{
-				m:  make(map[uint64]*SocketLine),
+				M:  make(map[uint64]*SocketLine),
 				mu: sync.RWMutex{},
 			}
 			a.clusterInfo.PidToSocketMap[d.Pid] = sockMap
@@ -284,7 +315,7 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 		var skLine *SocketLine
 
 		sockMap.mu.RLock() // lock for reading
-		skLine, ok = sockMap.m[d.Fd]
+		skLine, ok = sockMap.M[d.Fd]
 		sockMap.mu.RUnlock() // unlock for reading
 
 		if !ok {
@@ -293,7 +324,7 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 				Values: make([]TimestampedSocket, 0),
 			}
 			sockMap.mu.Lock() // lock for writing
-			sockMap.m[d.Fd] = skLine
+			sockMap.M[d.Fd] = skLine
 			sockMap.mu.Unlock() // unlock for writing
 		}
 
@@ -313,13 +344,14 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).
 			Str("saddr", d.SAddr).Uint16("sport", d.SPort).
 			Str("daddr", d.DAddr).Uint16("dport", d.DPort).
+			Uint64("closeTime", d.Timestamp).
 			Msg("TCP_CLOSED event")
 
 		var sockMap *SocketMap
 		var ok bool
 		if sockMap, ok = a.clusterInfo.PidToSocketMap[d.Pid]; !ok {
 			sockMap = &SocketMap{
-				m:  make(map[uint64]*SocketLine),
+				M:  make(map[uint64]*SocketLine),
 				mu: sync.RWMutex{},
 			}
 			a.clusterInfo.PidToSocketMap[d.Pid] = sockMap
@@ -329,7 +361,7 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 		var skLine *SocketLine
 
 		sockMap.mu.RLock() // lock for reading
-		skLine, ok = sockMap.m[d.Fd]
+		skLine, ok = sockMap.M[d.Fd]
 		sockMap.mu.RUnlock() // unlock for reading
 
 		if !ok {
@@ -364,6 +396,7 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 	// When request comes before TCP_ESTABLISHED event, we don't have socket info
 
 	var sockMap *SocketMap
+	var skLine *SocketLine
 	var ok bool
 
 	sockMap, ok = a.clusterInfo.PidToSocketMap[d.Pid]
@@ -372,13 +405,14 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 		return
 	}
 
-	sockMap.mu.RLock() // lock for reading // !!lock-contention
-	skLine, ok := sockMap.m[d.Fd]
+	sockMap.mu.RLock() // lock for reading
+	skLine, ok = sockMap.M[d.Fd]
+	sockMap.mu.RUnlock() // unlock for reading
+
 	if !ok {
 		log.Logger.Info().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("error finding skLine")
 		return
 	}
-	sockMap.mu.RUnlock() // unlock for reading
 
 	// In case of late request, we don't have socket info
 	// ESTABLISHED
@@ -395,21 +429,31 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 	// Request ...
 	// CLOSED
 
-	retryCount := 10
-	retryTime := 100 * time.Millisecond
+	// Since we process events concurrently,
+	// CLOSED event can be processed before ESTABLISHED event (goroutine scheduling)
+
+	rc := retryLimit
+	rt := retryInterval
 	var skInfo *SockInfo
 	var err error
-	for skInfo, err = skLine.GetValue(d.WriteTimeNs); (err != nil || skInfo == nil) && retryCount > 0; {
-		// early request, couldn't find socket info
-		// wait and try again
-		retryCount--
-		time.Sleep(retryTime)
-		retryTime = retryTime * 2 // exponential backoff
+
+	for {
+		skInfo, err = skLine.GetValue(d.WriteTimeNs)
+		if err == nil && skInfo != nil {
+			break
+		}
+		rc--
+		time.Sleep(rt)
+		rt *= 2 // exponential backoff
 		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Uint64("writeTimeNs", d.WriteTimeNs).
 			Msg("retrying getting socket info fro skLine")
+
+		if rc == 0 {
+			break
+		}
 	}
 
-	if retryCount < 10 && skInfo != nil {
+	if rc < retryLimit && skInfo != nil {
 		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Uint64("writeTimeNs", d.WriteTimeNs).
 			Msg("found socket info with retry")
 	}
@@ -417,7 +461,7 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 	if err != nil || skInfo == nil {
 		log.Logger.Error().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Uint64("writeTimeNs", d.WriteTimeNs).
 			Str("method", d.Method).Uint32("status", d.Status).Str("protocol", d.Protocol).Str("payload", string(d.Payload[0:d.PayloadSize])).
-			Msg("could not find !!socket info for skLine")
+			Msg("could not find !!socket info for skLine, discarding request")
 		return
 	}
 
