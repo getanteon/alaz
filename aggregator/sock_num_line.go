@@ -58,5 +58,11 @@ func (nl *SocketLine) GetValue(timestamp uint64) (*SockInfo, error) {
 	}
 
 	// Return the value associated with the closest previous timestamp
+
+	// TODO: lru cache, delete old values after a certain time
+	// if no new values are added, return from cache
+	// A client that uses same socket for a long time will have a lot of requests
+	// no need to search for the same value again and again
+
 	return nl.Values[index-1].SockInfo, nil
 }
