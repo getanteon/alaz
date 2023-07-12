@@ -193,7 +193,7 @@ func convertSvcToPayload(service Service, eventType string) SvcPayload {
 			MonitoringID   string `json:"monitoring_id"`
 			IdempotencyKey string `json:"idempotency_key"`
 		}{
-			MonitoringID:  MonitoringID
+			MonitoringID:   MonitoringID,
 			IdempotencyKey: string(uuid.NewUUID()),
 		},
 		UID:        service.UID,

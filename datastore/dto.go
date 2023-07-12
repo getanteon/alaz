@@ -18,6 +18,7 @@ type Service struct {
 	Name       string
 	Namespace  string
 	Type       string
+	ClusterIP  string
 	ClusterIPs []string
 	Ports      []struct {
 		Src      int32  `json:"src"`
