@@ -153,7 +153,7 @@ func Deploy(ch chan interface{}) {
 	// go listenDebugMsgs()
 
 	go func() {
-		for range ticker.C {
+		for {
 			record, err := tcpListenEvents.Read()
 			if err != nil {
 				log.Logger.Warn().Err(err).Msg("error reading from perf array")
@@ -175,7 +175,7 @@ func Deploy(ch chan interface{}) {
 	}()
 
 	go func() {
-		for range ticker.C {
+		for {
 			record, err := tcpConnectEvents.Read()
 			if err != nil {
 				log.Logger.Warn().Err(err).Msg("error reading from perf array")

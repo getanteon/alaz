@@ -1,7 +1,10 @@
 package aggregator
 
 import (
+	"fmt"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestSocketLine(t *testing.T) {
@@ -323,7 +326,7 @@ func TestSocketLine(t *testing.T) {
 
 	for _, ts := range tsList {
 		sockLine.AddValue(ts, &SockInfo{
-			EstablishTime: ts,
+			// EstablishTime: ts,
 		})
 	}
 
@@ -341,5 +344,97 @@ func TestSocketLine(t *testing.T) {
 		t.Fail()
 		return
 	}
+
+}
+
+func TestXxx(t *testing.T) {
+	assumedInterval := uint64(2 * time.Second) // TODO: make configurable
+	nl := NewSocketLine()
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		nl.AddValue(10, &SockInfo{})
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		nl.AddValue(20, nil)
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		nl.AddValue(30, &SockInfo{})
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		nl.AddValue(40, nil)
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		nl.AddValue(50, &SockInfo{})
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		nl.AddValue(60, nil)
+	}()
+
+	wg.Wait()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		nl.GetValue(52) // should return 50
+		time.Sleep(time.Duration(1 * time.Second))
+		nl.GetValue(33) // should return 50
+	}()
+
+	wg.Wait()
+
+	// if len(nl.Values) == 0 {
+	// 	return
+	// }
+
+	// nl.GetValue(52) // should return 50
+	// nl.GetValue(33) // should return 50
+
+	var lastMatchedReqTime uint64 = 0
+
+	// traverse the slice backwards
+	for i := len(nl.Values) - 1; i >= 0; i-- {
+		if nl.Values[i].LastMatch != 0 && nl.Values[i].LastMatch > lastMatchedReqTime {
+			lastMatchedReqTime = nl.Values[i].LastMatch
+		}
+	}
+
+	if lastMatchedReqTime == 0 {
+		t.Fatalf("unexpected lastMatchedReqTime: %v", lastMatchedReqTime)
+		return
+	}
+
+	// delete all values that
+	// closed and its LastMatch + assumedInterval < lastMatchedReqTime
+
+	for i := len(nl.Values) - 1; i >= 1; i-- {
+		if nl.Values[i].SockInfo == nil &&
+			nl.Values[i-1].SockInfo != nil &&
+			nl.Values[i-1].LastMatch+assumedInterval < lastMatchedReqTime {
+
+			// delete these two values
+			nl.Values = append(nl.Values[:i-1], nl.Values[i+1:]...)
+			i-- // we deleted two values, so we need to decrement i by 2
+		}
+	}
+
+	fmt.Println(nl.Values)
 
 }

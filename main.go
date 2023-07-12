@@ -70,9 +70,9 @@ func crCollector() {
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("failed to create containerd tracker")
 	}
-	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
 
 	http.HandleFunc("/cr-pods", func(w http.ResponseWriter, r *http.Request) {
+		ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
 		km, err := ct.ListAll(ctx)
 		if err != nil {
 			w.Write([]byte(err.Error()))
@@ -84,6 +84,7 @@ func crCollector() {
 	})
 
 	http.HandleFunc("/cr-containers", func(w http.ResponseWriter, r *http.Request) {
+		ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
 		km, err := ct.ListAll(ctx)
 		if err != nil {
 			w.Write([]byte(err.Error()))

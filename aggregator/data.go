@@ -46,13 +46,12 @@ type Aggregator struct {
 // connections and pods/services
 
 type SockInfo struct {
-	Pid           uint32 `json:"pid"`
-	Fd            uint64 `json:"fd"`
-	Saddr         string `json:"saddr"`
-	Sport         uint16 `json:"sport"`
-	Daddr         string `json:"daddr"`
-	Dport         uint16 `json:"dport"`
-	EstablishTime uint64 `json:"establishTime"`
+	Pid   uint32 `json:"pid"`
+	Fd    uint64 `json:"fd"`
+	Saddr string `json:"saddr"`
+	Sport uint16 `json:"sport"`
+	Daddr string `json:"daddr"`
+	Dport uint16 `json:"dport"`
 }
 
 // type SocketMap
@@ -299,7 +298,6 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).
 			Str("saddr", d.SAddr).Uint16("sport", d.SPort).
 			Str("daddr", d.DAddr).Uint16("dport", d.DPort).
-			Uint64("establishTime", d.Timestamp).
 			Msg("TCP_ESTABLISHED event")
 
 		var sockMap *SocketMap
@@ -319,10 +317,7 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 		sockMap.mu.RUnlock() // unlock for reading
 
 		if !ok {
-			skLine = &SocketLine{
-				mu:     sync.RWMutex{},
-				Values: make([]TimestampedSocket, 0),
-			}
+			skLine = NewSocketLine()
 			sockMap.mu.Lock() // lock for writing
 			sockMap.M[d.Fd] = skLine
 			sockMap.mu.Unlock() // unlock for writing
@@ -454,7 +449,7 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 	}
 
 	if rc < retryLimit && skInfo != nil {
-		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Uint64("writeTimeNs", d.WriteTimeNs).
+		log.Logger.Info().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Uint64("writeTimeNs", d.WriteTimeNs).
 			Msg("found socket info with retry")
 	}
 

@@ -187,7 +187,7 @@ func Deploy(ch chan interface{}) {
 	defer ticker.Stop()
 
 	go func() {
-		for range ticker.C {
+		for {
 			record, err := l7Events.Read()
 			if err != nil {
 				log.Logger.Warn().Err(err).Msg("error reading from perf array")
