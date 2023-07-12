@@ -43,8 +43,13 @@ func (a *Aggregator) processPod(d k8s.K8sResourceMessage) {
 		UID:       string(pod.UID),
 		Name:      pod.Name,
 		Namespace: pod.Namespace,
-		Image:     pod.Spec.Containers[0].Image,
+		Image:     pod.Spec.Containers[0].Image, // main containers
 		IP:        pod.Status.PodIP,
+
+		// Assuming that there is only one owner
+		OwnerType: pod.OwnerReferences[0].Kind,
+		OwnerID:   string(pod.OwnerReferences[0].UID),
+		OwnerName: pod.OwnerReferences[0].Name,
 	}
 
 	switch d.EventType {
@@ -88,12 +93,32 @@ func (a *Aggregator) persistSvc(dto datastore.Service, eventType string) {
 
 func (a *Aggregator) processSvc(d k8s.K8sResourceMessage) {
 	service := d.Object.(*corev1.Service)
+
+	ports := []struct {
+		Src      int32  "json:\"src\""
+		Dest     int32  "json:\"dest\""
+		Protocol string "json:\"protocol\""
+	}{}
+
+	for _, port := range service.Spec.Ports {
+		ports = append(ports, struct {
+			Src      int32  "json:\"src\""
+			Dest     int32  "json:\"dest\""
+			Protocol string "json:\"protocol\""
+		}{
+			Src:      port.Port,
+			Dest:     port.NodePort,
+			Protocol: string(port.Protocol),
+		})
+	}
+
 	dtoSvc := datastore.Service{
-		UID:       string(service.UID),
-		Name:      service.Name,
-		Namespace: service.Namespace,
-		Type:      string(service.Spec.Type),
-		ClusterIP: service.Spec.ClusterIP,
+		UID:        string(service.UID),
+		Name:       service.Name,
+		Namespace:  service.Namespace,
+		Type:       string(service.Spec.Type),
+		ClusterIPs: service.Spec.ClusterIPs,
+		Ports:      ports,
 	}
 
 	switch d.EventType {

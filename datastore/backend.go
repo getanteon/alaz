@@ -7,10 +7,22 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 
 	"k8s.io/apimachinery/pkg/util/uuid"
 )
+
+var MonitoringID string
+
+func init() {
+	x := os.Getenv("MONITORING_ID")
+	if x == "" {
+		MonitoringID = string(uuid.NewUUID())
+	} else {
+		MonitoringID = x
+	}
+}
 
 type PodPayload struct {
 	Metadata struct {
@@ -39,8 +51,8 @@ type SvcPayload struct {
 	Type       string   `json:"type"`
 	ClusterIPs []string `json:"cluster_ips"`
 	Ports      []struct {
-		Src      int    `json:"src"`
-		Dest     int    `json:"dest"`
+		Src      int32  `json:"src"`
+		Dest     int32  `json:"dest"`
 		Protocol string `json:"protocol"`
 	} `json:"ports"`
 }
@@ -92,25 +104,28 @@ func (b *BackendDS) DoRequest(req *http.Request) error {
 	return nil
 }
 
-func (b *BackendDS) CreatePod(pod Pod) error {
-	podPayload := PodPayload{
+func convertPodToPayload(pod Pod, eventType string) PodPayload {
+	return PodPayload{
 		Metadata: struct {
 			MonitoringID   string `json:"monitoring_id"`
 			IdempotencyKey string `json:"idempotency_key"`
 		}{
-			MonitoringID:   "123",
+			MonitoringID:   MonitoringID,
 			IdempotencyKey: string(uuid.NewUUID()),
 		},
-
 		UID:       pod.UID,
-		EventType: "ADD",
+		EventType: eventType,
 		Name:      pod.Name,
 		Namespace: pod.Namespace,
 		IP:        pod.IP,
-		OwnerType: "deployment",
-		OwnerName: "deployment",
-		OwnerID:   "123",
+		OwnerType: pod.OwnerType,
+		OwnerName: pod.OwnerName,
+		OwnerID:   pod.OwnerID,
 	}
+}
+
+func (b *BackendDS) CreatePod(pod Pod) error {
+	podPayload := convertPodToPayload(pod, "ADD")
 
 	c, err := json.Marshal(podPayload)
 	if err != nil {
@@ -131,23 +146,7 @@ func (b *BackendDS) CreatePod(pod Pod) error {
 }
 
 func (b *BackendDS) UpdatePod(pod Pod) error {
-	podPayload := PodPayload{
-		Metadata: struct {
-			MonitoringID   string `json:"monitoring_id"`
-			IdempotencyKey string `json:"idempotency_key"`
-		}{
-			MonitoringID:   "123",
-			IdempotencyKey: string(uuid.NewUUID()),
-		},
-		UID:       pod.UID,
-		EventType: "UPDATE",
-		Name:      pod.Name,
-		Namespace: pod.Namespace,
-		IP:        pod.IP,
-		OwnerType: "deployment",
-		OwnerName: "deployment",
-		OwnerID:   "123",
-	}
+	podPayload := convertPodToPayload(pod, "UPDATE")
 
 	c, err := json.Marshal(podPayload)
 	if err != nil {
@@ -168,24 +167,7 @@ func (b *BackendDS) UpdatePod(pod Pod) error {
 }
 
 func (b *BackendDS) DeletePod(pod Pod) error {
-	podPayload := PodPayload{
-		Metadata: struct {
-			MonitoringID   string `json:"monitoring_id"`
-			IdempotencyKey string `json:"idempotency_key"`
-		}{
-			MonitoringID:   "123",
-			IdempotencyKey: string(uuid.NewUUID()),
-		},
-
-		UID:       pod.UID,
-		EventType: "DELETE",
-		Name:      pod.Name,
-		Namespace: pod.Namespace,
-		IP:        pod.IP,
-		OwnerType: "deployment",
-		OwnerName: "deployment",
-		OwnerID:   "123",
-	}
+	podPayload := convertPodToPayload(pod, "DELETE")
 
 	c, err := json.Marshal(podPayload)
 	if err != nil {
@@ -205,13 +187,13 @@ func (b *BackendDS) DeletePod(pod Pod) error {
 	return nil
 }
 
-func (b *BackendDS) CreateService(service Service) error {
-	svcPayload := SvcPayload{
+func convertSvcToPayload(service Service, eventType string) SvcPayload {
+	return SvcPayload{
 		Metadata: struct {
 			MonitoringID   string `json:"monitoring_id"`
 			IdempotencyKey string `json:"idempotency_key"`
 		}{
-			MonitoringID:   "123",
+			MonitoringID:  MonitoringID
 			IdempotencyKey: string(uuid.NewUUID()),
 		},
 		UID:        service.UID,
@@ -219,13 +201,13 @@ func (b *BackendDS) CreateService(service Service) error {
 		Name:       service.Name,
 		Namespace:  service.Namespace,
 		Type:       service.Type,
-		ClusterIPs: []string{service.ClusterIP}, // TODO: get all cluster ips
-		Ports: []struct {
-			Src      int    "json:\"src\""
-			Dest     int    "json:\"dest\""
-			Protocol string "json:\"protocol\""
-		}{}, // TODO: fill ports
+		ClusterIPs: service.ClusterIPs,
+		Ports:      service.Ports,
 	}
+}
+
+func (b *BackendDS) CreateService(service Service) error {
+	svcPayload := convertSvcToPayload(service, "ADD")
 
 	c, err := json.Marshal(svcPayload)
 	if err != nil {
@@ -246,26 +228,7 @@ func (b *BackendDS) CreateService(service Service) error {
 }
 
 func (b *BackendDS) UpdateService(service Service) error {
-	svcPayload := SvcPayload{
-		Metadata: struct {
-			MonitoringID   string `json:"monitoring_id"`
-			IdempotencyKey string `json:"idempotency_key"`
-		}{
-			MonitoringID:   "123",
-			IdempotencyKey: string(uuid.NewUUID()),
-		},
-		UID:        service.UID,
-		EventType:  "UPDATE",
-		Name:       service.Name,
-		Namespace:  service.Namespace,
-		Type:       service.Type,
-		ClusterIPs: []string{service.ClusterIP}, // TODO: get all cluster ips
-		Ports: []struct {
-			Src      int    "json:\"src\""
-			Dest     int    "json:\"dest\""
-			Protocol string "json:\"protocol\""
-		}{}, // TODO: fill ports
-	}
+	svcPayload := convertSvcToPayload(service, "UPDATE")
 
 	c, err := json.Marshal(svcPayload)
 	if err != nil {
@@ -286,26 +249,7 @@ func (b *BackendDS) UpdateService(service Service) error {
 }
 
 func (b *BackendDS) DeleteService(service Service) error {
-	svcPayload := SvcPayload{
-		Metadata: struct {
-			MonitoringID   string `json:"monitoring_id"`
-			IdempotencyKey string `json:"idempotency_key"`
-		}{
-			MonitoringID:   "123",
-			IdempotencyKey: string(uuid.NewUUID()),
-		},
-		UID:        service.UID,
-		EventType:  "DELETE",
-		Name:       service.Name,
-		Namespace:  service.Namespace,
-		Type:       service.Type,
-		ClusterIPs: []string{service.ClusterIP}, // TODO: get all cluster ips
-		Ports: []struct {
-			Src      int    "json:\"src\""
-			Dest     int    "json:\"dest\""
-			Protocol string "json:\"protocol\""
-		}{}, // TODO: fill ports
-	}
+	svcPayload := convertSvcToPayload(service, "DELETE")
 
 	c, err := json.Marshal(svcPayload)
 	if err != nil {
