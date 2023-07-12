@@ -24,7 +24,6 @@ import (
 
 	"alaz/k8s"
 
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -37,8 +36,10 @@ type Aggregator struct {
 	// store the service map
 	clusterInfo *ClusterInfo
 
-	// persist data to db, backend will consume this
-	repo datastore.Repository
+	// send data to datastore
+	ds datastore.DataStore
+
+	dsDestination string
 }
 
 // We need to keep track of the following
@@ -93,6 +94,9 @@ var (
 	// 20 + 40 + 80 + 160 + 320 + 640 + 1280 + 2560 + 5120 + 10240 = 20470 ms = 20.47 s
 )
 
+var usePgDs bool = false
+var useBackendDs bool = true // default to true
+
 func NewAggregator(k8sChan <-chan interface{}, crChan <-chan interface{}, ebpfChan <-chan interface{}) *Aggregator {
 	clusterInfo := &ClusterInfo{
 		PodIPToPodUid:         map[string]types.UID{},
@@ -102,20 +106,49 @@ func NewAggregator(k8sChan <-chan interface{}, crChan <-chan interface{}, ebpfCh
 		ServiceIPToNamespace:  map[string]string{},
 	}
 
-	repo := datastore.NewRepository(config.PostgresConfig{
-		Host:     os.Getenv("POSTGRES_HOST"),
-		Port:     os.Getenv("POSTGRES_PORT"),
-		Username: os.Getenv("POSTGRES_USER"),
-		Password: os.Getenv("POSTGRES_PASSWORD"),
-		DBName:   os.Getenv("POSTGRES_DB"),
+	usePgDs, _ = strconv.ParseBool(os.Getenv("DS_PG"))
+
+	if os.Getenv("DS_BACKEND") == "false" {
+		useBackendDs = false
+	}
+
+	var dsPg datastore.DataStore
+	if usePgDs {
+		dsPg = datastore.NewRepository(config.PostgresConfig{
+			Host:     os.Getenv("POSTGRES_HOST"),
+			Port:     os.Getenv("POSTGRES_PORT"),
+			Username: os.Getenv("POSTGRES_USER"),
+			Password: os.Getenv("POSTGRES_PASSWORD"),
+			DBName:   os.Getenv("POSTGRES_DB"),
+		})
+	}
+
+	dsBackend := datastore.NewBackendDS(config.BackendConfig{
+		Host: os.Getenv("BACKEND_HOST"),
+		Port: os.Getenv("BACKEND_PORT"),
 	})
 
+	var ds datastore.DataStore
+	var dsDestination string
+	if useBackendDs && !usePgDs {
+		ds = dsBackend
+		dsDestination = "backend"
+	} else if !useBackendDs && usePgDs {
+		ds = dsPg
+		dsDestination = "pg"
+	} else if useBackendDs && usePgDs {
+		// both are enabled, use backend
+		ds = dsBackend
+		dsDestination = "backend"
+	}
+
 	return &Aggregator{
-		k8sChan:     k8sChan,
-		crChan:      crChan,
-		ebpfChan:    ebpfChan,
-		clusterInfo: clusterInfo,
-		repo:        repo,
+		k8sChan:       k8sChan,
+		crChan:        crChan,
+		ebpfChan:      ebpfChan,
+		clusterInfo:   clusterInfo,
+		ds:            ds,
+		dsDestination: dsDestination,
 	}
 }
 
@@ -150,6 +183,7 @@ func (a *Aggregator) AdvertisePidSockMap() {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusOK)
 				_ = json.NewEncoder(w).Encode(sockMap)
+				return
 			}
 		},
 	)
@@ -158,75 +192,13 @@ func (a *Aggregator) AdvertisePidSockMap() {
 func (a *Aggregator) processk8s() {
 	for data := range a.k8sChan {
 		d := data.(k8s.K8sResourceMessage)
-		// TODO: handle using resource uids instead of ip ?
-		if d.ResourceType == k8s.POD {
-			pod := d.Object.(*corev1.Pod)
-			dtoPod := datastore.Pod{
-				UID:       string(pod.UID),
-				Name:      pod.Name,
-				Namespace: pod.Namespace,
-				Image:     pod.Spec.Containers[0].Image,
-				IP:        pod.Status.PodIP,
-			}
-			switch d.EventType {
-			case k8s.ADD:
-				a.clusterInfo.PodIPToPodUid[pod.Status.PodIP] = pod.UID
-				a.clusterInfo.PodIPToNamespace[pod.Status.PodIP] = pod.Namespace
-				err := a.repo.CreatePod(dtoPod)
-				if err != nil {
-					log.Logger.Error().Err(err).Msg("error on CreatePod call")
-				}
-			case k8s.UPDATE:
-				a.clusterInfo.PodIPToPodUid[pod.Status.PodIP] = pod.UID
-				a.clusterInfo.PodIPToNamespace[pod.Status.PodIP] = pod.Namespace
-				err := a.repo.UpdatePod(dtoPod)
-				if err != nil {
-					log.Logger.Error().Err(err).Msg("error on UpdatePod call")
-				}
-			case k8s.DELETE:
-				delete(a.clusterInfo.PodIPToPodUid, pod.Status.PodIP)
-				delete(a.clusterInfo.PodIPToNamespace, pod.Status.PodIP)
-				err := a.repo.DeletePod(dtoPod)
-				if err != nil {
-					log.Logger.Error().Err(err).Msg("error on DeletePod call")
-				}
-			}
-
-		} else if d.ResourceType == k8s.SERVICE {
-			service := d.Object.(*corev1.Service)
-			dtoSvc := datastore.Service{
-				UID:       string(service.UID),
-				Name:      service.Name,
-				Namespace: service.Namespace,
-				Type:      string(service.Spec.Type),
-				ClusterIP: service.Spec.ClusterIP,
-			}
-
-			switch d.EventType {
-			case k8s.ADD:
-				a.clusterInfo.ServiceIPToServiceUid[service.Spec.ClusterIP] = service.UID
-				a.clusterInfo.ServiceIPToNamespace[service.Spec.ClusterIP] = service.Namespace
-				err := a.repo.CreateService(dtoSvc)
-				if err != nil {
-					log.Logger.Debug().Err(err).Msg("error persisting service data")
-				}
-			case k8s.UPDATE:
-				a.clusterInfo.ServiceIPToServiceUid[service.Spec.ClusterIP] = service.UID
-				a.clusterInfo.ServiceIPToNamespace[service.Spec.ClusterIP] = service.Namespace
-				err := a.repo.UpdateService(dtoSvc)
-				if err != nil {
-					log.Logger.Debug().Err(err).Msg("error persisting service data")
-				}
-			case k8s.DELETE:
-				delete(a.clusterInfo.ServiceIPToServiceUid, service.Spec.ClusterIP)
-				delete(a.clusterInfo.ServiceIPToNamespace, service.Spec.ClusterIP)
-				err := a.repo.DeleteService(dtoSvc)
-				if err != nil {
-					log.Logger.Debug().Err(err).Msg("error persisting service data")
-				}
-			}
-		} else {
-			log.Logger.Warn().Str("resourceType", d.ResourceType).Msg("Unknown resource type")
+		switch d.ResourceType {
+		case k8s.POD:
+			a.processPod(d)
+		case k8s.SERVICE:
+			a.processSvc(d)
+		default:
+			log.Logger.Warn().Msgf("unknown resource type %s", d.ResourceType)
 		}
 	}
 }
@@ -503,9 +475,5 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 
 	reqDto.Completed = !d.Failed
 
-	go a.repo.PersistRequest(reqDto)
-	// err = a.repo.PersistRequest(reqDto)
-	// if err != nil {
-	// 	log.Logger.Error().Err(err).Msg("error persisting request")
-	// }
+	go a.ds.PersistRequest(reqDto)
 }

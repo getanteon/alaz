@@ -7,3 +7,8 @@ type PostgresConfig struct {
 	Password string
 	DBName   string
 }
+
+type BackendConfig struct {
+	Host string
+	Port string
+}

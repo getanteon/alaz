@@ -38,6 +38,10 @@ spec:
             value: "alazdb"
           - name: LOG_LEVEL
             value: "0"
+          - name: DS_PG
+            value: "true"
+          - name: DS_BACKEND
+            value: "false"
         ports:
           - containerPort: 8181
         securityContext:
