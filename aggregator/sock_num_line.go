@@ -51,6 +51,7 @@ func (nl *SocketLine) GetValue(timestamp uint64) (*SockInfo, error) {
 
 	if index == len(nl.Values) {
 		// The timestamp is after the last entry, so return the last value
+		nl.Values[index-1].LastMatch = uint64(time.Now().UnixNano())
 		return nl.Values[len(nl.Values)-1].SockInfo, nil
 	}
 
@@ -68,7 +69,7 @@ func (nl *SocketLine) GetValue(timestamp uint64) (*SockInfo, error) {
 
 	// Return the value associated with the closest previous timestamp
 
-	// TODO: lru cache, delete old values after a certain time
+	// TODO: lru cache
 	// if no new values are added, return from cache
 	// A client that uses same socket for a long time will have a lot of requests
 	// no need to search for the same value again and again
@@ -79,44 +80,45 @@ func (nl *SocketLine) GetValue(timestamp uint64) (*SockInfo, error) {
 
 func (nl *SocketLine) DeleteUnused() {
 	// Delete socket lines that are not in use
-	ticker := time.NewTicker(2 * time.Minute)
+	ticker := time.NewTicker(1 * time.Minute)
 
 	for range ticker.C {
-		nl.mu.Lock()
-		defer nl.mu.Unlock()
+		func() {
+			nl.mu.Lock()
+			defer nl.mu.Unlock()
 
-		if len(nl.Values) == 0 {
-			continue
-		}
-
-		var lastMatchedReqTime uint64 = 0
-
-		// traverse the slice backwards
-		for i := len(nl.Values) - 1; i >= 0; i-- {
-			if nl.Values[i].LastMatch != 0 && nl.Values[i].LastMatch > lastMatchedReqTime {
-				lastMatchedReqTime = nl.Values[i].LastMatch
+			if len(nl.Values) == 0 {
+				return
 			}
-		}
 
-		if lastMatchedReqTime == 0 {
-			continue
-		}
+			var lastMatchedReqTime uint64 = 0
 
-		// assumedInterval is inversely proportional to the number of requests being discarded
-		assumedInterval := uint64(5 * time.Minute) // TODO: make configurable
-
-		// delete all values that
-		// closed and its LastMatch + assumedInterval < lastMatchedReqTime
-		for i := len(nl.Values) - 1; i >= 1; i-- {
-			if nl.Values[i].SockInfo == nil &&
-				nl.Values[i-1].SockInfo != nil &&
-				nl.Values[i-1].LastMatch+assumedInterval < lastMatchedReqTime {
-
-				// delete these two values
-				nl.Values = append(nl.Values[:i-1], nl.Values[i+1:]...)
-				i-- // we deleted two values, so we need to decrement i by 2
+			// traverse the slice backwards
+			for i := len(nl.Values) - 1; i >= 0; i-- {
+				if nl.Values[i].LastMatch != 0 && nl.Values[i].LastMatch > lastMatchedReqTime {
+					lastMatchedReqTime = nl.Values[i].LastMatch
+				}
 			}
-		}
 
+			if lastMatchedReqTime == 0 {
+				return
+			}
+
+			// assumedInterval is inversely proportional to the number of requests being discarded
+			assumedInterval := uint64(2 * time.Minute) // TODO: make configurable
+
+			// delete all values that
+			// closed and its LastMatch + assumedInterval < lastMatchedReqTime
+			for i := len(nl.Values) - 1; i >= 1; i-- {
+				if nl.Values[i].SockInfo == nil &&
+					nl.Values[i-1].SockInfo != nil &&
+					nl.Values[i-1].LastMatch+assumedInterval < lastMatchedReqTime {
+
+					// delete these two values
+					nl.Values = append(nl.Values[:i-1], nl.Values[i+1:]...)
+					i-- // we deleted two values, so we need to decrement i by 2
+				}
+			}
+		}()
 	}
 }
