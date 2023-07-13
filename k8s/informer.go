@@ -13,7 +13,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/informers"
+	appsv1 "k8s.io/client-go/informers/apps/v1"
 	v1 "k8s.io/client-go/informers/core/v1"
+
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
@@ -24,8 +26,10 @@ import (
 type K8SResourceType string
 
 const (
-	SERVICE = "Service"
-	POD     = "Pod"
+	SERVICE    = "Service"
+	POD        = "Pod"
+	REPLICASET = "ReplicaSet"
+	DEPLOYMENT = "Deployment"
 )
 
 const (
@@ -39,8 +43,10 @@ type K8sCollector struct {
 	watchers         map[K8SResourceType]cache.SharedIndexInformer
 	stopper          chan struct{} // stop signal for the informer
 	// watchers
-	podInformer     v1.PodInformer
-	serviceInformer v1.ServiceInformer
+	podInformer        v1.PodInformer
+	serviceInformer    v1.ServiceInformer
+	replicasetInformer appsv1.ReplicaSetInformer
+	deploymentInformer appsv1.DeploymentInformer
 
 	k8sBigPicture *K8sBigPicture
 	Events        chan interface{}
@@ -80,19 +86,39 @@ func (k *K8sCollector) Init(events chan interface{}) error {
 	k.serviceInformer = k.informersFactory.Core().V1().Services()
 	k.watchers[SERVICE] = k.informersFactory.Core().V1().Services().Informer()
 
+	// ReplicaSet
+	k.replicasetInformer = k.informersFactory.Apps().V1().ReplicaSets()
+	k.watchers[REPLICASET] = k.replicasetInformer.Informer()
+
+	// Deployment
+	k.deploymentInformer = k.informersFactory.Apps().V1().Deployments()
+	k.watchers[DEPLOYMENT] = k.deploymentInformer.Informer()
+
 	defer runtime.HandleCrash()
 
 	// Add event handlers
 	k.watchers[POD].AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    getOnAddPodFunc(k.k8sBigPicture, k.Events),
-		UpdateFunc: getOnUpdatePodFunc(k.k8sBigPicture, k.Events),
-		DeleteFunc: getOnDeletePodFunc(k.k8sBigPicture, k.Events),
+		AddFunc:    getOnAddPodFunc(k.Events),
+		UpdateFunc: getOnUpdatePodFunc(k.Events),
+		DeleteFunc: getOnDeletePodFunc(k.Events),
 	})
 
 	k.watchers[SERVICE].AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    getOnAddServiceFunc(k.k8sBigPicture, k.Events),
-		UpdateFunc: getOnUpdateServiceFunc(k.k8sBigPicture, k.Events),
-		DeleteFunc: getOnDeleteServiceFunc(k.k8sBigPicture, k.Events),
+		AddFunc:    getOnAddServiceFunc(k.Events),
+		UpdateFunc: getOnUpdateServiceFunc(k.Events),
+		DeleteFunc: getOnDeleteServiceFunc(k.Events),
+	})
+
+	k.watchers[REPLICASET].AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    getOnAddReplicaSetFunc(k.Events),
+		UpdateFunc: getOnUpdateReplicaSetFunc(k.Events),
+		DeleteFunc: getOnDeleteReplicaSetFunc(k.Events),
+	})
+
+	k.watchers[DEPLOYMENT].AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    getOnAddDeploymentSetFunc(k.Events),
+		UpdateFunc: getOnUpdateDeploymentSetFunc(k.Events),
+		DeleteFunc: getOnDeleteDeploymentSetFunc(k.Events),
 	})
 
 	for _, watcher := range k.watchers {
@@ -159,140 +185,4 @@ type K8sResourceMessage struct {
 	ResourceType string      `json:"type"`
 	EventType    string      `json:"eventType"`
 	Object       interface{} `json:"object"` // TODO: make this generic, add converter ?
-}
-
-// TODO: send update and delete events to the channel
-func getOnAddPodFunc(k8sBigPicture *K8sBigPicture, ch chan interface{}) func(interface{}) {
-	return func(obj interface{}) {
-		newPod := obj.(*corev1.Pod)
-		ns := newPod.Namespace
-
-		if _, ok := k8sBigPicture.NamespaceToResources[ns]; !ok {
-			k8sBigPicture.NamespaceToResources[ns] = K8sNamespaceResources{
-				Pods:     map[string]corev1.Pod{},
-				Services: map[string]corev1.Service{},
-			}
-		}
-
-		k8sBigPicture.NamespaceToResources[ns].Pods[newPod.Name] = *newPod
-
-		log.Logger.Debug().Msgf("pod %s added", newPod.Name)
-		ch <- K8sResourceMessage{
-			ResourceType: POD,
-			EventType:    ADD,
-			Object:       newPod,
-		}
-		log.Logger.Debug().Msgf("sent to chan %s", newPod.Name)
-	}
-}
-
-func getOnUpdatePodFunc(k8sBigPicture *K8sBigPicture, ch chan interface{}) func(interface{}, interface{}) {
-	return func(oldObj, newObj interface{}) {
-		newPod := newObj.(*corev1.Pod)
-		ns := newPod.Namespace
-
-		if _, ok := k8sBigPicture.NamespaceToResources[ns]; !ok {
-			k8sBigPicture.NamespaceToResources[ns] = K8sNamespaceResources{
-				Pods:     map[string]corev1.Pod{},
-				Services: map[string]corev1.Service{},
-			}
-		}
-
-		k8sBigPicture.NamespaceToResources[ns].Pods[newPod.Name] = *newPod
-
-		ch <- K8sResourceMessage{
-			ResourceType: POD,
-			EventType:    UPDATE,
-			Object:       newPod,
-		}
-	}
-}
-
-func getOnDeletePodFunc(k8sBigPicture *K8sBigPicture, ch chan interface{}) func(interface{}) {
-	return func(obj interface{}) {
-		deletedPod := obj.(*corev1.Pod)
-		ns := deletedPod.Namespace
-
-		if _, ok := k8sBigPicture.NamespaceToResources[ns]; !ok {
-			k8sBigPicture.NamespaceToResources[ns] = K8sNamespaceResources{
-				Pods:     map[string]corev1.Pod{},
-				Services: map[string]corev1.Service{},
-			}
-		}
-
-		delete(k8sBigPicture.NamespaceToResources[ns].Pods, deletedPod.Name)
-
-		ch <- K8sResourceMessage{
-			ResourceType: POD,
-			EventType:    DELETE,
-			Object:       deletedPod,
-		}
-	}
-}
-
-func getOnAddServiceFunc(k8sBigPicture *K8sBigPicture, ch chan interface{}) func(interface{}) {
-	return func(obj interface{}) {
-		newService := obj.(*corev1.Service)
-		ns := newService.Namespace
-
-		if _, ok := k8sBigPicture.NamespaceToResources[ns]; !ok {
-			k8sBigPicture.NamespaceToResources[ns] = K8sNamespaceResources{
-				Pods:     map[string]corev1.Pod{},
-				Services: map[string]corev1.Service{},
-			}
-		}
-
-		k8sBigPicture.NamespaceToResources[ns].Services[newService.Name] = *newService
-
-		ch <- K8sResourceMessage{
-			ResourceType: SERVICE,
-			EventType:    ADD,
-			Object:       newService,
-		}
-	}
-}
-
-func getOnUpdateServiceFunc(k8sBigPicture *K8sBigPicture, ch chan interface{}) func(interface{}, interface{}) {
-	return func(oldObj, newObj interface{}) {
-		// TODO: find diff ?
-		newService := newObj.(*corev1.Service)
-		ns := newService.Namespace
-
-		if _, ok := k8sBigPicture.NamespaceToResources[ns]; !ok {
-			k8sBigPicture.NamespaceToResources[ns] = K8sNamespaceResources{
-				Pods:     map[string]corev1.Pod{},
-				Services: map[string]corev1.Service{},
-			}
-		}
-
-		k8sBigPicture.NamespaceToResources[ns].Services[newService.Name] = *newService
-
-		ch <- K8sResourceMessage{
-			ResourceType: SERVICE,
-			EventType:    UPDATE,
-			Object:       newService,
-		}
-	}
-}
-
-func getOnDeleteServiceFunc(k8sBigPicture *K8sBigPicture, ch chan interface{}) func(interface{}) {
-	return func(obj interface{}) {
-		deletedService := obj.(*corev1.Service)
-		ns := deletedService.Namespace
-
-		if _, ok := k8sBigPicture.NamespaceToResources[ns]; !ok {
-			k8sBigPicture.NamespaceToResources[ns] = K8sNamespaceResources{
-				Pods:     map[string]corev1.Pod{},
-				Services: map[string]corev1.Service{},
-			}
-		}
-
-		delete(k8sBigPicture.NamespaceToResources[ns].Services, deletedService.Name)
-
-		ch <- K8sResourceMessage{
-			ResourceType: SERVICE,
-			EventType:    DELETE,
-			Object:       deletedService,
-		}
-	}
 }

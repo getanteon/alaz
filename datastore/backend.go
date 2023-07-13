@@ -57,17 +57,48 @@ type SvcPayload struct {
 	} `json:"ports"`
 }
 
+type ReplicaSetPayload struct {
+	Metadata struct {
+		MonitoringID   string `json:"monitoring_id"`
+		IdempotencyKey string `json:"idempotency_key"`
+	} `json:"metadata"`
+	UID       string `json:"uid"`
+	EventType string `json:"event_type"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	Replicas  int32  `json:"replicas"`
+	OwnerType string `json:"owner_type"`
+	OwnerName string `json:"owner_name"`
+	OwnerID   string `json:"owner_id"`
+}
+
+type DeploymentPayload struct {
+	Metadata struct {
+		MonitoringID   string `json:"monitoring_id"`
+		IdempotencyKey string `json:"idempotency_key"`
+	} `json:"metadata"`
+	UID       string `json:"uid"`
+	EventType string `json:"event_type"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	Replicas  int32  `json:"replicas"`
+}
+
 // BackendDS is a backend datastore
 type BackendDS struct {
 	host  string
 	port  string
 	token string
 	c     *http.Client
+
+	reqChan chan interface{}
 }
 
 const (
-	podEndpoint = "/alaz/k8s/pod"
-	svcEndpoint = "/alaz/k8s/svc"
+	podEndpoint = "/alaz/k8s/pod/"
+	svcEndpoint = "/alaz/k8s/svc/"
+	rsEndpoint  = "/alaz/k8s/replicaset/"
+	depEndpoint = "/alaz/k8s/deployment/"
 )
 
 func NewBackendDS(conf config.BackendConfig) *BackendDS {
@@ -77,6 +108,9 @@ func NewBackendDS(conf config.BackendConfig) *BackendDS {
 			MaxConnsPerHost:   100, // 100 connection per host
 		},
 		Timeout: 5 * time.Second, // Set a timeout for the request
+		// CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		// 	return http.ErrUseLastResponse
+		// },
 	}
 
 	return &BackendDS{
@@ -98,11 +132,14 @@ func (b *BackendDS) DoRequest(req *http.Request) error {
 	if err != nil {
 		return fmt.Errorf("error sending http request: %v", err)
 	}
-	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body) // in order to reuse the connection
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body) // in order to reuse the connection
+		resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("not success: %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("not success: %d, %s", resp.StatusCode, string(body))
 	}
 
 	return nil
@@ -128,57 +165,15 @@ func convertPodToPayload(pod Pod, eventType string) PodPayload {
 	}
 }
 
-func (b *BackendDS) CreatePod(pod Pod) error {
-	podPayload := convertPodToPayload(pod, "ADD")
+func (b *BackendDS) PersistPod(pod Pod, eventType string) error {
+	podPayload := convertPodToPayload(pod, eventType)
 
 	c, err := json.Marshal(podPayload)
 	if err != nil {
 		return fmt.Errorf("error marshalling pod payload: %v", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", b.host+":"+b.port+podEndpoint, bytes.NewBuffer(c))
-	if err != nil {
-		return fmt.Errorf("error creating http request: %v", err)
-	}
-
-	err = b.DoRequest(httpReq)
-	if err != nil {
-		return fmt.Errorf("error on persisting to backend: %v", err)
-	}
-
-	return nil
-}
-
-func (b *BackendDS) UpdatePod(pod Pod) error {
-	podPayload := convertPodToPayload(pod, "UPDATE")
-
-	c, err := json.Marshal(podPayload)
-	if err != nil {
-		return fmt.Errorf("error marshalling pod payload: %v", err)
-	}
-
-	httpReq, err := http.NewRequest("POST", b.host+":"+b.port+podEndpoint, bytes.NewBuffer(c))
-	if err != nil {
-		return fmt.Errorf("error creating http request: %v", err)
-	}
-
-	err = b.DoRequest(httpReq)
-	if err != nil {
-		return fmt.Errorf("error on persisting to backend: %v", err)
-	}
-
-	return nil
-}
-
-func (b *BackendDS) DeletePod(pod Pod) error {
-	podPayload := convertPodToPayload(pod, "DELETE")
-
-	c, err := json.Marshal(podPayload)
-	if err != nil {
-		return fmt.Errorf("error marshalling pod payload: %v", err)
-	}
-
-	httpReq, err := http.NewRequest("POST", b.host+":"+b.port+podEndpoint, bytes.NewBuffer(c))
+	httpReq, err := http.NewRequest(http.MethodPost, b.host+":"+b.port+podEndpoint, bytes.NewBuffer(c))
 	if err != nil {
 		return fmt.Errorf("error creating http request: %v", err)
 	}
@@ -210,15 +205,15 @@ func convertSvcToPayload(service Service, eventType string) SvcPayload {
 	}
 }
 
-func (b *BackendDS) CreateService(service Service) error {
-	svcPayload := convertSvcToPayload(service, "ADD")
+func (b *BackendDS) PersistService(service Service, eventType string) error {
+	svcPayload := convertSvcToPayload(service, eventType)
 
 	c, err := json.Marshal(svcPayload)
 	if err != nil {
-		return fmt.Errorf("error marshalling pod payload: %v", err)
+		return fmt.Errorf("error marshalling svc payload: %v", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", b.host+":"+b.port+svcEndpoint, bytes.NewBuffer(c))
+	httpReq, err := http.NewRequest(http.MethodPost, b.host+":"+b.port+svcEndpoint, bytes.NewBuffer(c))
 	if err != nil {
 		return fmt.Errorf("error creating http request: %v", err)
 	}
@@ -231,15 +226,32 @@ func (b *BackendDS) CreateService(service Service) error {
 	return nil
 }
 
-func (b *BackendDS) UpdateService(service Service) error {
-	svcPayload := convertSvcToPayload(service, "UPDATE")
+func convertReplicasetToPayload(rs ReplicaSet, eventType string) ReplicaSetPayload {
+	return ReplicaSetPayload{
+		Metadata: struct {
+			MonitoringID   string `json:"monitoring_id"`
+			IdempotencyKey string `json:"idempotency_key"`
+		}{MonitoringID: MonitoringID, IdempotencyKey: string(uuid.NewUUID())},
+		UID:       rs.UID,
+		EventType: eventType,
+		Name:      rs.Name,
+		Namespace: rs.Namespace,
+		Replicas:  rs.Replicas,
+		OwnerType: rs.OwnerType,
+		OwnerName: rs.OwnerName,
+		OwnerID:   rs.OwnerID,
+	}
+}
 
-	c, err := json.Marshal(svcPayload)
+func (b *BackendDS) PersistReplicaSet(rs ReplicaSet, eventType string) error {
+	rsPayload := convertReplicasetToPayload(rs, eventType)
+
+	c, err := json.Marshal(rsPayload)
 	if err != nil {
-		return fmt.Errorf("error marshalling pod payload: %v", err)
+		return fmt.Errorf("error marshalling rs payload: %v", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", b.host+":"+b.port+svcEndpoint, bytes.NewBuffer(c))
+	httpReq, err := http.NewRequest(http.MethodPost, b.host+":"+b.port+rsEndpoint, bytes.NewBuffer(c))
 	if err != nil {
 		return fmt.Errorf("error creating http request: %v", err)
 	}
@@ -252,15 +264,29 @@ func (b *BackendDS) UpdateService(service Service) error {
 	return nil
 }
 
-func (b *BackendDS) DeleteService(service Service) error {
-	svcPayload := convertSvcToPayload(service, "DELETE")
+func convertDeploymentToPayload(d Deployment, eventType string) DeploymentPayload {
+	return DeploymentPayload{
+		Metadata: struct {
+			MonitoringID   string `json:"monitoring_id"`
+			IdempotencyKey string `json:"idempotency_key"`
+		}{MonitoringID: MonitoringID, IdempotencyKey: string(uuid.NewUUID())},
+		UID:       d.UID,
+		EventType: eventType,
+		Name:      d.Name,
+		Namespace: d.Namespace,
+		Replicas:  d.Replicas,
+	}
+}
 
-	c, err := json.Marshal(svcPayload)
+func (b *BackendDS) PersistDeployment(d Deployment, eventType string) error {
+	dPayload := convertDeploymentToPayload(d, eventType)
+
+	c, err := json.Marshal(dPayload)
 	if err != nil {
-		return fmt.Errorf("error marshalling pod payload: %v", err)
+		return fmt.Errorf("error marshalling deployment payload: %v", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", b.host+":"+b.port+svcEndpoint, bytes.NewBuffer(c))
+	httpReq, err := http.NewRequest(http.MethodPost, b.host+":"+b.port+depEndpoint, bytes.NewBuffer(c))
 	if err != nil {
 		return fmt.Errorf("error creating http request: %v", err)
 	}

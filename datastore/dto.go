@@ -27,6 +27,23 @@ type Service struct {
 	}
 }
 
+type ReplicaSet struct {
+	UID       string // ReplicaSet UID
+	Name      string // ReplicaSet Name
+	Namespace string // Namespace
+	OwnerType string // Deployment or nil
+	OwnerID   string // Deployment UID
+	OwnerName string // Deployment Name
+	Replicas  int32  // Number of replicas
+}
+
+type Deployment struct {
+	UID       string // Deployment UID
+	Name      string // Deployment Name
+	Namespace string // Namespace
+	Replicas  int32  // Number of replicas
+}
+
 type Request struct {
 	StartTime  time.Time
 	Latency    uint64 // in ns

@@ -5,6 +5,7 @@ import (
 	"alaz/k8s"
 	"alaz/log"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -14,26 +15,10 @@ const (
 	DELETE = "DELETE"
 )
 
-func (a *Aggregator) persistPod(dtoPod datastore.Pod, eventType string) {
-	var callName string
-	var err error
-	switch eventType {
-	case ADD:
-		callName = "CreatePod"
-		err = a.ds.CreatePod(dtoPod)
-	case UPDATE:
-		callName = "UpdatePod"
-		err = a.ds.UpdatePod(dtoPod)
-	case DELETE:
-		callName = "DeletePod"
-		err = a.ds.DeletePod(dtoPod)
-	default:
-		log.Logger.Error().Msg("unknown event type")
-		return
-	}
-
+func (a *Aggregator) persistPod(dto datastore.Pod, eventType string) {
+	err := a.ds.PersistPod(dto, eventType)
 	if err != nil {
-		log.Logger.Error().Err(err).Msgf("error on %s call to %s", callName, a.dsDestination)
+		log.Logger.Error().Err(err).Msgf("error on PersistPod call to %s", eventType)
 	}
 }
 
@@ -79,25 +64,9 @@ func (a *Aggregator) processPod(d k8s.K8sResourceMessage) {
 }
 
 func (a *Aggregator) persistSvc(dto datastore.Service, eventType string) {
-	var callName string
-	var err error
-	switch eventType {
-	case ADD:
-		callName = "CreateService"
-		err = a.ds.CreateService(dto)
-	case UPDATE:
-		callName = "UpdateService"
-		err = a.ds.UpdateService(dto)
-	case DELETE:
-		callName = "DeleteService"
-		err = a.ds.DeleteService(dto)
-	default:
-		log.Logger.Error().Msg("unknown event type")
-		return
-	}
-
+	err := a.ds.PersistService(dto, eventType)
 	if err != nil {
-		log.Logger.Error().Err(err).Msgf("error on %s call to %s", callName, a.dsDestination)
+		log.Logger.Error().Err(err).Msgf("error on PersistService call to %s", eventType)
 	}
 }
 
@@ -145,4 +114,65 @@ func (a *Aggregator) processSvc(d k8s.K8sResourceMessage) {
 		delete(a.clusterInfo.ServiceIPToNamespace, service.Spec.ClusterIP)
 		go a.persistSvc(dtoSvc, DELETE)
 	}
+}
+
+func (a *Aggregator) persistReplicaSet(dto datastore.ReplicaSet, eventType string) {
+	err := a.ds.PersistReplicaSet(dto, eventType)
+	if err != nil {
+		log.Logger.Error().Err(err).Msgf("error on persistReplicaset call to %s", eventType)
+	}
+}
+
+func (a *Aggregator) processReplicaSet(d k8s.K8sResourceMessage) {
+	replicaSet := d.Object.(*appsv1.ReplicaSet)
+
+	var ownerType, ownerID, ownerName string
+	if len(replicaSet.OwnerReferences) > 0 {
+		ownerType = replicaSet.OwnerReferences[0].Kind
+		ownerID = string(replicaSet.OwnerReferences[0].UID)
+		ownerName = replicaSet.OwnerReferences[0].Name
+	} else {
+		log.Logger.Debug().Msgf("ReplicaSet %s/%s has no owner, event: %s", replicaSet.Namespace, replicaSet.Name, d.EventType)
+	}
+
+	dtoReplicaSet := datastore.ReplicaSet{
+		UID:       string(replicaSet.UID),
+		Name:      ownerName,
+		Namespace: replicaSet.Namespace,
+		OwnerType: ownerType,
+		OwnerID:   ownerID,
+		OwnerName: ownerName,
+		Replicas:  replicaSet.Status.Replicas,
+	}
+
+	switch d.EventType {
+	case k8s.ADD:
+		go a.persistReplicaSet(dtoReplicaSet, ADD)
+	case k8s.UPDATE:
+		go a.persistReplicaSet(dtoReplicaSet, UPDATE)
+	case k8s.DELETE:
+		go a.persistReplicaSet(dtoReplicaSet, DELETE)
+	}
+
+}
+
+func (a *Aggregator) processDeployment(d k8s.K8sResourceMessage) {
+	deployment := d.Object.(*appsv1.Deployment)
+
+	dto := datastore.Deployment{
+		UID:       string(deployment.UID),
+		Name:      deployment.Name,
+		Namespace: deployment.Namespace,
+		Replicas:  deployment.Status.Replicas,
+	}
+
+	switch d.EventType {
+	case k8s.ADD:
+		go a.ds.PersistDeployment(dto, ADD)
+	case k8s.UPDATE:
+		go a.ds.PersistDeployment(dto, UPDATE)
+	case k8s.DELETE:
+		go a.ds.PersistDeployment(dto, DELETE)
+	}
+
 }

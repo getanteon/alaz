@@ -141,12 +141,12 @@ spec:
                     - ip-192-168-44-45.eu-central-1.compute.internal
       containers:
         - name: alaz-pod
-          image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:v3.3
+          image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:v3.4.4
           env:
             - name: K8S_COLLECTOR_ENABLED
               value: "true"
             - name: CR_COLLECTOR_ENABLED
-              value: "true"
+              value: "false"
             - name: EBPF_ENABLED
               value: "false"
             - name: IN_CLUSTER
@@ -166,13 +166,17 @@ spec:
             - name: DISABLE_LOGS
               value: "false"
             - name: DS_PG
-              value: "true"
-            - name: DS_BACKEND
               value: "false"
+            - name: DS_BACKEND
+              value: "true"
             - name: BACKEND_HOST
-              value: staging.ddosify.com
+              value: https://staging-backend-cf.ddosify.com
             - name: BACKEND_PORT
-              value: "8008"
+              value: "443"
+            - name: BACKEND_AUTH_TOKEN
+              value: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNjg5Mzc4MjQ5LCJpYXQiOjE2ODkxNzc1NDksImp0aSI6IjE0ZDllMzVmMDRkZTQ5NTY4ZTJlNjcxZWUyZjQ3ZmFjIiwidXNlcl9pZCI6IjNmMDk1OTgyLTJmZTItNDQwZS1hNjZmLTJmY2IyMzJlZjExOSJ9.Pv9W6DAXqPJ3PWNEx6ZeGzyff1iuZ4LNQ6jxq5k9sUM"
+            - name: MONITORING_ID
+              value: 421686fb-26a5-43e6-8b3c-b1e06ea39603
           ports:
             - containerPort: 8181
           securityContext:

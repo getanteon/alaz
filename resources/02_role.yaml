@@ -12,6 +12,8 @@ rules:
   - pods
   - services
   - endpoints
+  - replicasets
+  - deployments
   verbs:
   - "*"
 ---

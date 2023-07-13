@@ -189,6 +189,19 @@ func (r Repository) DeletePod(dto Pod) error {
 	return nil
 }
 
+func (r Repository) PersistPod(dto Pod, eventType string) error {
+	switch eventType {
+	case "ADD":
+		return r.CreatePod(dto)
+	case "UPDATE":
+		return r.UpdatePod(dto)
+	case "DELETE":
+		return r.DeletePod(dto)
+	default:
+		return fmt.Errorf("unknown event type")
+	}
+}
+
 func (r Repository) CreateService(dto Service) error {
 	stmt := r.stmts["create_service"]
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -225,6 +238,19 @@ func (r Repository) DeleteService(dto Service) error {
 	return nil
 }
 
+func (r Repository) PersistService(dto Service, eventType string) error {
+	switch eventType {
+	case "ADD":
+		return r.CreateService(dto)
+	case "UPDATE":
+		return r.UpdateService(dto)
+	case "DELETE":
+		return r.DeleteService(dto)
+	default:
+		return fmt.Errorf("unknown event type")
+	}
+}
+
 func (r Repository) PersistRequest(dto Request) error {
 	stmt := r.stmts["create_request"]
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -236,3 +262,23 @@ func (r Repository) PersistRequest(dto Request) error {
 	}
 	return nil
 }
+
+func (r Repository) PersistReplicaSet(dto ReplicaSet, eventType string) error {
+	return nil
+}
+
+func (r Repository) PersistDeployment(dto Deployment, eventType string) error {
+	return nil
+}
+
+// func (r Repository) CreateReplicaSet(dto ReplicaSet) error {
+// 	return nil
+// }
+
+// func (r Repository) UpdateReplicaSet(dto ReplicaSet) error {
+// 	return nil
+// }
+
+// func (r Repository) DeleteReplicaSet(dto ReplicaSet) error {
+// 	return nil
+// }
