@@ -39,6 +39,16 @@ func (a *Aggregator) persistPod(dtoPod datastore.Pod, eventType string) {
 
 func (a *Aggregator) processPod(d k8s.K8sResourceMessage) {
 	pod := d.Object.(*corev1.Pod)
+
+	var ownerType, ownerID, ownerName string
+	if len(pod.OwnerReferences) > 0 {
+		ownerType = pod.OwnerReferences[0].Kind
+		ownerID = string(pod.OwnerReferences[0].UID)
+		ownerName = pod.OwnerReferences[0].Name
+	} else {
+		log.Logger.Debug().Msgf("Pod %s/%s has no owner, event: %s", pod.Namespace, pod.Name, d.EventType)
+	}
+
 	dtoPod := datastore.Pod{
 		UID:       string(pod.UID),
 		Name:      pod.Name,
@@ -47,9 +57,9 @@ func (a *Aggregator) processPod(d k8s.K8sResourceMessage) {
 		IP:        pod.Status.PodIP,
 
 		// Assuming that there is only one owner
-		OwnerType: pod.OwnerReferences[0].Kind,
-		OwnerID:   string(pod.OwnerReferences[0].UID),
-		OwnerName: pod.OwnerReferences[0].Name,
+		OwnerType: ownerType,
+		OwnerID:   ownerID,
+		OwnerName: ownerName,
 	}
 
 	switch d.EventType {

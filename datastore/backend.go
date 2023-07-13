@@ -59,9 +59,10 @@ type SvcPayload struct {
 
 // BackendDS is a backend datastore
 type BackendDS struct {
-	host string
-	port string
-	c    *http.Client
+	host  string
+	port  string
+	token string
+	c     *http.Client
 }
 
 const (
@@ -79,9 +80,10 @@ func NewBackendDS(conf config.BackendConfig) *BackendDS {
 	}
 
 	return &BackendDS{
-		host: conf.Host,
-		port: conf.Port,
-		c:    client,
+		host:  conf.Host,
+		port:  conf.Port,
+		token: conf.Token,
+		c:     client,
 	}
 }
 
@@ -89,6 +91,8 @@ func (b *BackendDS) DoRequest(req *http.Request) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	// TODO: add retry logic here
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", b.token))
 
 	resp, err := b.c.Do(req)
 	if err != nil {
@@ -153,7 +157,7 @@ func (b *BackendDS) UpdatePod(pod Pod) error {
 		return fmt.Errorf("error marshalling pod payload: %v", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", "http://"+b.host+":"+b.port+podEndpoint, bytes.NewBuffer(c))
+	httpReq, err := http.NewRequest("POST", b.host+":"+b.port+podEndpoint, bytes.NewBuffer(c))
 	if err != nil {
 		return fmt.Errorf("error creating http request: %v", err)
 	}
@@ -174,7 +178,7 @@ func (b *BackendDS) DeletePod(pod Pod) error {
 		return fmt.Errorf("error marshalling pod payload: %v", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", "http://"+b.host+":"+b.port+podEndpoint, bytes.NewBuffer(c))
+	httpReq, err := http.NewRequest("POST", b.host+":"+b.port+podEndpoint, bytes.NewBuffer(c))
 	if err != nil {
 		return fmt.Errorf("error creating http request: %v", err)
 	}
@@ -214,7 +218,7 @@ func (b *BackendDS) CreateService(service Service) error {
 		return fmt.Errorf("error marshalling pod payload: %v", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", "http://"+b.host+":"+b.port+svcEndpoint, bytes.NewBuffer(c))
+	httpReq, err := http.NewRequest("POST", b.host+":"+b.port+svcEndpoint, bytes.NewBuffer(c))
 	if err != nil {
 		return fmt.Errorf("error creating http request: %v", err)
 	}
@@ -235,7 +239,7 @@ func (b *BackendDS) UpdateService(service Service) error {
 		return fmt.Errorf("error marshalling pod payload: %v", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", "http://"+b.host+":"+b.port+svcEndpoint, bytes.NewBuffer(c))
+	httpReq, err := http.NewRequest("POST", b.host+":"+b.port+svcEndpoint, bytes.NewBuffer(c))
 	if err != nil {
 		return fmt.Errorf("error creating http request: %v", err)
 	}
@@ -256,7 +260,7 @@ func (b *BackendDS) DeleteService(service Service) error {
 		return fmt.Errorf("error marshalling pod payload: %v", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", "http://"+b.host+":"+b.port+svcEndpoint, bytes.NewBuffer(c))
+	httpReq, err := http.NewRequest("POST", b.host+":"+b.port+svcEndpoint, bytes.NewBuffer(c))
 	if err != nil {
 		return fmt.Errorf("error creating http request: %v", err)
 	}

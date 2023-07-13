@@ -124,8 +124,9 @@ func NewAggregator(k8sChan <-chan interface{}, crChan <-chan interface{}, ebpfCh
 	}
 
 	dsBackend := datastore.NewBackendDS(config.BackendConfig{
-		Host: os.Getenv("BACKEND_HOST"),
-		Port: os.Getenv("BACKEND_PORT"),
+		Host:  os.Getenv("BACKEND_HOST"),
+		Port:  os.Getenv("BACKEND_PORT"),
+		Token: os.Getenv("BACKEND_AUTH_TOKEN"),
 	})
 
 	var ds datastore.DataStore
