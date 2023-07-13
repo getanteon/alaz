@@ -174,5 +174,67 @@ func (a *Aggregator) processDeployment(d k8s.K8sResourceMessage) {
 	case k8s.DELETE:
 		go a.ds.PersistDeployment(dto, DELETE)
 	}
+}
 
+func (a *Aggregator) processEndpoints(ep k8s.K8sResourceMessage) {
+	endpoints := ep.Object.(*corev1.Endpoints)
+
+	// subsets
+	adrs := []datastore.Address{}
+
+	// subset[0].address -> ips
+	// subset[0].ports -> ports
+
+	for _, subset := range endpoints.Subsets {
+		ips := []datastore.AddressIP{}
+		ports := []datastore.AddressPort{}
+
+		for _, addr := range subset.Addresses {
+			// Probably external IP
+			if addr.TargetRef == nil {
+				ips = append(ips, datastore.AddressIP{
+					IP: "",
+				})
+				continue
+			}
+
+			// TargetRef: Pod probably
+			ips = append(ips, datastore.AddressIP{
+				Type:      string(addr.TargetRef.Kind),
+				ID:        string(addr.TargetRef.UID),
+				Name:      addr.TargetRef.Name,
+				Namespace: addr.TargetRef.Namespace,
+				IP:        addr.IP,
+			})
+		}
+
+		for _, port := range subset.Ports {
+			ports = append(ports, datastore.AddressPort{
+				Port:     port.Port,
+				Protocol: string(port.Protocol),
+			})
+		}
+
+		adrs = append(adrs, datastore.Address{
+			IPs:   ips,
+			Ports: ports,
+		})
+	}
+
+	dto := datastore.Endpoints{
+		UID:       string(endpoints.UID),
+		Name:      endpoints.Name,
+		Namespace: endpoints.Namespace,
+		Service:   endpoints.Labels["service"], // metadata.labels.service
+		Addresses: adrs,
+	}
+
+	switch ep.EventType {
+	case k8s.ADD:
+		go a.ds.PersistEndpoints(dto, ADD)
+	case k8s.UPDATE:
+		go a.ds.PersistEndpoints(dto, UPDATE)
+	case k8s.DELETE:
+		go a.ds.PersistEndpoints(dto, DELETE)
+	}
 }

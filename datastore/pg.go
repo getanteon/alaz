@@ -271,6 +271,10 @@ func (r Repository) PersistDeployment(dto Deployment, eventType string) error {
 	return nil
 }
 
+func (r Repository) PersistEndpoints(dto Endpoints, eventType string) error {
+	return nil
+}
+
 // func (r Repository) CreateReplicaSet(dto ReplicaSet) error {
 // 	return nil
 // }

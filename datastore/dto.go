@@ -44,6 +44,33 @@ type Deployment struct {
 	Replicas  int32  // Number of replicas
 }
 
+type Endpoints struct {
+	UID       string // Endpoints UID
+	Name      string // Endpoints Name
+	Namespace string // Namespace
+	Service   string // Service Name
+	Addresses []Address
+}
+
+type AddressIP struct {
+	Type      string `json:"type"` // pod or external
+	ID        string `json:"id"`   // Pod UID or empty
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"` // Pod Namespace or empty
+	IP        string `json:"ip"`        // Pod IP or external IP
+}
+
+type AddressPort struct {
+	Port     int32  `json:"port"`     // Port number
+	Protocol string `json:"protocol"` // TCP or UDP
+}
+
+// Subsets
+type Address struct {
+	IPs   []AddressIP   `json:"ips"`
+	Ports []AddressPort `json:"ports"`
+}
+
 type Request struct {
 	StartTime  time.Time
 	Latency    uint64 // in ns

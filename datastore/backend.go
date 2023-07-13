@@ -84,14 +84,25 @@ type DeploymentPayload struct {
 	Replicas  int32  `json:"replicas"`
 }
 
+type EndpointsPayload struct {
+	Metadata struct {
+		MonitoringID   string `json:"monitoring_id"`
+		IdempotencyKey string `json:"idempotency_key"`
+	} `json:"metadata"`
+	UID       string    `json:"uid"`
+	EventType string    `json:"event_type"`
+	Name      string    `json:"name"`
+	Namespace string    `json:"namespace"`
+	Service   string    `json:"service"`
+	Addresses []Address `json:"addresses"`
+}
+
 // BackendDS is a backend datastore
 type BackendDS struct {
 	host  string
 	port  string
 	token string
 	c     *http.Client
-
-	reqChan chan interface{}
 }
 
 const (
@@ -99,6 +110,7 @@ const (
 	svcEndpoint = "/alaz/k8s/svc/"
 	rsEndpoint  = "/alaz/k8s/replicaset/"
 	depEndpoint = "/alaz/k8s/deployment/"
+	epEndpoint  = "/alaz/k8s/endpoint/"
 )
 
 func NewBackendDS(conf config.BackendConfig) *BackendDS {
@@ -278,6 +290,21 @@ func convertDeploymentToPayload(d Deployment, eventType string) DeploymentPayloa
 	}
 }
 
+func convertEndpointsToPayload(ep Endpoints, eventType string) EndpointsPayload {
+	return EndpointsPayload{
+		Metadata: struct {
+			MonitoringID   string `json:"monitoring_id"`
+			IdempotencyKey string `json:"idempotency_key"`
+		}{MonitoringID: MonitoringID, IdempotencyKey: string(uuid.NewUUID())},
+		UID:       ep.UID,
+		EventType: eventType,
+		Name:      ep.Name,
+		Namespace: ep.Namespace,
+		Service:   ep.Service,
+		Addresses: ep.Addresses,
+	}
+}
+
 func (b *BackendDS) PersistDeployment(d Deployment, eventType string) error {
 	dPayload := convertDeploymentToPayload(d, eventType)
 
@@ -287,6 +314,27 @@ func (b *BackendDS) PersistDeployment(d Deployment, eventType string) error {
 	}
 
 	httpReq, err := http.NewRequest(http.MethodPost, b.host+":"+b.port+depEndpoint, bytes.NewBuffer(c))
+	if err != nil {
+		return fmt.Errorf("error creating http request: %v", err)
+	}
+
+	err = b.DoRequest(httpReq)
+	if err != nil {
+		return fmt.Errorf("error on persisting to backend: %v", err)
+	}
+
+	return nil
+}
+
+func (b *BackendDS) PersistEndpoints(ep Endpoints, eventType string) error {
+	dPayload := convertEndpointsToPayload(ep, eventType)
+
+	c, err := json.Marshal(dPayload)
+	if err != nil {
+		return fmt.Errorf("error marshalling endpoints payload: %v", err)
+	}
+
+	httpReq, err := http.NewRequest(http.MethodPost, b.host+":"+b.port+epEndpoint, bytes.NewBuffer(c))
 	if err != nil {
 		return fmt.Errorf("error creating http request: %v", err)
 	}
