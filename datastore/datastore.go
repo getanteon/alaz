@@ -6,6 +6,7 @@ type DataStore interface {
 	PersistReplicaSet(rs ReplicaSet, eventType string) error
 	PersistDeployment(d Deployment, eventType string) error
 	PersistEndpoints(e Endpoints, eventType string) error
+	PersistContainer(c Container, eventType string) error
 
 	PersistRequest(request Request) error
 }

@@ -31,6 +31,7 @@ const (
 	REPLICASET = "ReplicaSet"
 	DEPLOYMENT = "Deployment"
 	ENDPOINTS  = "Endpoints"
+	CONTAINER  = "Container"
 )
 
 const (

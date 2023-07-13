@@ -176,6 +176,27 @@ func (a *Aggregator) processDeployment(d k8s.K8sResourceMessage) {
 	}
 }
 
+func (a *Aggregator) processContainer(d k8s.K8sResourceMessage) {
+	c := d.Object.(*k8s.Container)
+
+	dto := datastore.Container{
+		UID:       c.UID,
+		Name:      c.Name,
+		Namespace: c.Namespace,
+		PodUID:    c.PodUID,
+		Image:     c.Image,
+		Ports:     c.Ports,
+	}
+
+	switch d.EventType {
+	case k8s.ADD:
+		go a.ds.PersistContainer(dto, ADD)
+	case k8s.UPDATE:
+		go a.ds.PersistContainer(dto, UPDATE)
+		// No need for  delete container
+	}
+}
+
 func (a *Aggregator) processEndpoints(ep k8s.K8sResourceMessage) {
 	endpoints := ep.Object.(*corev1.Endpoints)
 

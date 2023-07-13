@@ -97,6 +97,23 @@ type EndpointsPayload struct {
 	Addresses []Address `json:"addresses"`
 }
 
+type ContainerPayload struct {
+	Metadata struct {
+		MonitoringID   string `json:"monitoring_id"`
+		IdempotencyKey string `json:"idempotency_key"`
+	} `json:"metadata"`
+	UID       string `json:"uid"`
+	EventType string `json:"event_type"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	Pod       string `json:"pod"`
+	Image     string `json:"image"`
+	Ports     []struct {
+		Port     int32  `json:"port"`
+		Protocol string `json:"protocol"`
+	} `json:"ports"`
+}
+
 // BackendDS is a backend datastore
 type BackendDS struct {
 	host  string
@@ -106,11 +123,12 @@ type BackendDS struct {
 }
 
 const (
-	podEndpoint = "/alaz/k8s/pod/"
-	svcEndpoint = "/alaz/k8s/svc/"
-	rsEndpoint  = "/alaz/k8s/replicaset/"
-	depEndpoint = "/alaz/k8s/deployment/"
-	epEndpoint  = "/alaz/k8s/endpoint/"
+	podEndpoint       = "/alaz/k8s/pod/"
+	svcEndpoint       = "/alaz/k8s/svc/"
+	rsEndpoint        = "/alaz/k8s/replicaset/"
+	depEndpoint       = "/alaz/k8s/deployment/"
+	epEndpoint        = "/alaz/k8s/endpoint/"
+	containerEndpoint = "/alaz/k8s/container/"
 )
 
 func NewBackendDS(conf config.BackendConfig) *BackendDS {
@@ -305,6 +323,22 @@ func convertEndpointsToPayload(ep Endpoints, eventType string) EndpointsPayload 
 	}
 }
 
+func convertContainerToPayload(c Container, eventType string) ContainerPayload {
+	return ContainerPayload{
+		Metadata: struct {
+			MonitoringID   string `json:"monitoring_id"`
+			IdempotencyKey string `json:"idempotency_key"`
+		}{MonitoringID: MonitoringID, IdempotencyKey: string(uuid.NewUUID())},
+		UID:       c.UID,
+		EventType: eventType,
+		Name:      c.Name,
+		Namespace: c.Namespace,
+		Pod:       podEndpoint,
+		Image:     c.Image,
+		Ports:     c.Ports,
+	}
+}
+
 func (b *BackendDS) PersistDeployment(d Deployment, eventType string) error {
 	dPayload := convertDeploymentToPayload(d, eventType)
 
@@ -335,6 +369,27 @@ func (b *BackendDS) PersistEndpoints(ep Endpoints, eventType string) error {
 	}
 
 	httpReq, err := http.NewRequest(http.MethodPost, b.host+":"+b.port+epEndpoint, bytes.NewBuffer(c))
+	if err != nil {
+		return fmt.Errorf("error creating http request: %v", err)
+	}
+
+	err = b.DoRequest(httpReq)
+	if err != nil {
+		return fmt.Errorf("error on persisting to backend: %v", err)
+	}
+
+	return nil
+}
+
+func (b *BackendDS) PersistContainer(c Container, eventType string) error {
+	cPayload := convertContainerToPayload(c, eventType)
+
+	bc, err := json.Marshal(cPayload)
+	if err != nil {
+		return fmt.Errorf("error marshalling container payload: %v", err)
+	}
+
+	httpReq, err := http.NewRequest(http.MethodPost, b.host+":"+b.port+containerEndpoint, bytes.NewBuffer(bc))
 	if err != nil {
 		return fmt.Errorf("error creating http request: %v", err)
 	}

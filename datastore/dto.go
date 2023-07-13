@@ -71,6 +71,18 @@ type Address struct {
 	Ports []AddressPort `json:"ports"`
 }
 
+type Container struct {
+	UID       string `json:"uid"` // TODO: remove
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	PodUID    string `json:"pod"` // Pod UID
+	Image     string `json:"image"`
+	Ports     []struct {
+		Port     int32  `json:"port"`
+		Protocol string `json:"protocol"`
+	} `json:"ports"`
+}
+
 type Request struct {
 	StartTime  time.Time
 	Latency    uint64 // in ns
