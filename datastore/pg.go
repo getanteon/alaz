@@ -255,7 +255,7 @@ func (r Repository) PersistRequest(dto Request) error {
 	stmt := r.stmts["create_request"]
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	row := stmt.QueryRowContext(ctx, dto.StartTime.UnixMilli(), dto.Latency, dto.FromIP, dto.FromType, dto.FromUID, dto.ToIP, dto.ToType, dto.ToUID, dto.Protocol, dto.Completed, dto.StatusCode, dto.FailReason, dto.Method, dto.Path)
+	row := stmt.QueryRowContext(ctx, dto.StartTime, dto.Latency, dto.FromIP, dto.FromType, dto.FromUID, dto.ToIP, dto.ToType, dto.ToUID, dto.Protocol, dto.Completed, dto.StatusCode, dto.FailReason, dto.Method, dto.Path)
 	if row.Err() != nil {
 		log.Logger.Error().Err(row.Err()).Msg("Could not execute prepared statement")
 		return fmt.Errorf("could not execute prepared statement")

@@ -18,7 +18,7 @@ const (
 func (a *Aggregator) persistPod(dto datastore.Pod, eventType string) {
 	err := a.ds.PersistPod(dto, eventType)
 	if err != nil {
-		log.Logger.Error().Err(err).Msgf("error on PersistPod call to %s", eventType)
+		log.Logger.Error().Err(err).Msgf("error on PersistPod call to %s, uid: %s", eventType, dto.UID)
 	}
 }
 
@@ -66,7 +66,7 @@ func (a *Aggregator) processPod(d k8s.K8sResourceMessage) {
 func (a *Aggregator) persistSvc(dto datastore.Service, eventType string) {
 	err := a.ds.PersistService(dto, eventType)
 	if err != nil {
-		log.Logger.Error().Err(err).Msgf("error on PersistService call to %s", eventType)
+		log.Logger.Error().Err(err).Msgf("error on PersistService call to %s, uid: %s", eventType, dto.UID)
 	}
 }
 
@@ -168,11 +168,26 @@ func (a *Aggregator) processDeployment(d k8s.K8sResourceMessage) {
 
 	switch d.EventType {
 	case k8s.ADD:
-		go a.ds.PersistDeployment(dto, ADD)
+		go func() {
+			err := a.ds.PersistDeployment(dto, ADD)
+			if err != nil {
+				log.Logger.Error().Err(err).Msgf("error on PersistDeployment call to %s, uid: %s", ADD, dto.UID)
+			}
+		}()
 	case k8s.UPDATE:
-		go a.ds.PersistDeployment(dto, UPDATE)
+		go func() {
+			err := a.ds.PersistDeployment(dto, UPDATE)
+			if err != nil {
+				log.Logger.Error().Err(err).Msgf("error on PersistDeployment call to %s, uid: %s", UPDATE, dto.UID)
+			}
+		}()
 	case k8s.DELETE:
-		go a.ds.PersistDeployment(dto, DELETE)
+		go func() {
+			err := a.ds.PersistDeployment(dto, DELETE)
+			if err != nil {
+				log.Logger.Error().Err(err).Msgf("error on PersistDeployment call to %s, uid: %s", UPDATE, dto.UID)
+			}
+		}()
 	}
 }
 
@@ -190,9 +205,19 @@ func (a *Aggregator) processContainer(d k8s.K8sResourceMessage) {
 
 	switch d.EventType {
 	case k8s.ADD:
-		go a.ds.PersistContainer(dto, ADD)
+		go func() {
+			err := a.ds.PersistContainer(dto, ADD)
+			if err != nil {
+				log.Logger.Error().Err(err).Msgf("error on PersistContainer call to %s, uid: %s", UPDATE, dto.UID)
+			}
+		}()
 	case k8s.UPDATE:
-		go a.ds.PersistContainer(dto, UPDATE)
+		go func() {
+			err := a.ds.PersistContainer(dto, UPDATE)
+			if err != nil {
+				log.Logger.Error().Err(err).Msgf("error on PersistContainer call to %s, uid: %s", UPDATE, dto.UID)
+			}
+		}()
 		// No need for  delete container
 	}
 }
@@ -214,7 +239,7 @@ func (a *Aggregator) processEndpoints(ep k8s.K8sResourceMessage) {
 			// Probably external IP
 			if addr.TargetRef == nil {
 				ips = append(ips, datastore.AddressIP{
-					IP: "",
+					IP: addr.IP,
 				})
 				continue
 			}
@@ -252,10 +277,25 @@ func (a *Aggregator) processEndpoints(ep k8s.K8sResourceMessage) {
 
 	switch ep.EventType {
 	case k8s.ADD:
-		go a.ds.PersistEndpoints(dto, ADD)
+		go func() {
+			err := a.ds.PersistEndpoints(dto, ADD)
+			if err != nil {
+				log.Logger.Error().Err(err).Msgf("error on PersistEndpoints call to %s, uid: %s", ADD, dto.UID)
+			}
+		}()
 	case k8s.UPDATE:
-		go a.ds.PersistEndpoints(dto, UPDATE)
+		go func() {
+			err := a.ds.PersistEndpoints(dto, UPDATE)
+			if err != nil {
+				log.Logger.Error().Err(err).Msgf("error on PersistEndpoints call to %s, uid: %s", UPDATE, dto.UID)
+			}
+		}()
 	case k8s.DELETE:
-		go a.ds.PersistEndpoints(dto, DELETE)
+		go func() {
+			err := a.ds.PersistEndpoints(dto, DELETE)
+			if err != nil {
+				log.Logger.Error().Err(err).Msgf("error on PersistEndpoints call to %s, uid: %s", DELETE, dto.UID)
+			}
+		}()
 	}
 }

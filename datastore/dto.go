@@ -1,7 +1,5 @@
 package datastore
 
-import "time"
-
 type Pod struct {
 	UID       string // Pod UID
 	Name      string // Pod Name
@@ -84,14 +82,16 @@ type Container struct {
 }
 
 type Request struct {
-	StartTime  time.Time
+	StartTime  int64
 	Latency    uint64 // in ns
 	FromIP     string
 	FromType   string
 	FromUID    string
+	FromPort   uint16
 	ToIP       string
 	ToType     string
 	ToUID      string
+	ToPort     uint16
 	Protocol   string
 	Completed  bool
 	StatusCode uint32

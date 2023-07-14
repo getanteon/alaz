@@ -443,7 +443,7 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 
 	// assuming successful request
 	reqDto := datastore.Request{
-		StartTime:  time.Now(),
+		StartTime:  time.Now().UnixMilli(),
 		Latency:    d.Duration,
 		FromIP:     skInfo.Saddr,
 		ToIP:       skInfo.Daddr,
@@ -472,6 +472,8 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 
 	reqDto.FromUID = string(podUid)
 	reqDto.FromType = "pod"
+	reqDto.FromPort = skInfo.Sport
+	reqDto.ToPort = skInfo.Dport
 
 	// find service info
 	svcUid, ok := a.clusterInfo.ServiceIPToServiceUid[skInfo.Daddr]
@@ -484,5 +486,10 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 
 	reqDto.Completed = !d.Failed
 
-	go a.ds.PersistRequest(reqDto)
+	go func() {
+		err := a.ds.PersistRequest(reqDto)
+		if err != nil {
+			log.Logger.Error().Err(err).Msg("error persisting request")
+		}
+	}()
 }

@@ -2,13 +2,18 @@ package datastore
 
 import (
 	"alaz/config"
+	"alaz/log"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
+
+	"github.com/hashicorp/go-retryablehttp"
 
 	"k8s.io/apimachinery/pkg/util/uuid"
 )
@@ -24,102 +29,15 @@ func init() {
 	}
 }
 
-type PodPayload struct {
-	Metadata struct {
-		MonitoringID   string `json:"monitoring_id"`
-		IdempotencyKey string `json:"idempotency_key"`
-	} `json:"metadata"`
-	UID       string `json:"uid"`
-	EventType string `json:"event_type"`
-	Name      string `json:"name"`
-	Namespace string `json:"namespace"`
-	IP        string `json:"ip"`
-	OwnerType string `json:"owner_type"`
-	OwnerName string `json:"owner_name"`
-	OwnerID   string `json:"owner_id"`
-}
-
-type SvcPayload struct {
-	Metadata struct {
-		MonitoringID   string `json:"monitoring_id"`
-		IdempotencyKey string `json:"idempotency_key"`
-	} `json:"metadata"`
-	UID        string   `json:"uid"`
-	EventType  string   `json:"event_type"`
-	Name       string   `json:"name"`
-	Namespace  string   `json:"namespace"`
-	Type       string   `json:"type"`
-	ClusterIPs []string `json:"cluster_ips"`
-	Ports      []struct {
-		Src      int32  `json:"src"`
-		Dest     int32  `json:"dest"`
-		Protocol string `json:"protocol"`
-	} `json:"ports"`
-}
-
-type ReplicaSetPayload struct {
-	Metadata struct {
-		MonitoringID   string `json:"monitoring_id"`
-		IdempotencyKey string `json:"idempotency_key"`
-	} `json:"metadata"`
-	UID       string `json:"uid"`
-	EventType string `json:"event_type"`
-	Name      string `json:"name"`
-	Namespace string `json:"namespace"`
-	Replicas  int32  `json:"replicas"`
-	OwnerType string `json:"owner_type"`
-	OwnerName string `json:"owner_name"`
-	OwnerID   string `json:"owner_id"`
-}
-
-type DeploymentPayload struct {
-	Metadata struct {
-		MonitoringID   string `json:"monitoring_id"`
-		IdempotencyKey string `json:"idempotency_key"`
-	} `json:"metadata"`
-	UID       string `json:"uid"`
-	EventType string `json:"event_type"`
-	Name      string `json:"name"`
-	Namespace string `json:"namespace"`
-	Replicas  int32  `json:"replicas"`
-}
-
-type EndpointsPayload struct {
-	Metadata struct {
-		MonitoringID   string `json:"monitoring_id"`
-		IdempotencyKey string `json:"idempotency_key"`
-	} `json:"metadata"`
-	UID       string    `json:"uid"`
-	EventType string    `json:"event_type"`
-	Name      string    `json:"name"`
-	Namespace string    `json:"namespace"`
-	Service   string    `json:"service"`
-	Addresses []Address `json:"addresses"`
-}
-
-type ContainerPayload struct {
-	Metadata struct {
-		MonitoringID   string `json:"monitoring_id"`
-		IdempotencyKey string `json:"idempotency_key"`
-	} `json:"metadata"`
-	UID       string `json:"uid"`
-	EventType string `json:"event_type"`
-	Name      string `json:"name"`
-	Namespace string `json:"namespace"`
-	Pod       string `json:"pod"`
-	Image     string `json:"image"`
-	Ports     []struct {
-		Port     int32  `json:"port"`
-		Protocol string `json:"protocol"`
-	} `json:"ports"`
-}
-
 // BackendDS is a backend datastore
 type BackendDS struct {
-	host  string
-	port  string
-	token string
-	c     *http.Client
+	host      string
+	port      string
+	token     string
+	c         *http.Client
+	batchSize int64
+
+	reqChanBuffer chan *ReqInfo
 }
 
 const (
@@ -129,26 +47,55 @@ const (
 	depEndpoint       = "/alaz/k8s/deployment/"
 	epEndpoint        = "/alaz/k8s/endpoint/"
 	containerEndpoint = "/alaz/k8s/container/"
+	reqEndpoint       = "/alaz/"
 )
 
 func NewBackendDS(conf config.BackendConfig) *BackendDS {
-	client := &http.Client{
-		Transport: &http.Transport{
-			DisableKeepAlives: false,
-			MaxConnsPerHost:   100, // 100 connection per host
-		},
-		Timeout: 5 * time.Second, // Set a timeout for the request
-		// CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		// 	return http.ErrUseLastResponse
-		// },
+	retryClient := retryablehttp.NewClient()
+	retryClient.Backoff = retryablehttp.DefaultBackoff
+	retryClient.RetryWaitMin = 1 * time.Second
+	retryClient.RetryWaitMax = 5 * time.Second
+	retryClient.RetryMax = 4
+
+	retryClient.CheckRetry = func(ctx context.Context, resp *http.Response, err error) (bool, error) {
+		var shouldRetry bool
+		if err != nil { // resp, (doErr) = c.HTTPClient.Do(req.Request)
+			// connection refused, connection reset, connection timeout
+			shouldRetry = true
+		} else {
+			if resp.StatusCode == http.StatusBadRequest || resp.StatusCode >= http.StatusInternalServerError {
+				shouldRetry = true
+			}
+		}
+		return shouldRetry, nil
 	}
 
-	return &BackendDS{
-		host:  conf.Host,
-		port:  conf.Port,
-		token: conf.Token,
-		c:     client,
+	retryClient.HTTPClient.Transport = &http.Transport{
+		DisableKeepAlives: false,
+		MaxConnsPerHost:   500, // 500 connection per host
 	}
+	retryClient.HTTPClient.Timeout = 10 * time.Second // Set a timeout for the request
+	client := retryClient.StandardClient()
+
+	var defaultBatchSize int64 = 1000
+
+	bs, err := strconv.ParseInt(os.Getenv("BATCH_SIZE"), 10, 64)
+	if err != nil {
+		bs = defaultBatchSize
+	}
+
+	ds := &BackendDS{
+		host:          conf.Host,
+		port:          conf.Port,
+		token:         conf.Token,
+		c:             client,
+		reqChanBuffer: make(chan *ReqInfo, 10000),
+		batchSize:     bs,
+	}
+
+	go ds.sendReqsInBatch()
+
+	return ds
 }
 
 func (b *BackendDS) DoRequest(req *http.Request) error {
@@ -158,7 +105,10 @@ func (b *BackendDS) DoRequest(req *http.Request) error {
 
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", b.token))
 
-	resp, err := b.c.Do(req)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	resp, err := b.c.Do(req.WithContext(ctx))
 	if err != nil {
 		return fmt.Errorf("error sending http request: %v", err)
 	}
@@ -170,6 +120,8 @@ func (b *BackendDS) DoRequest(req *http.Request) error {
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("not success: %d, %s", resp.StatusCode, string(body))
+	} else {
+		log.Logger.Info().Msg("success")
 	}
 
 	return nil
@@ -208,6 +160,7 @@ func (b *BackendDS) PersistPod(pod Pod, eventType string) error {
 		return fmt.Errorf("error creating http request: %v", err)
 	}
 
+	log.Logger.Info().Msg("sending pod to backend")
 	err = b.DoRequest(httpReq)
 	if err != nil {
 		return fmt.Errorf("error on persisting to backend: %v", err)
@@ -248,6 +201,7 @@ func (b *BackendDS) PersistService(service Service, eventType string) error {
 		return fmt.Errorf("error creating http request: %v", err)
 	}
 
+	log.Logger.Info().Msg("sending service to backend")
 	err = b.DoRequest(httpReq)
 	if err != nil {
 		return fmt.Errorf("error on persisting to backend: %v", err)
@@ -286,6 +240,7 @@ func (b *BackendDS) PersistReplicaSet(rs ReplicaSet, eventType string) error {
 		return fmt.Errorf("error creating http request: %v", err)
 	}
 
+	log.Logger.Info().Msg("sending replicaset to backend")
 	err = b.DoRequest(httpReq)
 	if err != nil {
 		return fmt.Errorf("error on persisting to backend: %v", err)
@@ -333,9 +288,19 @@ func convertContainerToPayload(c Container, eventType string) ContainerPayload {
 		EventType: eventType,
 		Name:      c.Name,
 		Namespace: c.Namespace,
-		Pod:       podEndpoint,
+		Pod:       c.PodUID,
 		Image:     c.Image,
 		Ports:     c.Ports,
+	}
+}
+
+func convertReqsToPayload(batch []*ReqInfo) RequestsPayload {
+	return RequestsPayload{
+		Metadata: struct {
+			MonitoringID   string `json:"monitoring_id"`
+			IdempotencyKey string `json:"idempotency_key"`
+		}{MonitoringID: MonitoringID, IdempotencyKey: string(uuid.NewUUID())},
+		Requests: batch,
 	}
 }
 
@@ -352,6 +317,7 @@ func (b *BackendDS) PersistDeployment(d Deployment, eventType string) error {
 		return fmt.Errorf("error creating http request: %v", err)
 	}
 
+	log.Logger.Info().Msg("sending deployment to backend")
 	err = b.DoRequest(httpReq)
 	if err != nil {
 		return fmt.Errorf("error on persisting to backend: %v", err)
@@ -373,6 +339,7 @@ func (b *BackendDS) PersistEndpoints(ep Endpoints, eventType string) error {
 		return fmt.Errorf("error creating http request: %v", err)
 	}
 
+	log.Logger.Info().Msg("sending endpoints to backend")
 	err = b.DoRequest(httpReq)
 	if err != nil {
 		return fmt.Errorf("error on persisting to backend: %v", err)
@@ -394,6 +361,7 @@ func (b *BackendDS) PersistContainer(c Container, eventType string) error {
 		return fmt.Errorf("error creating http request: %v", err)
 	}
 
+	log.Logger.Info().Msg("sending container to backend")
 	err = b.DoRequest(httpReq)
 	if err != nil {
 		return fmt.Errorf("error on persisting to backend: %v", err)
@@ -402,9 +370,80 @@ func (b *BackendDS) PersistContainer(c Container, eventType string) error {
 	return nil
 }
 
+func (b *BackendDS) sendReqsInBatch() {
+
+	t := time.NewTicker(30 * time.Second)
+	defer t.Stop()
+
+	for {
+		select {
+		case <-t.C:
+			b.sendBatch()
+			// case <-b.stopChan: // TODO
+			// 	return
+		}
+	}
+
+}
+
+func (b *BackendDS) sendBatch() {
+	batch := make([]*ReqInfo, 0, b.batchSize)
+	loop := true
+
+	for i := 0; (i < int(b.batchSize)) && loop; i++ {
+		select {
+		case req := <-b.reqChanBuffer:
+			batch = append(batch, req)
+		case <-time.After(1 * time.Second):
+			loop = false
+		}
+	}
+
+	if len(batch) == 0 {
+		return
+	}
+
+	reqsPayload := convertReqsToPayload(batch)
+
+	reqsBytes, err := json.Marshal(reqsPayload)
+	if err != nil {
+		log.Logger.Error().Msgf("error marshalling batch: %v", err)
+		return
+	}
+
+	httpReq, err := http.NewRequest(http.MethodPost, b.host+":"+b.port+reqEndpoint, bytes.NewBuffer(reqsBytes))
+	if err != nil {
+		log.Logger.Error().Msgf("error creating http request: %v", err)
+		return
+	}
+
+	log.Logger.Info().Msg("sending batch to backend")
+	err = b.DoRequest(httpReq)
+	if err != nil {
+		log.Logger.Error().Msgf("error on persisting requests to backend: %v", err)
+	}
+
+}
+
 func (b *BackendDS) PersistRequest(request Request) error {
-	// TODO: implement
-	// save requests for batch sending for a period of time
-	// then send in batches
+	reqInfo := &ReqInfo{}
+	reqInfo[0] = request.StartTime
+	reqInfo[1] = request.Latency
+	reqInfo[2] = request.FromIP
+	reqInfo[3] = request.FromType
+	reqInfo[4] = request.FromUID
+	reqInfo[5] = request.FromPort
+	reqInfo[6] = request.ToIP
+	reqInfo[7] = request.ToType
+	reqInfo[8] = request.ToUID
+	reqInfo[9] = request.ToPort
+	reqInfo[10] = request.Protocol
+	reqInfo[11] = request.StatusCode
+	reqInfo[12] = request.FailReason // TODO ??
+	reqInfo[13] = request.Method
+	reqInfo[14] = request.Path
+
+	b.reqChanBuffer <- reqInfo
+
 	return nil
 }
