@@ -105,7 +105,7 @@ func (nl *SocketLine) DeleteUnused() {
 			}
 
 			// assumedInterval is inversely proportional to the number of requests being discarded
-			assumedInterval := uint64(2 * time.Minute) // TODO: make configurable
+			assumedInterval := uint64(5 * time.Minute) // TODO: make configurable
 
 			// delete all values that
 			// closed and its LastMatch + assumedInterval < lastMatchedReqTime
