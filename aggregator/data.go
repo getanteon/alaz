@@ -283,6 +283,7 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 
 		var sockMap *SocketMap
 		var ok bool
+		// TODO: lock for PidToSocketMap
 		if sockMap, ok = a.clusterInfo.PidToSocketMap[d.Pid]; !ok {
 			sockMap = &SocketMap{
 				M:  make(map[uint64]*SocketLine),

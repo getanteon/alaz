@@ -3,24 +3,18 @@
 #include "../../headers/common.h"
 #include "../../headers/l7_req.h"
 
+
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_helpers.h>
+#include <bpf/bpf_endian.h>
 #include <bpf/bpf_tracing.h>
+
+#include "http.c"
+#include "rabbitmq.c"
 
 #define PROTOCOL_UNKNOWN    0
 #define PROTOCOL_HTTP	    1
-
-#define METHOD_UNKNOWN      0
-#define METHOD_GET          1
-#define METHOD_POST         2
-#define METHOD_PUT         3
-#define METHOD_PATCH        4
-#define METHOD_DELETE       5
-#define METHOD_HEAD       6
-#define METHOD_CONNECT    7
-#define METHOD_OPTIONS       8
-#define METHOD_TRACE       9
-
+#define PROTOCOL_RABBITMQ	2
 
 #define MAX_PAYLOAD_SIZE 512
 #define PAYLOAD_PREFIX_SIZE 16
@@ -28,53 +22,6 @@
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
-static __always_inline
-int parse_http_method(char *buf_prefix) {
-    if (buf_prefix[0] == 'G' && buf_prefix[1] == 'E' && buf_prefix[2] == 'T') {
-            return METHOD_GET;
-    }else if(buf_prefix[0] == 'P' && buf_prefix[1] == 'O' && buf_prefix[2] == 'S' && buf_prefix[3] == 'T'){
-        return METHOD_POST;
-    }else if(buf_prefix[0] == 'P' && buf_prefix[1] == 'U' && buf_prefix[2] == 'T'){
-        return METHOD_PUT;
-    }else if(buf_prefix[0] == 'P' && buf_prefix[1] == 'A' && buf_prefix[2] == 'T' && buf_prefix[3] == 'C' && buf_prefix[4] == 'H'){
-        return METHOD_PATCH;
-    }else if(buf_prefix[0] == 'D' && buf_prefix[1] == 'E' && buf_prefix[2] == 'L' && buf_prefix[3] == 'E' && buf_prefix[4] == 'T' && buf_prefix[5] == 'E'){
-        return METHOD_DELETE;
-    }else if(buf_prefix[0] == 'H' && buf_prefix[1] == 'E' && buf_prefix[2] == 'A' && buf_prefix[3] == 'D'){
-        return METHOD_HEAD;
-    }else if (buf_prefix[0] == 'C' && buf_prefix[1] == 'O' && buf_prefix[2] == 'N' && buf_prefix[3] == 'N' && buf_prefix[4] == 'E' && buf_prefix[5] == 'C' && buf_prefix[6] == 'T'){
-        return METHOD_CONNECT;
-    }else if(buf_prefix[0] == 'O' && buf_prefix[1] == 'P' && buf_prefix[2] == 'T' && buf_prefix[3] == 'I' && buf_prefix[4] == 'O' && buf_prefix[5] == 'N' && buf_prefix[6] == 'S'){
-        return METHOD_OPTIONS;
-    }else if(buf_prefix[0] == 'T' && buf_prefix[1] == 'R' && buf_prefix[2] == 'A' && buf_prefix[3] == 'C' && buf_prefix[4] == 'E'){
-        return METHOD_TRACE;
-    }
-    return -1;
-}
-
-static __always_inline
-int parse_http_status(char *b) {
-    // HTTP/1.1 200 OK
-    if (b[0] != 'H' || b[1] != 'T' || b[2] != 'T' || b[3] != 'P' || b[4] != '/') {
-        return -1;
-    }
-    if (b[5] < '0' || b[5] > '9') {
-        return -1;
-    }
-    if (b[6] != '.') {
-        return -1;
-    }
-    if (b[7] < '0' || b[7] > '9') {
-        return -1;
-    }
-    if (b[8] != ' ') {
-        return -1;
-    }
-    if (b[9] < '0' || b[9] > '9' || b[10] < '0' || b[10] > '9' || b[11] < '0' || b[11] > '9') {
-        return -1;
-    }
-    return (b[9]-'0')*100 + (b[10]-'0')*10 + (b[11]-'0');
-}
 
 struct l7_event {
     __u64 fd;
@@ -134,6 +81,7 @@ struct {
     __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
     __uint(key_size, sizeof(int));
     __uint(value_size, sizeof(int));
+    __uint(max_entries, 10240);
 } l7_events SEC(".maps");
 
 // when given with __type macro below
@@ -162,7 +110,6 @@ struct {
     // -- TODO: check if write was successful (return value), sys_exit_write ?
 // 2. sys_enter_read
 // 3. sys_exit_read
-
 
 SEC("tracepoint/syscalls/sys_enter_write")
 int sys_enter_write(struct trace_event_raw_sys_enter_write* ctx) {
@@ -209,17 +156,27 @@ int sys_enter_write(struct trace_event_raw_sys_enter_write* ctx) {
         // TODO: check other protocols than http, for now we only support http
         // kafka, redis, elasticsearch, etc.
 
-        int m = parse_http_method(buf_prefix);
-        if (m == -1){
+        int method = parse_http_method(buf_prefix);
+        if (method != -1){
+            req->protocol = PROTOCOL_HTTP;
+            req-> method = method;
+        }else if (is_rabbitmq_produce(ctx->buf,ctx->count)){
+            
+            char msgCtx[] = "rabbitmq_produce";
+            bpf_trace_printk(msgCtx, sizeof(msgCtx));
+
+            req->protocol = PROTOCOL_RABBITMQ;
+            req->method = METHOD_PRODUCE;
+        }else if (is_rabbitmq_consume(ctx->buf, ctx->count)){
+            char msgCtx[] = "rabbitmq_consume";
+            bpf_trace_printk(msgCtx, sizeof(msgCtx));
+            
+            req->protocol = PROTOCOL_RABBITMQ;
+            req->method = METHOD_CONSUME;
+        }else{
             req->protocol = PROTOCOL_UNKNOWN;
             req->method = METHOD_UNKNOWN;
             return 0; // do not continue processing for now (udp requests are flowing and overlaps with http requests)
-            // TODO: we should continue to send events that are unknown, could be kafka, redis, etc.
-            // But we should not send udp events to userspace, we should only send tcp events
-            // Need a way to distinguish tcp and udp sockets. Maybe tracking socket syscalls ?
-        }else{
-            req->protocol = PROTOCOL_HTTP;
-            req->method = m;
         }
     }else{
         char msgCtx[] = "write buffer is null or too small";
@@ -380,6 +337,11 @@ int sys_exit_read(struct trace_event_raw_sys_exit_read* ctx) {
     bpf_map_delete_elem(&active_reads, &id);
     bpf_map_delete_elem(&active_l7_requests, &k);
 
+    
+    // u64 flags = BPF_F_CURRENT_CPU;
+    // u64 size = sizeof(*e);
+    // flags |= (u64) size << 32;
+
     long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
     if (r < 0) {
         char msg[] = "could not write to l7_events - %ld";
@@ -390,3 +352,8 @@ int sys_exit_read(struct trace_event_raw_sys_exit_read* ctx) {
 }
 
 
+// TODO: add sendto and recvfrom
+
+// sys_enter_sendto
+// sys_enter_recvfrom
+// sys_exit_recvfrom

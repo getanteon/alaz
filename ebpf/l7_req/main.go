@@ -21,12 +21,14 @@ import (
 const (
 	BPF_L7_PROTOCOL_UNKNOWN = iota
 	BPF_L7_PROTOCOL_HTTP
+	BPF_L7_PROTOCOL_RABBITMQ
 )
 
 // for user space
 const (
-	L7_PROTOCOL_HTTP    = "L7_PROTOCOL_HTTP"
-	L7_PROTOCOL_UNKNOWN = "L7_PROTOCOL_UNKNOWN"
+	L7_PROTOCOL_HTTP     = "L7_PROTOCOL_HTTP"
+	L7_PROTOCOL_RABBITMQ = "L7_PROTOCOL_RABBITMQ"
+	L7_PROTOCOL_UNKNOWN  = "L7_PROTOCOL_UNKNOWN"
 )
 
 // Custom type for the enumeration
@@ -37,6 +39,8 @@ func (e L7ProtocolConversion) String() string {
 	switch e {
 	case BPF_L7_PROTOCOL_HTTP:
 		return L7_PROTOCOL_HTTP
+	case BPF_L7_PROTOCOL_RABBITMQ:
+		return L7_PROTOCOL_RABBITMQ
 	case BPF_L7_PROTOCOL_UNKNOWN:
 		return L7_PROTOCOL_UNKNOWN
 	default:
@@ -58,7 +62,29 @@ const (
 	BPF_METHOD_TRACE
 )
 
-// for user space
+// match with values in l7_req.c, order is important
+const (
+	BPF_RABBIT_METHOD_UNKNOWN = iota
+	BPF_RABBIT_METHOD_PRODUCE
+	BPF_RABBIT_METHOD_CONSUME
+)
+
+// Custom type for the enumeration
+type RabbitMQMethodConversion uint32
+
+// String representation of the enumeration values
+func (e RabbitMQMethodConversion) String() string {
+	switch e {
+	case BPF_RABBIT_METHOD_PRODUCE:
+		return GET
+	case BPF_RABBIT_METHOD_CONSUME:
+		return POST
+	default:
+		return "Unknown"
+	}
+}
+
+// for http, user space
 const (
 	GET     = "GET"
 	POST    = "POST"
@@ -69,6 +95,12 @@ const (
 	CONNECT = "CONNECT"
 	OPTIONS = "OPTIONS"
 	TRACE   = "TRACE"
+)
+
+// for rabbitmq, user space
+const (
+	PRODUCE = "PRODUCE"
+	CONSUME = "CONSUME"
 )
 
 // Custom type for the enumeration
@@ -206,13 +238,33 @@ func Deploy(ch chan interface{}) {
 			l7Event := (*bpfL7Event)(unsafe.Pointer(&record.RawSample[0]))
 
 			go func() {
+
+				protocol := L7ProtocolConversion(l7Event.Protocol).String()
+				var method string
+				switch protocol {
+				case L7_PROTOCOL_HTTP:
+					method = HTTPMethodConversion(l7Event.Method).String()
+				case L7_PROTOCOL_RABBITMQ:
+					method = RabbitMQMethodConversion(l7Event.Method).String()
+				default:
+					method = "Unknown"
+				}
+
+				// TODO: remove this
+				if protocol == L7_PROTOCOL_RABBITMQ {
+					log.Logger.Info().Str("method", method).
+						Uint32("pid", l7Event.Pid).
+						Str("payload", string(l7Event.Payload[:l7Event.PayloadSize])).
+						Msg("rabbitmq method")
+				}
+
 				ch <- L7Event{
 					Fd:                  l7Event.Fd,
 					Pid:                 l7Event.Pid,
 					Status:              l7Event.Status,
 					Duration:            l7Event.Duration,
-					Protocol:            L7ProtocolConversion(l7Event.Protocol).String(),
-					Method:              HTTPMethodConversion(l7Event.Method).String(),
+					Protocol:            protocol,
+					Method:              method,
 					Payload:             l7Event.Payload,
 					PayloadSize:         l7Event.PayloadSize,
 					PayloadReadComplete: uint8ToBool(l7Event.PayloadReadComplete),
