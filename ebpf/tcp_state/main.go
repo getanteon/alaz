@@ -196,7 +196,7 @@ func Deploy(ch chan interface{}) {
 					Pid:       bpfEvent.Pid,
 					Fd:        bpfEvent.Fd,
 					Timestamp: bpfEvent.Timestamp,
-					Type_:     TcpStateConversion(bpfEvent.Type).String(), // TODO: 3 is connect event, convert these to string
+					Type_:     TcpStateConversion(bpfEvent.Type).String(),
 					SPort:     bpfEvent.SPort,
 					DPort:     bpfEvent.DPort,
 					SAddr:     fmt.Sprintf("%d.%d.%d.%d", bpfEvent.SAddr[0], bpfEvent.SAddr[1], bpfEvent.SAddr[2], bpfEvent.SAddr[3]),

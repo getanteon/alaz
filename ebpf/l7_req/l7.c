@@ -142,9 +142,6 @@ int process_enter_of_syscalls_write_sendto(__u64 fd, char* buf, __u64 count){
         // This can cause mismatched events. (udp request with tcp connection)
         // Userspace only knows about tcp connections, so we should only send l7_events that are related to a tcp connection. 
 
-        // TODO: check other protocols than http, for now we only support http
-        // kafka, redis, elasticsearch, etc.
-
         int method = parse_http_method(buf_prefix);
         if (method != -1){
             req->protocol = PROTOCOL_HTTP;

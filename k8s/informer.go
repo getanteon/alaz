@@ -197,5 +197,5 @@ type K8sBigPicture struct {
 type K8sResourceMessage struct {
 	ResourceType string      `json:"type"`
 	EventType    string      `json:"eventType"`
-	Object       interface{} `json:"object"` // TODO: make this generic, add converter ?
+	Object       interface{} `json:"object"`
 }

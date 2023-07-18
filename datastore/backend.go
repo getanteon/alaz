@@ -103,8 +103,6 @@ func NewBackendDS(conf config.BackendConfig) *BackendDS {
 func (b *BackendDS) DoRequest(req *http.Request) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	// TODO: add retry logic here
-
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", b.token))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

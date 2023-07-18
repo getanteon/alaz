@@ -8,7 +8,6 @@ import (
 	"time"
 )
 
-// TODO: type
 var EbpfEvents chan interface{}
 
 type BpfEvent interface {

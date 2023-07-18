@@ -260,7 +260,6 @@ func (a *Aggregator) processEbpf() {
 				Failed:              d.Failed,
 				WriteTimeNs:         d.WriteTimeNs,
 			}
-			// TODO: make this concurrent, thats why we copy the data
 			go a.processL7(l7Event)
 		}
 	}

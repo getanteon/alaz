@@ -235,8 +235,6 @@ func Deploy(ch chan interface{}) {
 
 	// Read loop reporting the total amount of times the kernel
 	// function was entered, once per second.
-	ticker := time.NewTicker(1 * time.Millisecond) // TODO: lower this
-	defer ticker.Stop()
 
 	go func() {
 		for {
