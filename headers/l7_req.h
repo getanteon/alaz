@@ -21,11 +21,30 @@ struct trace_event_raw_sys_enter_read{
     __u64 count;
 };
 
+struct trace_event_raw_sys_enter_recvfrom {
+    struct trace_entry ent;
+    __s32 __syscall_nr;
+    __u64 fd;
+    void * ubuf;
+    __u64 size;
+    __u64 flags;
+    struct sockaddr * addr;
+    __u64 addr_len;
+};
+
 struct trace_event_raw_sys_exit_read {
     __u64 unused;
-    int id;
-    long ret;
+    __s32 id;
+    __s64 ret;
 };
+
+struct trace_event_raw_sys_exit_recvfrom {
+    __u64 unused;
+    __s32 id;
+    __s64 ret;
+};
+
+
 
 struct trace_event_raw_sys_enter_write {
 	struct trace_entry ent;

@@ -76,9 +76,9 @@ type RabbitMQMethodConversion uint32
 func (e RabbitMQMethodConversion) String() string {
 	switch e {
 	case BPF_RABBIT_METHOD_PRODUCE:
-		return GET
+		return PRODUCE
 	case BPF_RABBIT_METHOD_CONSUME:
-		return POST
+		return CONSUME
 	default:
 		return "Unknown"
 	}
@@ -204,8 +204,28 @@ func Deploy(ch chan interface{}) {
 		log.Logger.Fatal().Err(err).Msg("link sys_exit_read tracepoint")
 	}
 	fmt.Println("sys_exit_read linked")
-
 	defer l2.Close()
+
+	l3, err := link.Tracepoint("syscalls", "sys_enter_sendto", objs.bpfPrograms.SysEnterSendto, nil)
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("link sys_enter_sendto tracepoint")
+	}
+	fmt.Println("sys_enter_sendto linked")
+	defer l3.Close()
+
+	l4, err := link.Tracepoint("syscalls", "sys_enter_recvfrom", objs.bpfPrograms.SysEnterRecvfrom, nil)
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("link sys_enter_recvfrom tracepoint")
+	}
+	fmt.Println("sys_enter_recvfrom linked")
+	defer l4.Close()
+
+	l5, err := link.Tracepoint("syscalls", "sys_exit_recvfrom", objs.bpfPrograms.SysExitRecvfrom, nil)
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("link sys_exit_recvfrom tracepoint")
+	}
+	fmt.Println("sys_exit_recvfrom linked")
+	defer l5.Close()
 
 	// initialize perf event readers
 	l7Events, err := perf.NewReader(objs.L7Events, 64*os.Getpagesize())

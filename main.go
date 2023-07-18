@@ -42,18 +42,20 @@ func main() {
 	a.Run()
 	a.AdvertisePidSockMap()
 
-	traceFile, err := os.Create("/mnt/data/trace.out")
-	if err != nil {
-		log.Logger.Fatal().Msgf("failed to create trace output file: %v", err)
-	}
-	defer func() {
-		if err := traceFile.Close(); err != nil {
-			log.Logger.Fatal().Msgf("failed to close trace file: %v", err)
+	if os.Getenv("TRACE_ENABLED") == "true" {
+		traceFile, err := os.Create("/mnt/data/trace.out")
+		if err != nil {
+			log.Logger.Fatal().Msgf("failed to create trace output file: %v", err)
 		}
-	}()
+		defer func() {
+			if err := traceFile.Close(); err != nil {
+				log.Logger.Fatal().Msgf("failed to close trace file: %v", err)
+			}
+		}()
 
-	if err := trace.Start(traceFile); err != nil {
-		log.Logger.Fatal().Msgf("failed to start trace: %v", err)
+		if err := trace.Start(traceFile); err != nil {
+			log.Logger.Fatal().Msgf("failed to start trace: %v", err)
+		}
 	}
 	// defer trace.Stop()
 

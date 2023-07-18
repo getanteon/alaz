@@ -16,7 +16,7 @@ spec:
       serviceAccountName: alaz-serviceaccount
       containers:
       - name: alaz-pod
-        image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:v3.4.4
+        image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:v3.8.6
         env:
           - name: K8S_COLLECTOR_ENABLED
             value: "true"
@@ -41,9 +41,9 @@ spec:
           - name: DISABLE_LOGS
             value: "false"
           - name: DS_PG
-            value: "false"
-          - name: DS_BACKEND
             value: "true"
+          - name: DS_BACKEND
+            value: "false"
           - name: BACKEND_HOST
             value: https://staging-backend-cf.ddosify.com
           - name: BACKEND_PORT

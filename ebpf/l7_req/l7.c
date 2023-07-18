@@ -99,20 +99,9 @@ struct {
     __uint(max_entries, 10240);
 } active_reads SEC(".maps");
 
-
-// After socket creation and connection establishment, the kernel will call the
-// write function of the socket's protocol handler to send data to the remote
-// peer. The kernel will call the read function of the socket's protocol handler
-// to receive data from the remote peer.
-
-// Flow:
-// 1. sys_enter_write
-    // -- TODO: check if write was successful (return value), sys_exit_write ?
-// 2. sys_enter_read
-// 3. sys_exit_read
-
-SEC("tracepoint/syscalls/sys_enter_write")
-int sys_enter_write(struct trace_event_raw_sys_enter_write* ctx) {
+// Processing enter of write and sendto syscalls
+static __always_inline
+int process_enter_of_syscalls_write_sendto(__u64 fd, char* buf, __u64 count){
     __u64 id = bpf_get_current_pid_tgid();
 
     int zero = 0;
@@ -131,12 +120,12 @@ int sys_enter_write(struct trace_event_raw_sys_enter_write* ctx) {
 
     struct socket_key k = {};
     k.pid = id >> 32;
-    k.fd = ctx->fd;
+    k.fd = fd;
 
-    if(ctx->buf && ctx->count > PAYLOAD_PREFIX_SIZE){
+    if(buf && count > PAYLOAD_PREFIX_SIZE){
         // read first 16 bytes of write buffer
         char buf_prefix[PAYLOAD_PREFIX_SIZE];
-        long r = bpf_probe_read(&buf_prefix, sizeof(buf_prefix), (void *)(ctx->buf)) ;
+        long r = bpf_probe_read(&buf_prefix, sizeof(buf_prefix), (void *)(buf)) ;
         
         if (r < 0) {
             char msg[] = "could not read into buf_prefix - %ld";
@@ -160,14 +149,14 @@ int sys_enter_write(struct trace_event_raw_sys_enter_write* ctx) {
         if (method != -1){
             req->protocol = PROTOCOL_HTTP;
             req-> method = method;
-        }else if (is_rabbitmq_produce(ctx->buf,ctx->count)){
+        }else if (is_rabbitmq_produce(buf,count)){
             
             char msgCtx[] = "rabbitmq_produce";
             bpf_trace_printk(msgCtx, sizeof(msgCtx));
 
             req->protocol = PROTOCOL_RABBITMQ;
             req->method = METHOD_PRODUCE;
-        }else if (is_rabbitmq_consume(ctx->buf, ctx->count)){
+        }else if (is_rabbitmq_consume(buf, count)){
             char msgCtx[] = "rabbitmq_consume";
             bpf_trace_printk(msgCtx, sizeof(msgCtx));
             
@@ -188,15 +177,15 @@ int sys_enter_write(struct trace_event_raw_sys_enter_write* ctx) {
     // we should copy as much as the size of write buffer, 
     // if we copy more, we will get a kernel error ?
 
-    if(ctx->count > MAX_PAYLOAD_SIZE){
+    if(count > MAX_PAYLOAD_SIZE){
         // will not be able to copy all of it
-        bpf_probe_read(&req->payload, sizeof(req->payload), (const void *)ctx->buf);
+        bpf_probe_read(&req->payload, sizeof(req->payload), (const void *)buf);
         req->payload_size = MAX_PAYLOAD_SIZE;
         req->payload_read_complete = 0;
     }else{
         // copy only the first ctx->count bytes (all we have)
-        bpf_probe_read(&req->payload, ctx->count, (const void *)ctx->buf);
-        req->payload_size = ctx->count;
+        bpf_probe_read(&req->payload, count, (const void *)buf);
+        req->payload_size = count;
         req->payload_read_complete = 1;
     }
     
@@ -211,13 +200,14 @@ int sys_enter_write(struct trace_event_raw_sys_enter_write* ctx) {
 }
 
 
-SEC("tracepoint/syscalls/sys_enter_read")
-int sys_enter_read(struct trace_event_raw_sys_enter_read* ctx) {
+// Processing enter of read, recv, recvfrom syscalls
+static __always_inline
+int process_enter_of_syscalls_read_recvfrom(__u64 fd, char* buf, __u64 size) {
     __u64 id = bpf_get_current_pid_tgid();
     
     struct socket_key k = {};
     k.pid = id >> 32;
-    k.fd = ctx->fd;
+    k.fd = fd;
 
     // assume process is reading from the same socket it wrote to
     void* active_req = bpf_map_lookup_elem(&active_l7_requests, &k);
@@ -227,9 +217,9 @@ int sys_enter_read(struct trace_event_raw_sys_enter_read* ctx) {
     }
     
     struct read_args args = {};
-    args.fd = ctx->fd;
-    args.buf = ctx->buf;
-    args.size = ctx->count;
+    args.fd = fd;
+    args.buf = buf;
+    args.size = size;
 
     long res = bpf_map_update_elem(&active_reads, &id, &args, BPF_ANY);
     if(res < 0)
@@ -240,9 +230,9 @@ int sys_enter_read(struct trace_event_raw_sys_enter_read* ctx) {
     return 0;
 }
 
-SEC("tracepoint/syscalls/sys_exit_read")
-int sys_exit_read(struct trace_event_raw_sys_exit_read* ctx) {
-    if (ctx->ret < 0) { // read failed
+static __always_inline
+int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
+    if (ret < 0) { // read failed
         // -ERRNO
         __u64 id = bpf_get_current_pid_tgid();
 
@@ -257,8 +247,8 @@ int sys_exit_read(struct trace_event_raw_sys_exit_read* ctx) {
         k.fd = read_info->fd;
 
         // print error
-        char msg[] = "read failed - %ld";
-        bpf_trace_printk(msg, sizeof(msg), ctx->ret);
+        char msg[] = "read or recvfrom failed - %ld";
+        bpf_trace_printk(msg, sizeof(msg), ret);
 
         // clean up
         bpf_map_delete_elem(&active_reads, &id);
@@ -337,7 +327,6 @@ int sys_exit_read(struct trace_event_raw_sys_exit_read* ctx) {
     bpf_map_delete_elem(&active_reads, &id);
     bpf_map_delete_elem(&active_l7_requests, &k);
 
-    
     // u64 flags = BPF_F_CURRENT_CPU;
     // u64 size = sizeof(*e);
     // flags |= (u64) size << 32;
@@ -352,8 +341,61 @@ int sys_exit_read(struct trace_event_raw_sys_exit_read* ctx) {
 }
 
 
-// TODO: add sendto and recvfrom
+// After socket creation and connection establishment, the kernel will call the
+// write function of the socket's protocol handler to send data to the remote
+// peer. The kernel will call the read function of the socket's protocol handler
+// to receive data from the remote peer.
 
-// sys_enter_sendto
-// sys_enter_recvfrom
-// sys_exit_recvfrom
+// Flow:
+// 1. sys_enter_write
+    // -- TODO: check if write was successful (return value), sys_exit_write ?
+// 2. sys_enter_read
+// 3. sys_exit_read
+
+
+// In different programming languages, the syscalls might used in different combinations
+// write - read
+// send - recv
+// sendto - recvfrom
+// sendmmsg - recvfrom 
+// sendmsg - recvmsg
+// That's why we need to hook all of them
+// and process the data in the same way
+
+// sys_enter_ sending syscalls -- process_enter_of_syscalls_write_sendto
+// sys_enter_ receiving syscalls -- process_enter_of_syscalls_read_recvfrom
+// sys_exit_ receiving syscalls -- process_exit_of_syscalls_read_recvfrom
+
+
+SEC("tracepoint/syscalls/sys_enter_write")
+int sys_enter_write(struct trace_event_raw_sys_enter_write* ctx) {
+   return process_enter_of_syscalls_write_sendto(ctx->fd, ctx->buf, ctx->count);
+}
+
+SEC("tracepoint/syscalls/sys_enter_sendto")
+int sys_enter_sendto(struct trace_event_raw_sys_enter_sendto* ctx) {
+   return process_enter_of_syscalls_write_sendto(ctx->fd, ctx->buff, ctx->len);
+}
+
+SEC("tracepoint/syscalls/sys_enter_read")
+int sys_enter_read(struct trace_event_raw_sys_enter_read* ctx) {
+    return process_enter_of_syscalls_read_recvfrom(ctx->fd, ctx->buf, ctx->count);
+}
+
+SEC("tracepoint/syscalls/sys_enter_recvfrom")
+int sys_enter_recvfrom(struct trace_event_raw_sys_enter_recvfrom* ctx) {
+    return process_enter_of_syscalls_read_recvfrom(ctx->fd, ctx->ubuf, ctx->size);
+}
+
+SEC("tracepoint/syscalls/sys_exit_read")
+int sys_exit_read(struct trace_event_raw_sys_exit_read* ctx) {
+    return process_exit_of_syscalls_read_recvfrom(ctx, ctx->ret);
+}
+
+SEC("tracepoint/syscalls/sys_exit_recvfrom")
+int sys_exit_recvfrom(struct trace_event_raw_sys_exit_recvfrom* ctx) {
+    return process_exit_of_syscalls_read_recvfrom(ctx, ctx->ret);
+}
+
+
+

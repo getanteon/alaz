@@ -63,7 +63,9 @@ func NewBackendDS(conf config.BackendConfig) *BackendDS {
 			// connection refused, connection reset, connection timeout
 			shouldRetry = true
 		} else {
-			if resp.StatusCode == http.StatusBadRequest || resp.StatusCode >= http.StatusInternalServerError {
+			if resp.StatusCode == http.StatusBadRequest ||
+				resp.StatusCode == http.StatusTooManyRequests ||
+				resp.StatusCode >= http.StatusInternalServerError {
 				shouldRetry = true
 			}
 		}
