@@ -21,14 +21,14 @@ import (
 const (
 	BPF_L7_PROTOCOL_UNKNOWN = iota
 	BPF_L7_PROTOCOL_HTTP
-	BPF_L7_PROTOCOL_RABBITMQ
+	BPF_L7_PROTOCOL_AMQP
 )
 
 // for user space
 const (
-	L7_PROTOCOL_HTTP     = "L7_PROTOCOL_HTTP"
-	L7_PROTOCOL_RABBITMQ = "L7_PROTOCOL_RABBITMQ"
-	L7_PROTOCOL_UNKNOWN  = "L7_PROTOCOL_UNKNOWN"
+	L7_PROTOCOL_HTTP    = "L7_PROTOCOL_HTTP"
+	L7_PROTOCOL_AMQP    = "L7_PROTOCOL_AMQP"
+	L7_PROTOCOL_UNKNOWN = "L7_PROTOCOL_UNKNOWN"
 )
 
 // Custom type for the enumeration
@@ -39,8 +39,8 @@ func (e L7ProtocolConversion) String() string {
 	switch e {
 	case BPF_L7_PROTOCOL_HTTP:
 		return L7_PROTOCOL_HTTP
-	case BPF_L7_PROTOCOL_RABBITMQ:
-		return L7_PROTOCOL_RABBITMQ
+	case BPF_L7_PROTOCOL_AMQP:
+		return L7_PROTOCOL_AMQP
 	case BPF_L7_PROTOCOL_UNKNOWN:
 		return L7_PROTOCOL_UNKNOWN
 	default:
@@ -262,18 +262,18 @@ func Deploy(ch chan interface{}) {
 				switch protocol {
 				case L7_PROTOCOL_HTTP:
 					method = HTTPMethodConversion(l7Event.Method).String()
-				case L7_PROTOCOL_RABBITMQ:
+				case L7_PROTOCOL_AMQP:
 					method = RabbitMQMethodConversion(l7Event.Method).String()
 				default:
 					method = "Unknown"
 				}
 
 				// TODO: remove this
-				if protocol == L7_PROTOCOL_RABBITMQ {
+				if protocol == L7_PROTOCOL_AMQP {
 					log.Logger.Info().Str("method", method).
 						Uint32("pid", l7Event.Pid).
 						Str("payload", string(l7Event.Payload[:l7Event.PayloadSize])).
-						Msg("rabbitmq method")
+						Msg("amqp method")
 				}
 
 				ch <- L7Event{

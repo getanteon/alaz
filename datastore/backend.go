@@ -62,11 +62,27 @@ func NewBackendDS(conf config.BackendConfig) *BackendDS {
 		if err != nil { // resp, (doErr) = c.HTTPClient.Do(req.Request)
 			// connection refused, connection reset, connection timeout
 			shouldRetry = true
+			log.Logger.Warn().Msgf("will retry, error: %v", err)
+
+			rb, err := io.ReadAll(resp.Body)
+			if err != nil {
+				log.Logger.Warn().Msgf("error reading response body: %v", err)
+			}
+			log.Logger.Warn().Msgf("will retry, response body: %s", string(rb))
+
 		} else {
 			if resp.StatusCode == http.StatusBadRequest ||
 				resp.StatusCode == http.StatusTooManyRequests ||
 				resp.StatusCode >= http.StatusInternalServerError {
 				shouldRetry = true
+
+				rb, err := io.ReadAll(resp.Body)
+				if err != nil {
+					log.Logger.Warn().Msgf("error reading response body: %v", err)
+				}
+				log.Logger.Warn().Msgf("will retry, response body: %s", string(rb))
+				log.Logger.Warn().Msgf("will retry, status code: %d", resp.StatusCode)
+
 			}
 		}
 		return shouldRetry, nil

@@ -14,10 +14,14 @@
 
 #define PROTOCOL_UNKNOWN    0
 #define PROTOCOL_HTTP	    1
-#define PROTOCOL_RABBITMQ	2
+#define PROTOCOL_AMQP	2
 
 #define MAX_PAYLOAD_SIZE 512
 #define PAYLOAD_PREFIX_SIZE 16
+
+// for rabbitmq methods
+#define METHOD_PUBLISH           1
+#define METHOD_CONSUME           2
 
 
 char __license[] SEC("license") = "Dual MIT/GPL";
@@ -151,13 +155,13 @@ int process_enter_of_syscalls_write_sendto(__u64 fd, char* buf, __u64 count){
             char msgCtx[] = "rabbitmq_produce";
             bpf_trace_printk(msgCtx, sizeof(msgCtx));
 
-            req->protocol = PROTOCOL_RABBITMQ;
-            req->method = METHOD_PRODUCE;
+            req->protocol = PROTOCOL_AMQP;
+            req->method = METHOD_PUBLISH;
         }else if (is_rabbitmq_consume(buf, count)){
             char msgCtx[] = "rabbitmq_consume";
             bpf_trace_printk(msgCtx, sizeof(msgCtx));
             
-            req->protocol = PROTOCOL_RABBITMQ;
+            req->protocol = PROTOCOL_AMQP;
             req->method = METHOD_CONSUME;
         }else{
             req->protocol = PROTOCOL_UNKNOWN;
