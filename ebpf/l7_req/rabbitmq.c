@@ -1,5 +1,13 @@
-// AMQP 0-9-1 Protocol Specification
-// https://www.rabbitmq.com/protocol.html
+// https://www.rabbitmq.com/resources/specs/amqp0-9-1.pdf
+// 2.3.5 Frame Details
+//
+// 0      1         3         7                   size+7 size+8
+// +------+---------+---------+-------------------+------+---------+
+// | type | channel |  size   |  payload          | frame-end     |
+// +------+---------+---------+-------------------+------+---------+
+// octet   short     long      size octets         octet
+
+// octet -> 1 byte
 
 #define RABBITMQ_FRAME_TYPE_METHOD 1
 #define RABBITMQ_FRAME_END 0xCE
