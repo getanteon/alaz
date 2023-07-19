@@ -86,7 +86,7 @@ func (a *Aggregator) processSvc(d k8s.K8sResourceMessage) {
 			Protocol string "json:\"protocol\""
 		}{
 			Src:      port.Port,
-			Dest:     port.NodePort,
+			Dest:     int32(port.TargetPort.IntValue()),
 			Protocol: string(port.Protocol),
 		})
 	}
