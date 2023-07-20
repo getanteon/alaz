@@ -64,9 +64,9 @@ const (
 
 // match with values in l7_req.c, order is important
 const (
-	BPF_RABBIT_METHOD_UNKNOWN = iota
-	BPF_RABBIT_METHOD_PRODUCE
-	BPF_RABBIT_METHOD_CONSUME
+	BPF_AMQP_METHOD_UNKNOWN = iota
+	BPF_AMQP_METHOD_PUBLISH
+	BPF_AMQP_METHOD_CONSUME
 )
 
 // Custom type for the enumeration
@@ -75,9 +75,9 @@ type RabbitMQMethodConversion uint32
 // String representation of the enumeration values
 func (e RabbitMQMethodConversion) String() string {
 	switch e {
-	case BPF_RABBIT_METHOD_PRODUCE:
-		return PRODUCE
-	case BPF_RABBIT_METHOD_CONSUME:
+	case BPF_AMQP_METHOD_PUBLISH:
+		return PUBLISH
+	case BPF_AMQP_METHOD_CONSUME:
 		return CONSUME
 	default:
 		return "Unknown"
@@ -99,7 +99,7 @@ const (
 
 // for rabbitmq, user space
 const (
-	PRODUCE = "PRODUCE"
+	PUBLISH = "PUBLISH"
 	CONSUME = "CONSUME"
 )
 

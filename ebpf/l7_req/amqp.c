@@ -33,10 +33,10 @@
 
 // FRAME PAYLOAD FORMAT FOR METHOD FRAMES
 // 0          2          4
-// +----------+----------+-----------+--------------+-------------+-------------+-------------+
-// | class-id | method-id| arguments | class-id     | method-id   | arguments   | ...         |
-// +----------+----------+-----------+--------------+-------------+-------------+-------------+
-// short      short      ...         short          short         ...           ...
+// +----------+----------+-----------+
+// | class-id | method-id| arguments |
+// +----------+----------+-----------+
+// short      short      ...        
 
 
 // Frame types and values
@@ -63,9 +63,12 @@
 
 // Methods differ according to the class they belong to
 
+// Content frame comes after method frame
+// method(1) - content_header(2) - content_body(3)
+
 // Basic class methods
 #define AMQP_METHOD_PUBLISH 40
-#define AMQP_METHOD_CONSUME 60
+#define AMQP_METHOD_CONSUME 60 // Deliver
 #define AMQP_METHOD_ACK 80
 #define AMQP_METHOD_REJECT 90
 

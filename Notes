@@ -187,3 +187,9 @@ https://github.com/torvalds/linux.git
 //  linux/tools/bpf/bpftool
 // make
 // gcc olmasi lazim
+
+
+// tcptop summarizes throughput of TCP connections
+sudo python3 tcptop.py |  grep 5672 | grep hammer
+
+// tcptracer shows opening and closing of TCP connections 

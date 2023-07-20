@@ -10,7 +10,7 @@
 #include <bpf/bpf_tracing.h>
 
 #include "http.c"
-#include "rabbitmq.c"
+#include "amqp.c"
 
 #define PROTOCOL_UNKNOWN    0
 #define PROTOCOL_HTTP	    1
@@ -40,7 +40,6 @@ struct l7_event {
     __u32 payload_size;
     __u8 payload_read_complete;
     __u8 failed;
-    
 };
 
 struct l7_request {
@@ -151,18 +150,8 @@ int process_enter_of_syscalls_write_sendto(__u64 fd, char* buf, __u64 count){
             req->protocol = PROTOCOL_HTTP;
             req-> method = method;
         }else if (is_rabbitmq_produce(buf,count)){
-            
-            char msgCtx[] = "rabbitmq_produce";
-            bpf_trace_printk(msgCtx, sizeof(msgCtx));
-
             req->protocol = PROTOCOL_AMQP;
             req->method = METHOD_PUBLISH;
-        }else if (is_rabbitmq_consume(buf, count)){
-            char msgCtx[] = "rabbitmq_consume";
-            bpf_trace_printk(msgCtx, sizeof(msgCtx));
-            
-            req->protocol = PROTOCOL_AMQP;
-            req->method = METHOD_CONSUME;
         }else{
             req->protocol = PROTOCOL_UNKNOWN;
             req->method = METHOD_UNKNOWN;
@@ -210,12 +199,16 @@ int process_enter_of_syscalls_read_recvfrom(__u64 fd, char* buf, __u64 size) {
     k.pid = id >> 32;
     k.fd = fd;
 
-    // assume process is reading from the same socket it wrote to
-    void* active_req = bpf_map_lookup_elem(&active_l7_requests, &k);
-    if(!active_req) // if not found
-    {
-        return 0;
-    }
+    // since a message consume in amqp does not have a prior write, we will not have a request in active_l7_requests
+    // only in http, a prior write is needed, so we will have a request in active_l7_requests
+
+    // void* active_req = bpf_map_lookup_elem(&active_l7_requests, &k);
+    // if(!active_req) // if not found
+    // {
+    //     return 0;
+    // }
+
+    
     
     struct read_args args = {};
     args.fd = fd;
@@ -258,6 +251,7 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
         return 0;
     }
 
+
     __u64 id = bpf_get_current_pid_tgid();
     struct read_args *read_info = bpf_map_lookup_elem(&active_reads, &id);
     if (!read_info) {
@@ -269,15 +263,39 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
     k.fd = read_info->fd; 
 
 
-    struct l7_request *active_req = bpf_map_lookup_elem(&active_l7_requests, &k);
-    if (!active_req) {
-        return 0;
-    }
-
     // Instead of allocating on bpf stack, use cpu map
     int zero = 0;
     struct l7_event *e = bpf_map_lookup_elem(&l7_event_heap, &zero);
     if (!e) {
+        return 0;
+    }
+
+    // For a amqp consume, there will be no write, so we will not have a request in active_l7_requests
+    // Process amqp consume first, if it is not amqp consume, look for a request in active_l7_requests
+
+    if (is_rabbitmq_consume(read_info->buf, read_info->size)) {
+        e->protocol = PROTOCOL_AMQP;
+        e->method = METHOD_CONSUME;
+        e->duration = 0; // TODO: calculate read time maybe ?
+        e->write_time_ns = 0;
+        e->payload_size = 0;
+        e->payload_read_complete = 0;
+        e->failed = 0; // success
+        e->status = 0;
+        e->fd = k.fd;
+        e->pid = k.pid;
+        
+        // reset payload
+        for (int i = 0; i < MAX_PAYLOAD_SIZE; i++) {
+            e->payload[i] = 0;
+        }
+        
+        bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
+        return 0;
+    }
+
+    struct l7_request *active_req = bpf_map_lookup_elem(&active_l7_requests, &k);
+    if (!active_req) {
         return 0;
     }
 

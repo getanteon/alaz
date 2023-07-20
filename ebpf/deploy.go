@@ -22,7 +22,7 @@ func Deploy() {
 	go tcp_state.Deploy(EbpfEvents)
 	go l7_req.Deploy(EbpfEvents)
 
-	go listenDebugMsgs()
+	// go listenDebugMsgs()
 }
 
 func listenDebugMsgs() {
