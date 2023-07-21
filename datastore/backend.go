@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
 	"strconv"
@@ -29,6 +30,8 @@ func init() {
 	}
 }
 
+var resourceBatchSize int64 = 50
+
 // BackendDS is a backend datastore
 type BackendDS struct {
 	host      string
@@ -38,6 +41,13 @@ type BackendDS struct {
 	batchSize int64
 
 	reqChanBuffer chan *ReqInfo
+
+	podEventChan       chan interface{} // *PodEvent
+	svcEventChan       chan interface{} // *SvcEvent
+	depEventChan       chan interface{} // *DepEvent
+	rsEventChan        chan interface{} // *RsEvent
+	epEventChan        chan interface{} // *EndpointsEvent
+	containerEventChan chan interface{} // *ContainerEvent
 }
 
 const (
@@ -51,6 +61,8 @@ const (
 )
 
 func NewBackendDS(conf config.BackendConfig) *BackendDS {
+	rand.Seed(time.Now().UnixNano())
+
 	retryClient := retryablehttp.NewClient()
 	retryClient.Backoff = retryablehttp.DefaultBackoff
 	retryClient.RetryWaitMin = 1 * time.Second
@@ -103,15 +115,29 @@ func NewBackendDS(conf config.BackendConfig) *BackendDS {
 	}
 
 	ds := &BackendDS{
-		host:          conf.Host,
-		port:          conf.Port,
-		token:         conf.Token,
-		c:             client,
-		reqChanBuffer: make(chan *ReqInfo, 10000),
-		batchSize:     bs,
+		host:               conf.Host,
+		port:               conf.Port,
+		token:              conf.Token,
+		c:                  client,
+		batchSize:          bs,
+		reqChanBuffer:      make(chan *ReqInfo, 10000),
+		podEventChan:       make(chan interface{}, 100),
+		svcEventChan:       make(chan interface{}, 100),
+		rsEventChan:        make(chan interface{}, 100),
+		depEventChan:       make(chan interface{}, 100),
+		epEventChan:        make(chan interface{}, 100),
+		containerEventChan: make(chan interface{}, 100),
 	}
 
 	go ds.sendReqsInBatch()
+
+	eventsInterval := 5 * time.Second
+	go ds.sendEventsInBatch(ds.podEventChan, podEndpoint, eventsInterval)
+	go ds.sendEventsInBatch(ds.svcEventChan, svcEndpoint, eventsInterval)
+	go ds.sendEventsInBatch(ds.rsEventChan, rsEndpoint, eventsInterval)
+	go ds.sendEventsInBatch(ds.depEventChan, depEndpoint, eventsInterval)
+	go ds.sendEventsInBatch(ds.epEventChan, epEndpoint, eventsInterval)
+	go ds.sendEventsInBatch(ds.containerEventChan, containerEndpoint, eventsInterval)
 
 	return ds
 }
@@ -143,173 +169,6 @@ func (b *BackendDS) DoRequest(req *http.Request) error {
 	return nil
 }
 
-func convertPodToPayload(pod Pod, eventType string) PodPayload {
-	return PodPayload{
-		Metadata: struct {
-			MonitoringID   string `json:"monitoring_id"`
-			IdempotencyKey string `json:"idempotency_key"`
-		}{
-			MonitoringID:   MonitoringID,
-			IdempotencyKey: string(uuid.NewUUID()),
-		},
-		UID:       pod.UID,
-		EventType: eventType,
-		Name:      pod.Name,
-		Namespace: pod.Namespace,
-		IP:        pod.IP,
-		OwnerType: pod.OwnerType,
-		OwnerName: pod.OwnerName,
-		OwnerID:   pod.OwnerID,
-	}
-}
-
-func (b *BackendDS) PersistPod(pod Pod, eventType string) error {
-	podPayload := convertPodToPayload(pod, eventType)
-
-	c, err := json.Marshal(podPayload)
-	if err != nil {
-		return fmt.Errorf("error marshalling pod payload: %v", err)
-	}
-
-	httpReq, err := http.NewRequest(http.MethodPost, b.host+":"+b.port+podEndpoint, bytes.NewBuffer(c))
-	if err != nil {
-		return fmt.Errorf("error creating http request: %v", err)
-	}
-
-	log.Logger.Info().Msg("sending pod to backend")
-	err = b.DoRequest(httpReq)
-	if err != nil {
-		return fmt.Errorf("error on persisting to backend: %v", err)
-	}
-
-	return nil
-}
-
-func convertSvcToPayload(service Service, eventType string) SvcPayload {
-	return SvcPayload{
-		Metadata: struct {
-			MonitoringID   string `json:"monitoring_id"`
-			IdempotencyKey string `json:"idempotency_key"`
-		}{
-			MonitoringID:   MonitoringID,
-			IdempotencyKey: string(uuid.NewUUID()),
-		},
-		UID:        service.UID,
-		EventType:  "ADD",
-		Name:       service.Name,
-		Namespace:  service.Namespace,
-		Type:       service.Type,
-		ClusterIPs: service.ClusterIPs,
-		Ports:      service.Ports,
-	}
-}
-
-func (b *BackendDS) PersistService(service Service, eventType string) error {
-	svcPayload := convertSvcToPayload(service, eventType)
-
-	c, err := json.Marshal(svcPayload)
-	if err != nil {
-		return fmt.Errorf("error marshalling svc payload: %v", err)
-	}
-
-	httpReq, err := http.NewRequest(http.MethodPost, b.host+":"+b.port+svcEndpoint, bytes.NewBuffer(c))
-	if err != nil {
-		return fmt.Errorf("error creating http request: %v", err)
-	}
-
-	log.Logger.Info().Msg("sending service to backend")
-	err = b.DoRequest(httpReq)
-	if err != nil {
-		return fmt.Errorf("error on persisting to backend: %v", err)
-	}
-
-	return nil
-}
-
-func convertReplicasetToPayload(rs ReplicaSet, eventType string) ReplicaSetPayload {
-	return ReplicaSetPayload{
-		Metadata: struct {
-			MonitoringID   string `json:"monitoring_id"`
-			IdempotencyKey string `json:"idempotency_key"`
-		}{MonitoringID: MonitoringID, IdempotencyKey: string(uuid.NewUUID())},
-		UID:       rs.UID,
-		EventType: eventType,
-		Name:      rs.Name,
-		Namespace: rs.Namespace,
-		Replicas:  rs.Replicas,
-		OwnerType: rs.OwnerType,
-		OwnerName: rs.OwnerName,
-		OwnerID:   rs.OwnerID,
-	}
-}
-
-func (b *BackendDS) PersistReplicaSet(rs ReplicaSet, eventType string) error {
-	rsPayload := convertReplicasetToPayload(rs, eventType)
-
-	c, err := json.Marshal(rsPayload)
-	if err != nil {
-		return fmt.Errorf("error marshalling rs payload: %v", err)
-	}
-
-	httpReq, err := http.NewRequest(http.MethodPost, b.host+":"+b.port+rsEndpoint, bytes.NewBuffer(c))
-	if err != nil {
-		return fmt.Errorf("error creating http request: %v", err)
-	}
-
-	log.Logger.Info().Msg("sending replicaset to backend")
-	err = b.DoRequest(httpReq)
-	if err != nil {
-		return fmt.Errorf("error on persisting to backend: %v", err)
-	}
-
-	return nil
-}
-
-func convertDeploymentToPayload(d Deployment, eventType string) DeploymentPayload {
-	return DeploymentPayload{
-		Metadata: struct {
-			MonitoringID   string `json:"monitoring_id"`
-			IdempotencyKey string `json:"idempotency_key"`
-		}{MonitoringID: MonitoringID, IdempotencyKey: string(uuid.NewUUID())},
-		UID:       d.UID,
-		EventType: eventType,
-		Name:      d.Name,
-		Namespace: d.Namespace,
-		Replicas:  d.Replicas,
-	}
-}
-
-func convertEndpointsToPayload(ep Endpoints, eventType string) EndpointsPayload {
-	return EndpointsPayload{
-		Metadata: struct {
-			MonitoringID   string `json:"monitoring_id"`
-			IdempotencyKey string `json:"idempotency_key"`
-		}{MonitoringID: MonitoringID, IdempotencyKey: string(uuid.NewUUID())},
-		UID:       ep.UID,
-		EventType: eventType,
-		Name:      ep.Name,
-		Namespace: ep.Namespace,
-		Service:   ep.Service,
-		Addresses: ep.Addresses,
-	}
-}
-
-func convertContainerToPayload(c Container, eventType string) ContainerPayload {
-	return ContainerPayload{
-		Metadata: struct {
-			MonitoringID   string `json:"monitoring_id"`
-			IdempotencyKey string `json:"idempotency_key"`
-		}{MonitoringID: MonitoringID, IdempotencyKey: string(uuid.NewUUID())},
-		UID:       c.UID,
-		EventType: eventType,
-		Name:      c.Name,
-		Namespace: c.Namespace,
-		Pod:       c.PodUID,
-		Image:     c.Image,
-		Ports:     c.Ports,
-	}
-}
-
 func convertReqsToPayload(batch []*ReqInfo) RequestsPayload {
 	return RequestsPayload{
 		Metadata: struct {
@@ -320,114 +179,14 @@ func convertReqsToPayload(batch []*ReqInfo) RequestsPayload {
 	}
 }
 
-func (b *BackendDS) PersistDeployment(d Deployment, eventType string) error {
-	dPayload := convertDeploymentToPayload(d, eventType)
-
-	c, err := json.Marshal(dPayload)
-	if err != nil {
-		return fmt.Errorf("error marshalling deployment payload: %v", err)
-	}
-
-	httpReq, err := http.NewRequest(http.MethodPost, b.host+":"+b.port+depEndpoint, bytes.NewBuffer(c))
-	if err != nil {
-		return fmt.Errorf("error creating http request: %v", err)
-	}
-
-	log.Logger.Info().Msg("sending deployment to backend")
-	err = b.DoRequest(httpReq)
-	if err != nil {
-		return fmt.Errorf("error on persisting to backend: %v", err)
-	}
-
-	return nil
-}
-
-func (b *BackendDS) PersistEndpoints(ep Endpoints, eventType string) error {
-	dPayload := convertEndpointsToPayload(ep, eventType)
-
-	c, err := json.Marshal(dPayload)
-	if err != nil {
-		return fmt.Errorf("error marshalling endpoints payload: %v", err)
-	}
-
-	httpReq, err := http.NewRequest(http.MethodPost, b.host+":"+b.port+epEndpoint, bytes.NewBuffer(c))
-	if err != nil {
-		return fmt.Errorf("error creating http request: %v", err)
-	}
-
-	log.Logger.Info().Msg("sending endpoints to backend")
-	err = b.DoRequest(httpReq)
-	if err != nil {
-		return fmt.Errorf("error on persisting to backend: %v", err)
-	}
-
-	return nil
-}
-
-func (b *BackendDS) PersistContainer(c Container, eventType string) error {
-	cPayload := convertContainerToPayload(c, eventType)
-
-	bc, err := json.Marshal(cPayload)
-	if err != nil {
-		return fmt.Errorf("error marshalling container payload: %v", err)
-	}
-
-	httpReq, err := http.NewRequest(http.MethodPost, b.host+":"+b.port+containerEndpoint, bytes.NewBuffer(bc))
-	if err != nil {
-		return fmt.Errorf("error creating http request: %v", err)
-	}
-
-	log.Logger.Info().Msg("sending container to backend")
-	err = b.DoRequest(httpReq)
-	if err != nil {
-		return fmt.Errorf("error on persisting to backend: %v", err)
-	}
-
-	return nil
-}
-
-func (b *BackendDS) sendReqsInBatch() {
-
-	t := time.NewTicker(30 * time.Second)
-	defer t.Stop()
-
-	for {
-		select {
-		case <-t.C:
-			b.sendBatch()
-			// case <-b.stopChan: // TODO
-			// 	return
-		}
-	}
-
-}
-
-func (b *BackendDS) sendBatch() {
-	batch := make([]*ReqInfo, 0, b.batchSize)
-	loop := true
-
-	for i := 0; (i < int(b.batchSize)) && loop; i++ {
-		select {
-		case req := <-b.reqChanBuffer:
-			batch = append(batch, req)
-		case <-time.After(1 * time.Second):
-			loop = false
-		}
-	}
-
-	if len(batch) == 0 {
-		return
-	}
-
-	reqsPayload := convertReqsToPayload(batch)
-
-	reqsBytes, err := json.Marshal(reqsPayload)
+func (b *BackendDS) sendToBackend(payload interface{}, endpoint string) {
+	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		log.Logger.Error().Msgf("error marshalling batch: %v", err)
 		return
 	}
 
-	httpReq, err := http.NewRequest(http.MethodPost, b.host+":"+b.port+reqEndpoint, bytes.NewBuffer(reqsBytes))
+	httpReq, err := http.NewRequest(http.MethodPost, b.host+":"+b.port+endpoint, bytes.NewBuffer(payloadBytes))
 	if err != nil {
 		log.Logger.Error().Msgf("error creating http request: %v", err)
 		return
@@ -438,7 +197,90 @@ func (b *BackendDS) sendBatch() {
 	if err != nil {
 		log.Logger.Error().Msgf("error on persisting requests to backend: %v", err)
 	}
+}
 
+func (b *BackendDS) sendReqsInBatch() {
+	t := time.NewTicker(30 * time.Second)
+	defer t.Stop()
+
+	send := func() {
+		batch := make([]*ReqInfo, 0, b.batchSize)
+		loop := true
+
+		for i := 0; (i < int(b.batchSize)) && loop; i++ {
+			select {
+			case req := <-b.reqChanBuffer:
+				batch = append(batch, req)
+			case <-time.After(1 * time.Second):
+				loop = false
+			}
+		}
+
+		if len(batch) == 0 {
+			return
+		}
+
+		reqsPayload := convertReqsToPayload(batch)
+		b.sendToBackend(reqsPayload, reqEndpoint)
+	}
+
+	for {
+		select {
+		case <-t.C:
+			send()
+			// case <-b.stopChan: // TODO
+			// 	return
+		}
+	}
+
+}
+
+func (b *BackendDS) send(ch <-chan interface{}, endpoint string) {
+	batch := make([]interface{}, 0, resourceBatchSize)
+	loop := true
+
+	for i := 0; (i < int(resourceBatchSize)) && loop; i++ {
+		select {
+		case ev := <-ch:
+			batch = append(batch, ev)
+		case <-time.After(1 * time.Second):
+			loop = false
+		}
+	}
+
+	if len(batch) == 0 {
+		return
+	}
+
+	payload := EventPayload{
+		Metadata: struct {
+			MonitoringID   string "json:\"monitoring_id\""
+			IdempotencyKey string "json:\"idempotency_key\""
+		}{
+			MonitoringID:   MonitoringID,
+			IdempotencyKey: string(uuid.NewUUID()),
+		},
+		Events: batch,
+	}
+
+	b.sendToBackend(payload, endpoint)
+}
+
+func (b *BackendDS) sendEventsInBatch(ch chan interface{}, endpoint string, interval time.Duration) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+
+	for {
+		select {
+		case <-t.C:
+			randomDuration := time.Duration(rand.Intn(50)) * time.Millisecond
+			time.Sleep(randomDuration)
+
+			b.send(ch, endpoint)
+			// case <-b.stopChan: // TODO
+			// 	return
+		}
+	}
 }
 
 func (b *BackendDS) PersistRequest(request Request) error {
@@ -461,5 +303,41 @@ func (b *BackendDS) PersistRequest(request Request) error {
 
 	b.reqChanBuffer <- reqInfo
 
+	return nil
+}
+
+func (b *BackendDS) PersistPod(pod Pod, eventType string) error {
+	podEvent := convertPodToPodEvent(pod, eventType)
+	b.podEventChan <- &podEvent
+	return nil
+}
+
+func (b *BackendDS) PersistService(service Service, eventType string) error {
+	svcEvent := convertSvcToSvcEvent(service, eventType)
+	b.svcEventChan <- &svcEvent
+	return nil
+}
+
+func (b *BackendDS) PersistDeployment(d Deployment, eventType string) error {
+	depEvent := convertDepToDepEvent(d, eventType)
+	b.depEventChan <- &depEvent
+	return nil
+}
+
+func (b *BackendDS) PersistReplicaSet(rs ReplicaSet, eventType string) error {
+	rsEvent := convertRsToRsEvent(rs, eventType)
+	b.rsEventChan <- &rsEvent
+	return nil
+}
+
+func (b *BackendDS) PersistEndpoints(ep Endpoints, eventType string) error {
+	epEvent := convertEpToEpEvent(ep, eventType)
+	b.epEventChan <- &epEvent
+	return nil
+}
+
+func (b *BackendDS) PersistContainer(c Container, eventType string) error {
+	cEvent := convertContainerToContainerEvent(c, eventType)
+	b.containerEventChan <- &cEvent
 	return nil
 }

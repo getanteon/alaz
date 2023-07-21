@@ -1,10 +1,14 @@
 package datastore
 
-type PodPayload struct {
+type EventPayload struct {
 	Metadata struct {
 		MonitoringID   string `json:"monitoring_id"`
 		IdempotencyKey string `json:"idempotency_key"`
 	} `json:"metadata"`
+	Events []interface{} `json:"events"`
+}
+
+type PodEvent struct {
 	UID       string `json:"uid"`
 	EventType string `json:"event_type"`
 	Name      string `json:"name"`
@@ -15,11 +19,7 @@ type PodPayload struct {
 	OwnerID   string `json:"owner_id"`
 }
 
-type SvcPayload struct {
-	Metadata struct {
-		MonitoringID   string `json:"monitoring_id"`
-		IdempotencyKey string `json:"idempotency_key"`
-	} `json:"metadata"`
+type SvcEvent struct {
 	UID        string   `json:"uid"`
 	EventType  string   `json:"event_type"`
 	Name       string   `json:"name"`
@@ -33,11 +33,7 @@ type SvcPayload struct {
 	} `json:"ports"`
 }
 
-type ReplicaSetPayload struct {
-	Metadata struct {
-		MonitoringID   string `json:"monitoring_id"`
-		IdempotencyKey string `json:"idempotency_key"`
-	} `json:"metadata"`
+type RsEvent struct {
 	UID       string `json:"uid"`
 	EventType string `json:"event_type"`
 	Name      string `json:"name"`
@@ -48,11 +44,7 @@ type ReplicaSetPayload struct {
 	OwnerID   string `json:"owner_id"`
 }
 
-type DeploymentPayload struct {
-	Metadata struct {
-		MonitoringID   string `json:"monitoring_id"`
-		IdempotencyKey string `json:"idempotency_key"`
-	} `json:"metadata"`
+type DepEvent struct {
 	UID       string `json:"uid"`
 	EventType string `json:"event_type"`
 	Name      string `json:"name"`
@@ -60,11 +52,7 @@ type DeploymentPayload struct {
 	Replicas  int32  `json:"replicas"`
 }
 
-type EndpointsPayload struct {
-	Metadata struct {
-		MonitoringID   string `json:"monitoring_id"`
-		IdempotencyKey string `json:"idempotency_key"`
-	} `json:"metadata"`
+type EpEvent struct {
 	UID       string    `json:"uid"`
 	EventType string    `json:"event_type"`
 	Name      string    `json:"name"`
@@ -73,11 +61,7 @@ type EndpointsPayload struct {
 	Addresses []Address `json:"addresses"`
 }
 
-type ContainerPayload struct {
-	Metadata struct {
-		MonitoringID   string `json:"monitoring_id"`
-		IdempotencyKey string `json:"idempotency_key"`
-	} `json:"metadata"`
+type ContainerEvent struct {
 	UID       string `json:"uid"`
 	EventType string `json:"event_type"`
 	Name      string `json:"name"`
@@ -113,4 +97,75 @@ type RequestsPayload struct {
 		IdempotencyKey string `json:"idempotency_key"`
 	} `json:"metadata"`
 	Requests []*ReqInfo `json:"requests"`
+}
+
+func convertPodToPodEvent(pod Pod, eventType string) PodEvent {
+	return PodEvent{
+		UID:       pod.UID,
+		EventType: eventType,
+		Name:      pod.Name,
+		Namespace: pod.Namespace,
+		IP:        pod.IP,
+		OwnerType: pod.OwnerType,
+		OwnerName: pod.OwnerName,
+		OwnerID:   pod.OwnerID,
+	}
+}
+
+func convertSvcToSvcEvent(service Service, eventType string) SvcEvent {
+	return SvcEvent{
+		UID:        service.UID,
+		EventType:  eventType,
+		Name:       service.Name,
+		Namespace:  service.Namespace,
+		Type:       service.Type,
+		ClusterIPs: service.ClusterIPs,
+		Ports:      service.Ports,
+	}
+}
+
+func convertRsToRsEvent(rs ReplicaSet, eventType string) RsEvent {
+	return RsEvent{
+		UID:       rs.UID,
+		EventType: eventType,
+		Name:      rs.Name,
+		Namespace: rs.Namespace,
+		Replicas:  rs.Replicas,
+		OwnerType: rs.OwnerType,
+		OwnerName: rs.OwnerName,
+		OwnerID:   rs.OwnerID,
+	}
+}
+
+func convertDepToDepEvent(d Deployment, eventType string) DepEvent {
+	return DepEvent{
+		UID:       d.UID,
+		EventType: eventType,
+		Name:      d.Name,
+		Namespace: d.Namespace,
+		Replicas:  d.Replicas,
+	}
+}
+
+func convertEpToEpEvent(ep Endpoints, eventType string) EpEvent {
+	return EpEvent{
+		UID:       ep.UID,
+		EventType: eventType,
+		Name:      ep.Name,
+		Namespace: ep.Namespace,
+		Service:   ep.Service,
+		Addresses: ep.Addresses,
+	}
+}
+
+func convertContainerToContainerEvent(c Container, eventType string) ContainerEvent {
+	return ContainerEvent{
+		UID:       c.UID,
+		EventType: eventType,
+		Name:      c.Name,
+		Namespace: c.Namespace,
+		Pod:       c.PodUID,
+		Image:     c.Image,
+		Ports:     c.Ports,
+	}
 }
