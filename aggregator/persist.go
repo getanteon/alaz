@@ -271,7 +271,7 @@ func (a *Aggregator) processEndpoints(ep k8s.K8sResourceMessage) {
 		UID:       string(endpoints.UID),
 		Name:      endpoints.Name,
 		Namespace: endpoints.Namespace,
-		Service:   endpoints.Labels["service"], // metadata.labels.service
+		Service:   endpoints.Name, // TODO: remove this field
 		Addresses: adrs,
 	}
 
