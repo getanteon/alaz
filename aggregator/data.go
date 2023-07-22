@@ -15,6 +15,8 @@ import (
 	"alaz/ebpf/tcp_state"
 	"alaz/log"
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -151,6 +153,11 @@ func NewAggregator(k8sChan <-chan interface{}, crChan <-chan interface{}, ebpfCh
 		ds:            ds,
 		dsDestination: dsDestination,
 	}
+}
+
+// capture already established connections
+func (a *Aggregator) Init() {
+	// TODO: get all established connections from conntrack
 }
 
 func (a *Aggregator) Run() {
@@ -480,6 +487,19 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 	if ok {
 		reqDto.ToUID = string(svcUid)
 		reqDto.ToType = "service"
+	} else {
+		if podUid, ok := a.clusterInfo.PodIPToPodUid[skInfo.Daddr]; ok {
+			reqDto.ToUID = string(podUid)
+			reqDto.ToType = "pod"
+		} else {
+			// 3rd party url
+			remoteDnsHost, err := getHostnameFromIP(skInfo.Daddr)
+			if err == nil {
+				// dns lookup successful
+				reqDto.ToUID = remoteDnsHost
+				reqDto.ToType = "outbound"
+			}
+		}
 	}
 	// if not found, it's 3rd party url or something else
 	// ToUID and ToType will be empty
@@ -493,4 +513,20 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 			log.Logger.Error().Err(err).Msg("error persisting request")
 		}
 	}()
+}
+
+// reverse dns lookup
+func getHostnameFromIP(ipAddr string) (string, error) {
+	addrs, err := net.LookupAddr(ipAddr)
+	if err != nil {
+		return "", err
+	}
+
+	// The reverse DNS lookup can return multiple names for the same IP.
+	// In this example, we return the first name found.
+	if len(addrs) > 0 {
+		return addrs[0], nil
+	}
+
+	return "", fmt.Errorf("no hostname found for IP address: %s", ipAddr)
 }

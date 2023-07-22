@@ -39,6 +39,7 @@ func main() {
 	}
 
 	a := aggregator.NewAggregator(kubeEvents, nil, ebpf.EbpfEvents)
+	a.Init()
 	a.Run()
 	a.AdvertisePidSockMap()
 

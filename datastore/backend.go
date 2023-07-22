@@ -48,6 +48,13 @@ type BackendDS struct {
 	rsEventChan        chan interface{} // *RsEvent
 	epEventChan        chan interface{} // *EndpointsEvent
 	containerEventChan chan interface{} // *ContainerEvent
+
+	// TODO:
+	// daemonset
+	// statefulset
+	// job
+	// cronjob
+
 }
 
 const (
@@ -200,7 +207,7 @@ func (b *BackendDS) sendToBackend(payload interface{}, endpoint string) {
 }
 
 func (b *BackendDS) sendReqsInBatch() {
-	t := time.NewTicker(30 * time.Second)
+	t := time.NewTicker(5 * time.Second)
 	defer t.Stop()
 
 	send := func() {
