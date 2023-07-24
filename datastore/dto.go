@@ -35,6 +35,12 @@ type ReplicaSet struct {
 	Replicas  int32  // Number of replicas
 }
 
+type DaemonSet struct {
+	UID       string // ReplicaSet UID
+	Name      string // ReplicaSet Name
+	Namespace string // Namespace
+}
+
 type Deployment struct {
 	UID       string // Deployment UID
 	Name      string // Deployment Name

@@ -44,6 +44,13 @@ type RsEvent struct {
 	OwnerID   string `json:"owner_id"`
 }
 
+type DsEvent struct {
+	UID       string `json:"uid"`
+	EventType string `json:"event_type"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+}
+
 type DepEvent struct {
 	UID       string `json:"uid"`
 	EventType string `json:"event_type"`
@@ -133,6 +140,15 @@ func convertRsToRsEvent(rs ReplicaSet, eventType string) RsEvent {
 		OwnerType: rs.OwnerType,
 		OwnerName: rs.OwnerName,
 		OwnerID:   rs.OwnerID,
+	}
+}
+
+func convertDsToDsEvent(ds DaemonSet, eventType string) DsEvent {
+	return DsEvent{
+		UID:       ds.UID,
+		EventType: eventType,
+		Name:      ds.Name,
+		Namespace: ds.Namespace,
 	}
 }
 

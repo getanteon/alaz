@@ -48,6 +48,7 @@ type BackendDS struct {
 	rsEventChan        chan interface{} // *RsEvent
 	epEventChan        chan interface{} // *EndpointsEvent
 	containerEventChan chan interface{} // *ContainerEvent
+	dsEventChan        chan interface{} // *DaemonSetEvent
 
 	// TODO:
 	// daemonset
@@ -64,6 +65,7 @@ const (
 	depEndpoint       = "/alaz/k8s/deployment/"
 	epEndpoint        = "/alaz/k8s/endpoint/"
 	containerEndpoint = "/alaz/k8s/container/"
+	dsEndpoint        = "/alaz/k8s/daemonset/"
 	reqEndpoint       = "/alaz/"
 )
 
@@ -131,9 +133,10 @@ func NewBackendDS(conf config.BackendConfig) *BackendDS {
 		podEventChan:       make(chan interface{}, 100),
 		svcEventChan:       make(chan interface{}, 100),
 		rsEventChan:        make(chan interface{}, 100),
-		depEventChan:       make(chan interface{}, 100),
+		depEventChan:       make(chan interface{}, 50),
 		epEventChan:        make(chan interface{}, 100),
 		containerEventChan: make(chan interface{}, 100),
+		dsEventChan:        make(chan interface{}, 20),
 	}
 
 	go ds.sendReqsInBatch()
@@ -145,6 +148,7 @@ func NewBackendDS(conf config.BackendConfig) *BackendDS {
 	go ds.sendEventsInBatch(ds.depEventChan, depEndpoint, eventsInterval)
 	go ds.sendEventsInBatch(ds.epEventChan, epEndpoint, eventsInterval)
 	go ds.sendEventsInBatch(ds.containerEventChan, containerEndpoint, eventsInterval)
+	go ds.sendEventsInBatch(ds.dsEventChan, dsEndpoint, eventsInterval)
 
 	return ds
 }
@@ -340,6 +344,12 @@ func (b *BackendDS) PersistReplicaSet(rs ReplicaSet, eventType string) error {
 func (b *BackendDS) PersistEndpoints(ep Endpoints, eventType string) error {
 	epEvent := convertEpToEpEvent(ep, eventType)
 	b.epEventChan <- &epEvent
+	return nil
+}
+
+func (b *BackendDS) PersistDaemonSet(ds DaemonSet, eventType string) error {
+	dsEvent := convertDsToDsEvent(ds, eventType)
+	b.dsEventChan <- &dsEvent
 	return nil
 }
 

@@ -32,6 +32,7 @@ const (
 	DEPLOYMENT = "Deployment"
 	ENDPOINTS  = "Endpoints"
 	CONTAINER  = "Container"
+	DAEMONSET  = "DaemonSet"
 )
 
 const (
@@ -50,6 +51,7 @@ type K8sCollector struct {
 	replicasetInformer appsv1.ReplicaSetInformer
 	deploymentInformer appsv1.DeploymentInformer
 	endpointsInformer  v1.EndpointsInformer
+	daemonsetInformer  appsv1.DaemonSetInformer
 
 	k8sBigPicture *K8sBigPicture
 	Events        chan interface{}
@@ -101,6 +103,10 @@ func (k *K8sCollector) Init(events chan interface{}) error {
 	k.endpointsInformer = k.informersFactory.Core().V1().Endpoints()
 	k.watchers[ENDPOINTS] = k.endpointsInformer.Informer()
 
+	// DaemonSet
+	k.daemonsetInformer = k.informersFactory.Apps().V1().DaemonSets()
+	k.watchers[DAEMONSET] = k.daemonsetInformer.Informer()
+
 	defer runtime.HandleCrash()
 
 	// Add event handlers
@@ -132,6 +138,12 @@ func (k *K8sCollector) Init(events chan interface{}) error {
 		AddFunc:    getOnAddEndpointsSetFunc(k.Events),
 		UpdateFunc: getOnUpdateEndpointsSetFunc(k.Events),
 		DeleteFunc: getOnDeleteEndpointsSetFunc(k.Events),
+	})
+
+	k.watchers[DAEMONSET].AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    getOnAddDaemonSetFunc(k.Events),
+		UpdateFunc: getOnUpdateDaemonSetFunc(k.Events),
+		DeleteFunc: getOnDeleteDaemonSetFunc(k.Events),
 	})
 
 	for _, watcher := range k.watchers {

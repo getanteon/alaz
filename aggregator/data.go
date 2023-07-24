@@ -208,6 +208,8 @@ func (a *Aggregator) processk8s() {
 			a.processEndpoints(d)
 		case k8s.CONTAINER:
 			a.processContainer(d)
+		case k8s.DAEMONSET:
+			a.processDaemonSet(d)
 		default:
 			log.Logger.Warn().Msgf("unknown resource type %s", d.ResourceType)
 		}

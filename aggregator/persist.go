@@ -304,3 +304,22 @@ func (a *Aggregator) processEndpoints(ep k8s.K8sResourceMessage) {
 		}()
 	}
 }
+
+func (a *Aggregator) processDaemonSet(d k8s.K8sResourceMessage) {
+	daemonSet := d.Object.(*appsv1.DaemonSet)
+
+	dtoDaemonSet := datastore.DaemonSet{
+		UID:       string(daemonSet.UID),
+		Name:      daemonSet.Name,
+		Namespace: daemonSet.Namespace,
+	}
+
+	switch d.EventType {
+	case k8s.ADD:
+		go a.ds.PersistDaemonSet(dtoDaemonSet, ADD)
+	case k8s.UPDATE:
+		go a.ds.PersistDaemonSet(dtoDaemonSet, UPDATE)
+	case k8s.DELETE:
+		go a.ds.PersistDaemonSet(dtoDaemonSet, DELETE)
+	}
+}

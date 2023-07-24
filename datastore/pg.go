@@ -279,14 +279,6 @@ func (r Repository) PersistContainer(dto Container, eventType string) error {
 	return nil
 }
 
-// func (r Repository) CreateReplicaSet(dto ReplicaSet) error {
-// 	return nil
-// }
-
-// func (r Repository) UpdateReplicaSet(dto ReplicaSet) error {
-// 	return nil
-// }
-
-// func (r Repository) DeleteReplicaSet(dto ReplicaSet) error {
-// 	return nil
-// }
+func (r Repository) PersistDaemonSet(dto DaemonSet, eventType string) error {
+	return nil
+}
