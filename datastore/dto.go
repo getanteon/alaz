@@ -46,7 +46,6 @@ type Endpoints struct {
 	UID       string // Endpoints UID
 	Name      string // Endpoints Name
 	Namespace string // Namespace
-	Service   string // Service Name
 	Addresses []Address
 }
 

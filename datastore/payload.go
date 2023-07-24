@@ -57,7 +57,6 @@ type EpEvent struct {
 	EventType string    `json:"event_type"`
 	Name      string    `json:"name"`
 	Namespace string    `json:"namespace"`
-	Service   string    `json:"service"`
 	Addresses []Address `json:"addresses"`
 }
 
@@ -153,7 +152,6 @@ func convertEpToEpEvent(ep Endpoints, eventType string) EpEvent {
 		EventType: eventType,
 		Name:      ep.Name,
 		Namespace: ep.Namespace,
-		Service:   ep.Service,
 		Addresses: ep.Addresses,
 	}
 }
