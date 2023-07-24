@@ -90,10 +90,10 @@ type ClusterInfo struct {
 
 var (
 	// default exponential backoff (*2)
-	retryInterval = 20 * time.Millisecond
-	retryLimit    = 10
-
-	// 20 + 40 + 80 + 160 + 320 + 640 + 1280 + 2560 + 5120 + 10240 = 20470 ms = 20.47 s
+	// when retryLimit is increased, we are blocking the events that we wait it to be processed more
+	retryInterval = 400 * time.Millisecond
+	retryLimit    = 5
+	// 400 + 800 + 1600 + 3200 + 6400 = 12400 ms
 )
 
 var usePgDs bool = false
@@ -322,7 +322,6 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 				Dport: d.DPort,
 			},
 		)
-
 	} else if d.Type_ == tcp_state.EVENT_TCP_CLOSED {
 		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).
 			Str("saddr", d.SAddr).Uint16("sport", d.SPort).
