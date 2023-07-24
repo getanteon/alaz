@@ -7,13 +7,14 @@ metadata:
   namespace: ddosify
 rules:
 - apiGroups:
-  - ""
+  - "*"
   resources:
   - pods
   - services
   - endpoints
   - replicasets
   - deployments
+  - daemonsets
   verbs:
   - "*"
 ---
