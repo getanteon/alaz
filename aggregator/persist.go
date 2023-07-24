@@ -49,16 +49,19 @@ func (a *Aggregator) processPod(d k8s.K8sResourceMessage) {
 
 	switch d.EventType {
 	case k8s.ADD:
+		a.clusterInfo.mu.Lock()
 		a.clusterInfo.PodIPToPodUid[pod.Status.PodIP] = pod.UID
-		a.clusterInfo.PodIPToNamespace[pod.Status.PodIP] = pod.Namespace
+		a.clusterInfo.mu.Unlock()
 		go a.persistPod(dtoPod, ADD)
 	case k8s.UPDATE:
+		a.clusterInfo.mu.Lock()
 		a.clusterInfo.PodIPToPodUid[pod.Status.PodIP] = pod.UID
-		a.clusterInfo.PodIPToNamespace[pod.Status.PodIP] = pod.Namespace
+		a.clusterInfo.mu.Unlock()
 		go a.persistPod(dtoPod, UPDATE)
 	case k8s.DELETE:
+		a.clusterInfo.mu.Lock()
 		delete(a.clusterInfo.PodIPToPodUid, pod.Status.PodIP)
-		delete(a.clusterInfo.PodIPToNamespace, pod.Status.PodIP)
+		a.clusterInfo.mu.Unlock()
 		go a.persistPod(dtoPod, DELETE)
 	}
 }
@@ -102,16 +105,19 @@ func (a *Aggregator) processSvc(d k8s.K8sResourceMessage) {
 
 	switch d.EventType {
 	case k8s.ADD:
+		a.clusterInfo.mu.Lock()
 		a.clusterInfo.ServiceIPToServiceUid[service.Spec.ClusterIP] = service.UID
-		a.clusterInfo.ServiceIPToNamespace[service.Spec.ClusterIP] = service.Namespace
+		a.clusterInfo.mu.Unlock()
 		go a.persistSvc(dtoSvc, ADD)
 	case k8s.UPDATE:
+		a.clusterInfo.mu.Lock()
 		a.clusterInfo.ServiceIPToServiceUid[service.Spec.ClusterIP] = service.UID
-		a.clusterInfo.ServiceIPToNamespace[service.Spec.ClusterIP] = service.Namespace
+		a.clusterInfo.mu.Unlock()
 		go a.persistSvc(dtoSvc, UPDATE)
 	case k8s.DELETE:
+		a.clusterInfo.mu.Lock()
 		delete(a.clusterInfo.ServiceIPToServiceUid, service.Spec.ClusterIP)
-		delete(a.clusterInfo.ServiceIPToNamespace, service.Spec.ClusterIP)
+		a.clusterInfo.mu.Unlock()
 		go a.persistSvc(dtoSvc, DELETE)
 	}
 }

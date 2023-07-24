@@ -69,9 +69,6 @@ type ClusterInfo struct {
 	PodIPToPodUid         map[string]types.UID `json:"podIPToPodUid"`
 	ServiceIPToServiceUid map[string]types.UID `json:"serviceIPToServiceUid"`
 
-	PodIPToNamespace     map[string]string `json:"podIPToNamespace"`
-	ServiceIPToNamespace map[string]string `json:"serviceIPToNamespace"`
-
 	// Pid -> SocketMap
 	// pid -> fd -> {saddr, sport, daddr, dport}
 	PidToSocketMap map[uint32]*SocketMap `json:"pidToSocketMap"`
@@ -104,8 +101,6 @@ func NewAggregator(k8sChan <-chan interface{}, crChan <-chan interface{}, ebpfCh
 		PodIPToPodUid:         map[string]types.UID{},
 		ServiceIPToServiceUid: map[string]types.UID{},
 		PidToSocketMap:        make(map[uint32]*SocketMap, 0),
-		PodIPToNamespace:      map[string]string{},
-		ServiceIPToNamespace:  map[string]string{},
 	}
 
 	usePgDs, _ = strconv.ParseBool(os.Getenv("DS_PG"))
@@ -289,13 +284,18 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 
 		var sockMap *SocketMap
 		var ok bool
-		// TODO: lock for PidToSocketMap
-		if sockMap, ok = a.clusterInfo.PidToSocketMap[d.Pid]; !ok {
+
+		a.clusterInfo.mu.RLock() // lock for reading
+		sockMap, ok = a.clusterInfo.PidToSocketMap[d.Pid]
+		a.clusterInfo.mu.RUnlock() // unlock for reading
+		if !ok {
 			sockMap = &SocketMap{
 				M:  make(map[uint64]*SocketLine),
 				mu: sync.RWMutex{},
 			}
+			a.clusterInfo.mu.Lock() // lock for writing
 			a.clusterInfo.PidToSocketMap[d.Pid] = sockMap
+			a.clusterInfo.mu.Unlock() // unlock for writing
 		}
 
 		var skLine *SocketLine
@@ -331,12 +331,20 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 
 		var sockMap *SocketMap
 		var ok bool
-		if sockMap, ok = a.clusterInfo.PidToSocketMap[d.Pid]; !ok {
+
+		a.clusterInfo.mu.RLock() // lock for reading
+		sockMap, ok = a.clusterInfo.PidToSocketMap[d.Pid]
+		a.clusterInfo.mu.RUnlock() // unlock for reading
+
+		if !ok {
 			sockMap = &SocketMap{
 				M:  make(map[uint64]*SocketLine),
 				mu: sync.RWMutex{},
 			}
+
+			a.clusterInfo.mu.Lock() // lock for writing
 			a.clusterInfo.PidToSocketMap[d.Pid] = sockMap
+			a.clusterInfo.mu.Unlock() // unlock for writing
 			return
 		}
 
@@ -381,7 +389,9 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 	var skLine *SocketLine
 	var ok bool
 
+	a.clusterInfo.mu.RLock() // lock for reading
 	sockMap, ok = a.clusterInfo.PidToSocketMap[d.Pid]
+	a.clusterInfo.mu.RUnlock() // unlock for reading
 	if !ok {
 		log.Logger.Info().Uint32("pid", d.Pid).Msg("error finding socket map")
 		return
@@ -467,7 +477,9 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 	}
 
 	// find pod info
+	a.clusterInfo.mu.RLock() // lock for reading
 	podUid, ok := a.clusterInfo.PodIPToPodUid[skInfo.Saddr]
+	a.clusterInfo.mu.RUnlock() // unlock for reading
 	if !ok {
 		log.Logger.Warn().Str("Saddr", skInfo.Saddr).
 			Int("pid", int(d.Pid)).
@@ -482,12 +494,19 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 	reqDto.ToPort = skInfo.Dport
 
 	// find service info
+	a.clusterInfo.mu.RLock() // lock for reading
 	svcUid, ok := a.clusterInfo.ServiceIPToServiceUid[skInfo.Daddr]
+	a.clusterInfo.mu.RUnlock() // unlock for reading
+
 	if ok {
 		reqDto.ToUID = string(svcUid)
 		reqDto.ToType = "service"
 	} else {
-		if podUid, ok := a.clusterInfo.PodIPToPodUid[skInfo.Daddr]; ok {
+		a.clusterInfo.mu.RLock() // lock for reading
+		podUid, ok := a.clusterInfo.PodIPToPodUid[skInfo.Daddr]
+		a.clusterInfo.mu.RUnlock() // unlock for reading
+
+		if ok {
 			reqDto.ToUID = string(podUid)
 			reqDto.ToType = "pod"
 		} else {
