@@ -36,7 +36,6 @@ var resourceBatchSize int64 = 50
 type BackendDS struct {
 	host      string
 	port      string
-	token     string
 	c         *http.Client
 	batchSize int64
 
@@ -126,7 +125,6 @@ func NewBackendDS(conf config.BackendConfig) *BackendDS {
 	ds := &BackendDS{
 		host:               conf.Host,
 		port:               conf.Port,
-		token:              conf.Token,
 		c:                  client,
 		batchSize:          bs,
 		reqChanBuffer:      make(chan *ReqInfo, 10000),
@@ -156,7 +154,6 @@ func NewBackendDS(conf config.BackendConfig) *BackendDS {
 func (b *BackendDS) DoRequest(req *http.Request) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", b.token))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

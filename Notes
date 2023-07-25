@@ -193,3 +193,13 @@ https://github.com/torvalds/linux.git
 sudo python3 tcptop.py |  grep 5672 | grep hammer
 
 // tcptracer shows opening and closing of TCP connections 
+
+
+
+// tcpdump inside container and get pcap and analyze with wireshark on local
+> tcpdump -i eth0 src port 57036 -w capture.pcap
+tcpdump -i eth0 -w capture.pcap
+> k cp ddosify/hammerdebug-77bc5c64f6-ghvn6:capture.pcap ~/capture.pcap -c hammerdebug
+
+// see already established connections
+// sudo conntrack -L -p tcp | grep 192.168.52.61 | grep 5672
