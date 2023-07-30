@@ -83,12 +83,13 @@ func NewBackendDS(conf config.BackendConfig) *BackendDS {
 			// connection refused, connection reset, connection timeout
 			shouldRetry = true
 			log.Logger.Warn().Msgf("will retry, error: %v", err)
-
-			rb, err := io.ReadAll(resp.Body)
-			if err != nil {
-				log.Logger.Warn().Msgf("error reading response body: %v", err)
+			if resp != nil {
+				rb, err := io.ReadAll(resp.Body)
+				if err != nil {
+					log.Logger.Warn().Msgf("error reading response body: %v", err)
+				}
+				log.Logger.Warn().Msgf("will retry, response body: %s", string(rb))
 			}
-			log.Logger.Warn().Msgf("will retry, response body: %s", string(rb))
 
 		} else {
 			if resp.StatusCode == http.StatusBadRequest ||
