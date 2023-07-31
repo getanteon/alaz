@@ -306,7 +306,7 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 		sockMap.mu.RUnlock() // unlock for reading
 
 		if !ok {
-			skLine = NewSocketLine()
+			skLine = NewSocketLine(d.Pid, d.Fd)
 			sockMap.mu.Lock() // lock for writing
 			sockMap.M[d.Fd] = skLine
 			sockMap.mu.Unlock() // unlock for writing
@@ -394,8 +394,17 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 	sockMap, ok = a.clusterInfo.PidToSocketMap[d.Pid]
 	a.clusterInfo.mu.RUnlock() // unlock for reading
 	if !ok {
-		log.Logger.Info().Uint32("pid", d.Pid).Msg("error finding socket map")
-		return
+		log.Logger.Info().Uint32("pid", d.Pid).Msg("error finding socket map, initializing...")
+		// initialize socket map
+		sockMap = &SocketMap{
+			M:  make(map[uint64]*SocketLine),
+			mu: sync.RWMutex{},
+		}
+		a.clusterInfo.mu.Lock() // lock for writing
+		a.clusterInfo.PidToSocketMap[d.Pid] = sockMap
+		a.clusterInfo.mu.Unlock() // unlock for writing
+
+		// return
 	}
 
 	sockMap.mu.RLock() // lock for reading
@@ -403,8 +412,13 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 	sockMap.mu.RUnlock() // unlock for reading
 
 	if !ok {
-		log.Logger.Info().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("error finding skLine")
-		return
+		log.Logger.Info().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("error finding skLine, go look for it")
+		// start new socket line, find already established connections
+		skLine = NewSocketLine(d.Pid, d.Fd)
+		skLine.GetAlreadyExistingSockets() // find already established connections
+		sockMap.mu.Lock()                  // lock for writing
+		sockMap.M[d.Fd] = skLine
+		sockMap.mu.Unlock() // unlock for writing
 	}
 
 	// In case of late request, we don't have socket info
