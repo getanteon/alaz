@@ -11,15 +11,25 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"time"
 
+	"github.com/alecthomas/kingpin/v2"
+	"github.com/go-kit/log/level"
 	"github.com/hashicorp/go-retryablehttp"
+	"github.com/rs/zerolog"
 
 	"k8s.io/apimachinery/pkg/util/uuid"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/prometheus/common/version"
+	collector "github.com/prometheus/node_exporter/collector"
 )
 
 var MonitoringID string
+var NodeID string
 
 func init() {
 	x := os.Getenv("MONITORING_ID")
@@ -28,9 +38,18 @@ func init() {
 	} else {
 		MonitoringID = x
 	}
+
+	x = os.Getenv("NODE_NAME")
+	if x == "" {
+		NodeID = string(uuid.NewUUID())
+	} else {
+		NodeID = x
+	}
+
 }
 
 var resourceBatchSize int64 = 50
+var innerMetricsPort int = 8182
 
 // BackendDS is a backend datastore
 type BackendDS struct {
@@ -148,6 +167,78 @@ func NewBackendDS(conf config.BackendConfig) *BackendDS {
 	go ds.sendEventsInBatch(ds.epEventChan, epEndpoint, eventsInterval)
 	go ds.sendEventsInBatch(ds.containerEventChan, containerEndpoint, eventsInterval)
 	go ds.sendEventsInBatch(ds.dsEventChan, dsEndpoint, eventsInterval)
+
+	if conf.MetricsExport {
+		go ds.exportNodeMetrics()
+
+		go func() {
+			t := time.NewTicker(time.Duration(conf.MetricsExportInterval) * time.Second)
+			for {
+				select {
+				case <-t.C:
+					// make a request to /inner/metrics
+					// forward the response to /alaz/metrics
+					func() {
+						req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://localhost:%d/inner/metrics", innerMetricsPort), nil)
+						if err != nil {
+							log.Logger.Error().Msgf("error creating inner metrics request: %v", err)
+							return
+						}
+
+						ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+						defer cancel()
+
+						resp, err := ds.c.Do(req.WithContext(ctx))
+
+						if err != nil {
+							log.Logger.Error().Msgf("error sending inner metrics request: %v", err)
+							return
+						}
+
+						if resp.StatusCode != http.StatusOK {
+							log.Logger.Error().Msgf("inner metrics request not success: %d", resp.StatusCode)
+							return
+						}
+
+						body, err := io.ReadAll(resp.Body)
+						if err != nil {
+							log.Logger.Error().Msgf("error reading inner metrics response body: %v", err)
+							return
+						}
+
+						req, err = http.NewRequest(http.MethodPost, fmt.Sprintf("%s:%s/alaz/metrics/?instance=%s&monitoring_id=%s", ds.host, ds.port, NodeID, MonitoringID), bytes.NewReader(body))
+						if err != nil {
+							log.Logger.Error().Msgf("error creating metrics request: %v", err)
+							return
+						}
+
+						ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+						defer cancel()
+
+						resp, err = ds.c.Do(req.WithContext(ctx))
+
+						if err != nil {
+							log.Logger.Error().Msgf("error sending metrics request: %v", err)
+							return
+						}
+
+						if resp.StatusCode != http.StatusOK {
+							log.Logger.Error().Msgf("metrics request not success: %d", resp.StatusCode)
+
+							// log response body
+							rb, err := io.ReadAll(resp.Body)
+							if err != nil {
+								log.Logger.Error().Msgf("error reading metrics response body: %v", err)
+							}
+							log.Logger.Error().Msgf("metrics response body: %s", string(rb))
+
+							return
+						}
+					}()
+				}
+			}
+		}()
+	}
 
 	return ds
 }
@@ -355,4 +446,102 @@ func (b *BackendDS) PersistContainer(c Container, eventType string) error {
 	cEvent := convertContainerToContainerEvent(c, eventType)
 	b.containerEventChan <- &cEvent
 	return nil
+}
+
+func (b *BackendDS) exportNodeMetrics() {
+	kingpin.Version(version.Print("alaz_node_exporter"))
+	kingpin.CommandLine.UsageWriter(os.Stdout)
+	kingpin.HelpFlag.Short('h')
+	kingpin.Parse() // parse container arguments
+
+	metricsPath := "/inner/metrics"
+	h := newHandler(nodeExportLogger{logger: log.Logger})
+	http.Handle(metricsPath, h)
+	http.ListenAndServe(fmt.Sprintf(":%d", innerMetricsPort), nil)
+}
+
+type nodeExporterHandler struct {
+	inner  http.Handler
+	logger nodeExportLogger
+}
+
+func newHandler(logger nodeExportLogger) *nodeExporterHandler {
+	h := &nodeExporterHandler{
+		logger: logger,
+	}
+
+	if innerHandler, err := h.innerHandler(); err != nil {
+		// TODO: remove panic
+		panic(fmt.Sprintf("Couldn't create metrics handler: %s", err))
+	} else {
+		h.inner = innerHandler
+	}
+	return h
+}
+
+type nodeExportLogger struct {
+	logger zerolog.Logger
+}
+
+func (l nodeExportLogger) Log(keyvals ...interface{}) error {
+	l.logger.Info().Msg(fmt.Sprint(keyvals...))
+	return nil
+}
+
+func (h *nodeExporterHandler) innerHandler(filters ...string) (http.Handler, error) {
+	nc, err := collector.NewNodeCollector(h.logger, filters...)
+	if err != nil {
+		return nil, fmt.Errorf("couldn't create collector: %s", err)
+	}
+
+	// Only log the creation of an unfiltered handler, which should happen
+	// only once upon startup.
+	if len(filters) == 0 {
+		level.Info(h.logger).Log("msg", "Enabled collectors")
+		collectors := []string{}
+		for n := range nc.Collectors {
+			collectors = append(collectors, n)
+		}
+		sort.Strings(collectors)
+		for _, c := range collectors {
+			level.Info(h.logger).Log("collector", c)
+		}
+	}
+
+	r := prometheus.NewRegistry()
+	r.MustRegister(version.NewCollector("alaz_node_exporter"))
+	if err := r.Register(nc); err != nil {
+		return nil, fmt.Errorf("couldn't register node collector: %s", err)
+	}
+
+	handler := promhttp.HandlerFor(
+		prometheus.Gatherers{r},
+		promhttp.HandlerOpts{},
+		// promhttp.HandlerOpts{
+		// 	ErrorLog:            stdlog.New(log.NewStdlibAdapter(level.Error(h.logger)), "", 0),
+		// 	ErrorHandling:       promhttp.ContinueOnError,
+		// 	MaxRequestsInFlight: h.maxRequests,
+		// 	Registry:            h.exporterMetricsRegistry,
+		// },
+	)
+
+	return handler, nil
+}
+
+func (h *nodeExporterHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	filters := r.URL.Query()["collect[]"]
+
+	if len(filters) == 0 {
+		// No filters, use the prepared unfiltered handler.
+		h.inner.ServeHTTP(w, r)
+		return
+	}
+	// To serve filtered metrics, we create a filtering handler on the fly.
+	filteredHandler, err := h.innerHandler(filters...)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(fmt.Sprintf("Couldn't create filtered metrics handler: %s", err)))
+		return
+	}
+	filteredHandler.ServeHTTP(w, r)
 }

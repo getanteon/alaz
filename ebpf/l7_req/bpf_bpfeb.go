@@ -89,7 +89,6 @@ type bpfSpecs struct {
 type bpfProgramSpecs struct {
 	SysEnterRead     *ebpf.ProgramSpec `ebpf:"sys_enter_read"`
 	SysEnterRecvfrom *ebpf.ProgramSpec `ebpf:"sys_enter_recvfrom"`
-	SysEnterSendmsg  *ebpf.ProgramSpec `ebpf:"sys_enter_sendmsg"`
 	SysEnterSendto   *ebpf.ProgramSpec `ebpf:"sys_enter_sendto"`
 	SysEnterWrite    *ebpf.ProgramSpec `ebpf:"sys_enter_write"`
 	SysExitRead      *ebpf.ProgramSpec `ebpf:"sys_exit_read"`
@@ -149,7 +148,6 @@ func (m *bpfMaps) Close() error {
 type bpfPrograms struct {
 	SysEnterRead     *ebpf.Program `ebpf:"sys_enter_read"`
 	SysEnterRecvfrom *ebpf.Program `ebpf:"sys_enter_recvfrom"`
-	SysEnterSendmsg  *ebpf.Program `ebpf:"sys_enter_sendmsg"`
 	SysEnterSendto   *ebpf.Program `ebpf:"sys_enter_sendto"`
 	SysEnterWrite    *ebpf.Program `ebpf:"sys_enter_write"`
 	SysExitRead      *ebpf.Program `ebpf:"sys_exit_read"`
@@ -160,7 +158,6 @@ func (p *bpfPrograms) Close() error {
 	return _BpfClose(
 		p.SysEnterRead,
 		p.SysEnterRecvfrom,
-		p.SysEnterSendmsg,
 		p.SysEnterSendto,
 		p.SysEnterWrite,
 		p.SysExitRead,

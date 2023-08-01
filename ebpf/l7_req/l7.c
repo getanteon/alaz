@@ -396,41 +396,41 @@ int sys_enter_sendto(struct trace_event_raw_sys_enter_sendto* ctx) {
    return process_enter_of_syscalls_write_sendto(ctx, ctx->fd, ctx->buff, ctx->len);
 }
 
-SEC("tracepoint/syscalls/sys_enter_sendmsg")
-int sys_enter_sendmsg(struct trace_event_raw_sys_enter_sendmsg* ctx) {
-    struct user_msghdr *msg;
-    if (!ctx->msg) {
-        return 0;
-    }else{
-        if (bpf_core_read(&msg, sizeof(msg), ctx->msg) < 0)
-        {
-            return 0;
-        } 
+// SEC("tracepoint/syscalls/sys_enter_sendmsg")
+// int sys_enter_sendmsg(struct trace_event_raw_sys_enter_sendmsg* ctx) {
+//     struct user_msghdr *msg;
+//     if (!ctx->msg) {
+//         return 0;
+//     }else{
+//         if (bpf_core_read(&msg, sizeof(msg), ctx->msg) < 0)
+//         {
+//             return 0;
+//         } 
 
-        struct iovec *msg_iov = BPF_CORE_READ(msg,msg_iov);
-        // __u64 iov_size = BPF_CORE_READ(msg,msg_iovlen);
+//         struct iovec *msg_iov = BPF_CORE_READ(msg,msg_iov);
+//         // __u64 iov_size = BPF_CORE_READ(msg,msg_iovlen);
 
-        // int msg_namelen = BPF_CORE_READ(msg,msg_namelen);
+//         // int msg_namelen = BPF_CORE_READ(msg,msg_namelen);
         
-        // if (!msg_name) {
-        //     return 0;
-        // }
+//         // if (!msg_name) {
+//         //     return 0;
+//         // }
 
-        // TODO: investigate why this is not working
+//         // TODO: investigate why this is not working
 
-        char* address = BPF_CORE_READ(msg_iov,iov_base);
-        __u64 iov_len = BPF_CORE_READ(msg_iov,iov_len);
+//         char* address = BPF_CORE_READ(msg_iov,iov_base);
+//         __u64 iov_len = BPF_CORE_READ(msg_iov,iov_len);
 
-        if (!msg_iov) {
-            return 0;
-        }
+//         if (!msg_iov) {
+//             return 0;
+//         }
 
-        char msgxx[] = "sys_enter_sendmsg - %ld";
-        bpf_trace_printk(msgxx, sizeof(msgxx), msg->msg_namelen);
+//         char msgxx[] = "sys_enter_sendmsg - %ld";
+//         bpf_trace_printk(msgxx, sizeof(msgxx), msg->msg_namelen);
 
-        return process_enter_of_syscalls_write_sendto(ctx, ctx->fd, address, iov_len);
-    }
-}
+//         return process_enter_of_syscalls_write_sendto(ctx, ctx->fd, address, iov_len);
+//     }
+// }
 
 // TODO: check if write was successful (return value), sys_exit_write ?
 

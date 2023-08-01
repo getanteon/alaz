@@ -120,9 +120,12 @@ func NewAggregator(k8sChan <-chan interface{}, crChan <-chan interface{}, ebpfCh
 		})
 	}
 
+	metricsExport, _ := strconv.ParseBool(os.Getenv("METRICS_BACKEND"))
 	dsBackend := datastore.NewBackendDS(config.BackendConfig{
-		Host: os.Getenv("BACKEND_HOST"),
-		Port: os.Getenv("BACKEND_PORT"),
+		Host:                  os.Getenv("BACKEND_HOST"),
+		Port:                  os.Getenv("BACKEND_PORT"),
+		MetricsExport:         metricsExport,
+		MetricsExportInterval: 5,
 	})
 
 	var ds datastore.DataStore

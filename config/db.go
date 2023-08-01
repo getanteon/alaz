@@ -9,6 +9,8 @@ type PostgresConfig struct {
 }
 
 type BackendConfig struct {
-	Host string
-	Port string
+	Host                  string
+	Port                  string
+	MetricsExport         bool
+	MetricsExportInterval int // in seconds
 }

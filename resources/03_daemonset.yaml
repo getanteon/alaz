@@ -16,7 +16,14 @@ spec:
       serviceAccountName: alaz-serviceaccount
       containers:
       - name: alaz-pod
-        image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:v4.2.7
+        args:
+        - --path.sysfs=/host/sys
+        - --path.rootfs=/host/root
+        - --no-collector.wifi
+        - --no-collector.hwmon
+        - --collector.filesystem.ignored-mount-points=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/pods/.+)($|/)
+        - --collector.netclass.ignored-devices=^(veth.*)$
+        image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:v4.3.7
         env:
           - name: K8S_COLLECTOR_ENABLED
             value: "true"
@@ -44,12 +51,18 @@ spec:
             value: "true"
           - name: DS_BACKEND
             value: "false"
+          - name : METRICS_BACKEND
+            value: "true"
           - name: BACKEND_HOST
             value: https://staging-backend-cf.ddosify.com
           - name: BACKEND_PORT
             value: "443"
           - name: MONITORING_ID
             value: b8fb4b18-7ccd-4ba2-afa3-ba19402c1aec
+          - name: NODE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
         ports:
           - containerPort: 8181
         securityContext:
@@ -70,6 +83,15 @@ spec:
           - mountPath: /var/run/containerd/containerd.sock
             name: containerd-sock
             readOnly: true
+          # for node-exporter
+          - mountPath: /host/sys
+            mountPropagation: HostToContainer
+            name: sys
+            readOnly: true
+          - mountPath: /host/root
+            mountPropagation: HostToContainer
+            name: root
+            readOnly: true
       volumes:
         - name: debugfs
           hostPath:
@@ -80,3 +102,11 @@ spec:
         - name: containerd-sock
           hostPath:
             path: /var/run/containerd/containerd.sock
+        # for node-exporter
+        - name: sys
+          hostPath:
+            path: /sys
+        - name: root
+          hostPath:
+            path: /sys
+        
