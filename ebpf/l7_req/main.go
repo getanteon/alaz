@@ -227,12 +227,12 @@ func Deploy(ch chan interface{}) {
 	fmt.Println("sys_exit_recvfrom linked")
 	defer l5.Close()
 
-	l6, err := link.Tracepoint("syscalls", "sys_enter_sendmsg", objs.bpfPrograms.SysEnterSendmsg, nil)
-	if err != nil {
-		log.Logger.Fatal().Err(err).Msg("link sys_enter_sendto tracepoint")
-	}
-	fmt.Println("sys_enter_sendmsg linked")
-	defer l6.Close()
+	// l6, err := link.Tracepoint("syscalls", "sys_enter_sendmsg", objs.bpfPrograms.SysEnterSendmsg, nil)
+	// if err != nil {
+	// 	log.Logger.Fatal().Err(err).Msg("link sys_enter_sendto tracepoint")
+	// }
+	// fmt.Println("sys_enter_sendmsg linked")
+	// defer l6.Close()
 
 	// initialize perf event readers
 	l7Events, err := perf.NewReader(objs.L7Events, 64*os.Getpagesize())
