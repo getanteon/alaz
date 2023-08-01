@@ -349,7 +349,7 @@ func TestSocketLine(t *testing.T) {
 
 func TestXxx(t *testing.T) {
 	assumedInterval := uint64(2 * time.Second) // TODO: make configurable
-	nl := NewSocketLine()
+	nl := NewSocketLine(1, 0)
 
 	wg := sync.WaitGroup{}
 	wg.Add(1)
@@ -436,5 +436,65 @@ func TestXxx(t *testing.T) {
 	}
 
 	fmt.Println(nl.Values)
+
+}
+
+func TestXxx2(t *testing.T) {
+	nl := NewSocketLine(1, 0)
+
+	s1 := &SockInfo{
+		Pid:   0,
+		Fd:    0,
+		Saddr: "xx",
+		Sport: 0,
+		Daddr: "",
+		Dport: 0,
+	}
+	s2 := &SockInfo{
+		Pid:   0,
+		Fd:    0,
+		Saddr: "yy",
+		Sport: 0,
+		Daddr: "",
+		Dport: 0,
+	}
+	nl.AddValue(0, s2)
+	nl.AddValue(247453008321477, s1)
+
+	s, _ := nl.GetValue(247453008321499) // should return 50
+
+	if s.Saddr != "xx" {
+		t.Fatalf("unexpected s.Saddr: %v", s.Saddr)
+		return
+	}
+	// nl.GetValue(33) // should return 50
+
+}
+
+func TestAlreadyEstablishCanBeFound(t *testing.T) {
+	nl := NewSocketLine(1, 0)
+
+	s1 := &SockInfo{
+		Pid:   0,
+		Fd:    0,
+		Saddr: "yy",
+		Sport: 0,
+		Daddr: "",
+		Dport: 0,
+	}
+	nl.AddValue(0, s1)
+
+	s, err := nl.GetValue(0) // should return 50
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+		return
+	}
+
+	if s.Saddr != "yy" {
+		t.Fatalf("unexpected s.Saddr: %v", s.Saddr)
+		return
+	}
+	// nl.GetValue(33) // should return 50
 
 }

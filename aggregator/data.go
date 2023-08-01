@@ -383,12 +383,6 @@ func parseHttpPayload(request string) (method string, path string, httpVersion s
 }
 
 func (a *Aggregator) processL7(d l7_req.L7Event) {
-	// TODO: detect early establisted connections
-	// find socket info
-	// change getValue time to request start time (from ebpf)
-
-	// When request comes before TCP_ESTABLISHED event, we don't have socket info
-
 	var sockMap *SocketMap
 	var skLine *SocketLine
 	var ok bool
@@ -406,8 +400,6 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 		a.clusterInfo.mu.Lock() // lock for writing
 		a.clusterInfo.PidToSocketMap[d.Pid] = sockMap
 		a.clusterInfo.mu.Unlock() // unlock for writing
-
-		// return
 	}
 
 	sockMap.mu.RLock() // lock for reading
@@ -542,6 +534,17 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 	// Check PodIPToPodUid ?? maybe it's a pod
 
 	reqDto.Completed = !d.Failed
+
+	// In AMQP-DELIVER event, we are capturing from read syscall,
+	// exchange sockets
+	// In Alaz context, From is always the one that makes the write
+	// and To is the one that makes the read
+	if d.Protocol == l7_req.L7_PROTOCOL_AMQP && d.Method == "DELIVER" {
+		reqDto.FromIP, reqDto.ToIP = reqDto.ToIP, reqDto.FromIP
+		reqDto.FromPort, reqDto.ToPort = reqDto.ToPort, reqDto.FromPort
+		reqDto.FromUID, reqDto.ToUID = reqDto.ToUID, reqDto.FromUID
+		reqDto.FromType, reqDto.ToType = reqDto.ToType, reqDto.FromType
+	}
 
 	go func() {
 		err := a.ds.PersistRequest(reqDto)

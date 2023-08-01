@@ -277,7 +277,7 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
         e->protocol = PROTOCOL_AMQP;
         e->method = METHOD_DELIVER;
         e->duration = 0; // TODO: calculate read time maybe ?
-        e->write_time_ns = 0;
+        e->write_time_ns = bpf_ktime_get_ns(); // TODO: it is not write time, but end of read time
         e->payload_size = 0;
         e->payload_read_complete = 0;
         e->failed = 0; // success
