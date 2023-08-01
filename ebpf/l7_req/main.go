@@ -26,9 +26,9 @@ const (
 
 // for user space
 const (
-	L7_PROTOCOL_HTTP    = "L7_PROTOCOL_HTTP"
-	L7_PROTOCOL_AMQP    = "L7_PROTOCOL_AMQP"
-	L7_PROTOCOL_UNKNOWN = "L7_PROTOCOL_UNKNOWN"
+	L7_PROTOCOL_HTTP    = "HTTP"
+	L7_PROTOCOL_AMQP    = "AMQP"
+	L7_PROTOCOL_UNKNOWN = "UNKNOWN"
 )
 
 // Custom type for the enumeration
@@ -66,7 +66,7 @@ const (
 const (
 	BPF_AMQP_METHOD_UNKNOWN = iota
 	BPF_AMQP_METHOD_PUBLISH
-	BPF_AMQP_METHOD_CONSUME
+	BPF_AMQP_METHOD_DELIVER
 )
 
 // Custom type for the enumeration
@@ -77,8 +77,8 @@ func (e RabbitMQMethodConversion) String() string {
 	switch e {
 	case BPF_AMQP_METHOD_PUBLISH:
 		return PUBLISH
-	case BPF_AMQP_METHOD_CONSUME:
-		return CONSUME
+	case BPF_AMQP_METHOD_DELIVER:
+		return DELIVER
 	default:
 		return "Unknown"
 	}
@@ -100,7 +100,7 @@ const (
 // for rabbitmq, user space
 const (
 	PUBLISH = "PUBLISH"
-	CONSUME = "CONSUME"
+	DELIVER = "DELIVER"
 )
 
 // Custom type for the enumeration
@@ -226,6 +226,13 @@ func Deploy(ch chan interface{}) {
 	}
 	fmt.Println("sys_exit_recvfrom linked")
 	defer l5.Close()
+
+	l6, err := link.Tracepoint("syscalls", "sys_enter_sendmsg", objs.bpfPrograms.SysEnterSendmsg, nil)
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("link sys_enter_sendto tracepoint")
+	}
+	fmt.Println("sys_enter_sendmsg linked")
+	defer l6.Close()
 
 	// initialize perf event readers
 	l7Events, err := perf.NewReader(objs.L7Events, 64*os.Getpagesize())

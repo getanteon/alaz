@@ -66,3 +66,30 @@ struct trace_event_raw_sys_enter_sendto {
     __u64 addr_len;
 };
 
+struct iovec
+{
+    void *iov_base;	/* Pointer to data.  */
+    __u64 iov_len;	/* Length of data.  */
+};
+
+
+struct user_msghdr {
+	void *msg_name;
+	int msg_namelen;
+	struct iovec *msg_iov;
+	__kernel_size_t msg_iovlen;
+	void *msg_control;
+	__kernel_size_t msg_controllen;
+	unsigned int msg_flags;
+};
+
+struct trace_event_raw_sys_enter_sendmsg {
+	struct trace_entry ent;
+    __s32 __syscall_nr;
+    __u64 fd;
+    struct user_msghdr * msg;
+    __u64 flags;
+};
+
+
+

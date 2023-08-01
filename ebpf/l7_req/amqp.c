@@ -68,7 +68,7 @@
 
 // Basic class methods
 #define AMQP_METHOD_PUBLISH 40
-#define AMQP_METHOD_CONSUME 60 // Deliver
+#define AMQP_METHOD_DELIVER 60 // Deliver
 #define AMQP_METHOD_ACK 80
 #define AMQP_METHOD_REJECT 90
 
@@ -116,11 +116,11 @@ int amqp_method_is(char *buf, __u64 buf_size, __u16 expected_method) {
 }
 
 static __always_inline
-int is_rabbitmq_produce(char *buf, __u64 buf_size) {
+int is_rabbitmq_publish(char *buf, __u64 buf_size) {
     return amqp_method_is(buf, buf_size, AMQP_METHOD_PUBLISH);
 }
 
 static __always_inline
 int is_rabbitmq_consume(char *buf, __u64 buf_size) {
-    return amqp_method_is(buf, buf_size, AMQP_METHOD_CONSUME);
+    return amqp_method_is(buf, buf_size, AMQP_METHOD_DELIVER);
 }

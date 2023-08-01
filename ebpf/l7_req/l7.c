@@ -21,7 +21,7 @@
 
 // for rabbitmq methods
 #define METHOD_PUBLISH           1
-#define METHOD_CONSUME           2
+#define METHOD_DELIVER           2
 
 
 char __license[] SEC("license") = "Dual MIT/GPL";
@@ -104,7 +104,7 @@ struct {
 
 // Processing enter of write and sendto syscalls
 static __always_inline
-int process_enter_of_syscalls_write_sendto(__u64 fd, char* buf, __u64 count){
+int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, char* buf, __u64 count){
     __u64 id = bpf_get_current_pid_tgid();
 
     int zero = 0;
@@ -149,7 +149,7 @@ int process_enter_of_syscalls_write_sendto(__u64 fd, char* buf, __u64 count){
         if (method != -1){
             req->protocol = PROTOCOL_HTTP;
             req-> method = method;
-        }else if (is_rabbitmq_produce(buf,count)){
+        }else if (is_rabbitmq_publish(buf,count)){
             req->protocol = PROTOCOL_AMQP;
             req->method = METHOD_PUBLISH;
         }else{
@@ -275,7 +275,7 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
 
     if (is_rabbitmq_consume(read_info->buf, read_info->size)) {
         e->protocol = PROTOCOL_AMQP;
-        e->method = METHOD_CONSUME;
+        e->method = METHOD_DELIVER;
         e->duration = 0; // TODO: calculate read time maybe ?
         e->write_time_ns = 0;
         e->payload_size = 0;
@@ -388,13 +388,51 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
 
 SEC("tracepoint/syscalls/sys_enter_write")
 int sys_enter_write(struct trace_event_raw_sys_enter_write* ctx) {
-   return process_enter_of_syscalls_write_sendto(ctx->fd, ctx->buf, ctx->count);
+   return process_enter_of_syscalls_write_sendto(ctx, ctx->fd, ctx->buf, ctx->count);
 }
 
 SEC("tracepoint/syscalls/sys_enter_sendto")
 int sys_enter_sendto(struct trace_event_raw_sys_enter_sendto* ctx) {
-   return process_enter_of_syscalls_write_sendto(ctx->fd, ctx->buff, ctx->len);
+   return process_enter_of_syscalls_write_sendto(ctx, ctx->fd, ctx->buff, ctx->len);
 }
+
+SEC("tracepoint/syscalls/sys_enter_sendmsg")
+int sys_enter_sendmsg(struct trace_event_raw_sys_enter_sendmsg* ctx) {
+    struct user_msghdr *msg;
+    if (!ctx->msg) {
+        return 0;
+    }else{
+        if (bpf_core_read(&msg, sizeof(msg), ctx->msg) < 0)
+        {
+            return 0;
+        } 
+
+        struct iovec *msg_iov = BPF_CORE_READ(msg,msg_iov);
+        // __u64 iov_size = BPF_CORE_READ(msg,msg_iovlen);
+
+        // int msg_namelen = BPF_CORE_READ(msg,msg_namelen);
+        
+        // if (!msg_name) {
+        //     return 0;
+        // }
+
+        // TODO: investigate why this is not working
+
+        char* address = BPF_CORE_READ(msg_iov,iov_base);
+        __u64 iov_len = BPF_CORE_READ(msg_iov,iov_len);
+
+        if (!msg_iov) {
+            return 0;
+        }
+
+        char msgxx[] = "sys_enter_sendmsg - %ld";
+        bpf_trace_printk(msgxx, sizeof(msgxx), msg->msg_namelen);
+
+        return process_enter_of_syscalls_write_sendto(ctx, ctx->fd, address, iov_len);
+    }
+}
+
+// TODO: check if write was successful (return value), sys_exit_write ?
 
 SEC("tracepoint/syscalls/sys_enter_read")
 int sys_enter_read(struct trace_event_raw_sys_enter_read* ctx) {
