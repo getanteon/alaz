@@ -37,7 +37,8 @@ type bpfL7Request struct {
 	_                   [2]byte
 	PayloadSize         uint32
 	PayloadReadComplete uint8
-	_                   [7]byte
+	RequestType         uint8
+	_                   [6]byte
 }
 
 type bpfSocketKey struct {

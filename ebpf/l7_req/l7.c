@@ -11,10 +11,12 @@
 
 #include "http.c"
 #include "amqp.c"
+#include "postgres.c"
 
 #define PROTOCOL_UNKNOWN    0
 #define PROTOCOL_HTTP	    1
 #define PROTOCOL_AMQP	2
+#define PROTOCOL_POSTGRES	3
 
 #define MAX_PAYLOAD_SIZE 512
 #define PAYLOAD_PREFIX_SIZE 16
@@ -49,6 +51,7 @@ struct l7_request {
     unsigned char payload[MAX_PAYLOAD_SIZE];
     __u32 payload_size;
     __u8 payload_read_complete;
+    __u8 request_type;
 };
 
 struct socket_key {
@@ -93,6 +96,7 @@ struct read_args {
     __u64 fd;
     char* buf;
     __u64 size;
+    __u64 read_start_ns;  
 };
 
 struct {
@@ -145,6 +149,7 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, char* buf, __u64
         // This can cause mismatched events. (udp request with tcp connection)
         // Userspace only knows about tcp connections, so we should only send l7_events that are related to a tcp connection. 
 
+
         int method = parse_http_method(buf_prefix);
         if (method != -1){
             req->protocol = PROTOCOL_HTTP;
@@ -152,6 +157,23 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, char* buf, __u64
         }else if (is_rabbitmq_publish(buf,count)){
             req->protocol = PROTOCOL_AMQP;
             req->method = METHOD_PUBLISH;
+            // TODO: send in exit of write/sendto, write duration
+        }else if (is_postgres_query(buf, count, &req->request_type)){
+            if (req->request_type == POSTGRES_FRAME_CLOSE){
+                struct l7_event *e = bpf_map_lookup_elem(&l7_event_heap, &zero);
+                if (!e) {
+                    return 0;
+                }
+                e->protocol = PROTOCOL_POSTGRES;
+                e->fd = k.fd;
+                e->pid = k.pid;
+                e->method = METHOD_STATEMENT_CLOSE;
+                e->status = 200;
+                bpf_probe_read(e->payload, MAX_PAYLOAD_SIZE, (void *)buf);
+                bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
+                return 0;
+            }
+            req->protocol = PROTOCOL_POSTGRES;
         }else{
             req->protocol = PROTOCOL_UNKNOWN;
             req->method = METHOD_UNKNOWN;
@@ -214,6 +236,7 @@ int process_enter_of_syscalls_read_recvfrom(__u64 fd, char* buf, __u64 size) {
     args.fd = fd;
     args.buf = buf;
     args.size = size;
+    args.read_start_ns = bpf_ktime_get_ns();
 
     long res = bpf_map_update_elem(&active_reads, &id, &args, BPF_ANY);
     if(res < 0)
@@ -276,8 +299,8 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
     if (is_rabbitmq_consume(read_info->buf, read_info->size)) {
         e->protocol = PROTOCOL_AMQP;
         e->method = METHOD_DELIVER;
-        e->duration = 0; // TODO: calculate read time maybe ?
-        e->write_time_ns = bpf_ktime_get_ns(); // TODO: it is not write time, but end of read time
+        e->duration = bpf_ktime_get_ns()- read_info->read_start_ns;
+        e->write_time_ns = read_info->read_start_ns; // TODO: it is not write time, but start of read time
         e->payload_size = 0;
         e->payload_read_complete = 0;
         e->failed = 0; // success
@@ -335,6 +358,11 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
             int status = parse_http_status(buf_prefix);
             if (status != -1){
                 e->status = status;
+            }
+        }else if (e->protocol == PROTOCOL_POSTGRES){
+            e->status = parse_postgres_status(read_info->buf, ret);
+            if (active_req->request_type == POSTGRES_FRAME_PARSE) {
+                e->method = METHOD_STATEMENT_PREPARE;
             }
         }
     }else{

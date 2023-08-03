@@ -22,13 +22,15 @@ const (
 	BPF_L7_PROTOCOL_UNKNOWN = iota
 	BPF_L7_PROTOCOL_HTTP
 	BPF_L7_PROTOCOL_AMQP
+	BPF_L7_PROTOCOL_POSTGRES
 )
 
 // for user space
 const (
-	L7_PROTOCOL_HTTP    = "HTTP"
-	L7_PROTOCOL_AMQP    = "AMQP"
-	L7_PROTOCOL_UNKNOWN = "UNKNOWN"
+	L7_PROTOCOL_HTTP     = "HTTP"
+	L7_PROTOCOL_AMQP     = "AMQP"
+	L7_PROTOCOL_POSTGRES = "POSTGRES"
+	L7_PROTOCOL_UNKNOWN  = "UNKNOWN"
 )
 
 // Custom type for the enumeration
@@ -41,6 +43,8 @@ func (e L7ProtocolConversion) String() string {
 		return L7_PROTOCOL_HTTP
 	case BPF_L7_PROTOCOL_AMQP:
 		return L7_PROTOCOL_AMQP
+	case BPF_L7_PROTOCOL_POSTGRES:
+		return L7_PROTOCOL_POSTGRES
 	case BPF_L7_PROTOCOL_UNKNOWN:
 		return L7_PROTOCOL_UNKNOWN
 	default:
@@ -69,20 +73,27 @@ const (
 	BPF_AMQP_METHOD_DELIVER
 )
 
-// Custom type for the enumeration
-type RabbitMQMethodConversion uint32
+// match with values in l7_req.c, order is important
+const (
+	BPF_POSTGRES_METHOD_UNKNOWN = iota
+	BPF_POSTGRES_METHOD_CLOSE
+	BPF_POSTGRES_METHOD_PREPARE
 
-// String representation of the enumeration values
-func (e RabbitMQMethodConversion) String() string {
-	switch e {
-	case BPF_AMQP_METHOD_PUBLISH:
-		return PUBLISH
-	case BPF_AMQP_METHOD_DELIVER:
-		return DELIVER
-	default:
-		return "Unknown"
-	}
-}
+	// BPF_POSTGRES_METHOD_QUERY
+	// BPF_POSTGRES_METHOD_EXECUTE
+	// BPF_POSTGRES_METHOD_PARSE
+	// BPF_POSTGRES_METHOD_BIND
+	// BPF_POSTGRES_METHOD_DESCRIBE
+	// BPF_POSTGRES_METHOD_SYNC
+	// BPF_POSTGRES_METHOD_FLUSH
+	// BPF_POSTGRES_METHOD_CONSUME
+	// BPF_POSTGRES_METHOD_PARSE_COMPLETE
+	// BPF_POSTGRES_METHOD_BIND_COMPLETE
+	// BPF_POSTGRES_METHOD_CLOSE_COMPLETE
+	// BPF_POSTGRES_METHOD_SYNC_COMPLETE
+	// BPF_POSTGRES_METHOD_READY_FOR_QUERY
+	//...
+)
 
 // for http, user space
 const (
@@ -101,6 +112,12 @@ const (
 const (
 	PUBLISH = "PUBLISH"
 	DELIVER = "DELIVER"
+)
+
+// for postgres, user space
+const (
+	CLOSE   = "CLOSE"
+	PREPARE = "PREPARE"
 )
 
 // Custom type for the enumeration
@@ -127,6 +144,36 @@ func (e HTTPMethodConversion) String() string {
 		return OPTIONS
 	case BPF_METHOD_TRACE:
 		return TRACE
+	default:
+		return "Unknown"
+	}
+}
+
+// Custom type for the enumeration
+type RabbitMQMethodConversion uint32
+
+// String representation of the enumeration values
+func (e RabbitMQMethodConversion) String() string {
+	switch e {
+	case BPF_AMQP_METHOD_PUBLISH:
+		return PUBLISH
+	case BPF_AMQP_METHOD_DELIVER:
+		return DELIVER
+	default:
+		return "Unknown"
+	}
+}
+
+// Custom type for the enumeration
+type PostgresMethodConversion uint32
+
+// String representation of the enumeration values
+func (e PostgresMethodConversion) String() string {
+	switch e {
+	case BPF_POSTGRES_METHOD_CLOSE:
+		return CLOSE
+	case BPF_POSTGRES_METHOD_PREPARE:
+		return PREPARE
 	default:
 		return "Unknown"
 	}
@@ -271,16 +318,17 @@ func Deploy(ch chan interface{}) {
 					method = HTTPMethodConversion(l7Event.Method).String()
 				case L7_PROTOCOL_AMQP:
 					method = RabbitMQMethodConversion(l7Event.Method).String()
+				case L7_PROTOCOL_POSTGRES:
+					method = PostgresMethodConversion(l7Event.Method).String()
 				default:
 					method = "Unknown"
 				}
 
-				// TODO: remove this
-				if protocol == L7_PROTOCOL_AMQP {
-					log.Logger.Info().Str("method", method).
-						Uint32("pid", l7Event.Pid).
+				if protocol == L7_PROTOCOL_POSTGRES {
+					log.Logger.Debug().Str("protocol", protocol).Str("method", method).
 						Str("payload", string(l7Event.Payload[:l7Event.PayloadSize])).
-						Msg("amqp method")
+						Uint32("pid", l7Event.Pid).
+						Msg("postgres event")
 				}
 
 				ch <- L7Event{
