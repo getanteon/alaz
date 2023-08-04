@@ -546,10 +546,12 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 		reqDto.FromType, reqDto.ToType = reqDto.ToType, reqDto.FromType
 	}
 
-	err = a.ds.PersistRequest(reqDto)
-	if err != nil {
-		log.Logger.Error().Err(err).Msg("error persisting request")
-	}
+	go func() {
+		err := a.ds.PersistRequest(reqDto)
+		if err != nil {
+			log.Logger.Error().Err(err).Msg("error persisting request")
+		}
+	}()
 }
 
 // reverse dns lookup
