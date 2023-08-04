@@ -268,7 +268,10 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
         bpf_trace_printk(msg, sizeof(msg), ret);
 
         // clean up
+        
+        // TODO: is it success ?????
         bpf_map_delete_elem(&active_reads, &id);
+        
         bpf_map_delete_elem(&active_l7_requests, &k);
 
         return 0;
@@ -280,6 +283,8 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
     if (!read_info) {
         return 0;
     }
+
+
     
     struct socket_key k = {};
     k.pid = id >> 32;
@@ -290,6 +295,7 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
     int zero = 0;
     struct l7_event *e = bpf_map_lookup_elem(&l7_event_heap, &zero);
     if (!e) {
+        bpf_map_delete_elem(&active_reads, &id);
         return 0;
     }
 
@@ -313,12 +319,14 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
             e->payload[i] = 0;
         }
         
+        bpf_map_delete_elem(&active_reads, &id);
         bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
         return 0;
     }
 
     struct l7_request *active_req = bpf_map_lookup_elem(&active_l7_requests, &k);
     if (!active_req) {
+        bpf_map_delete_elem(&active_reads, &id);
         return 0;
     }
 
@@ -352,6 +360,7 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
             if (r < 0) {
                 char msg[] = "could not read into buf_prefix - %ld";
                 bpf_trace_printk(msg, sizeof(msg), r);
+                bpf_map_delete_elem(&active_reads, &id);
                 return 0;
             }
 
@@ -368,6 +377,7 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
     }else{
         char msgCtx[] = "read buffer is null or too small";
         bpf_trace_printk(msgCtx, sizeof(msgCtx));
+        bpf_map_delete_elem(&active_reads, &id);
         return 0;
     }
        
@@ -481,6 +491,4 @@ SEC("tracepoint/syscalls/sys_exit_recvfrom")
 int sys_exit_recvfrom(struct trace_event_raw_sys_exit_recvfrom* ctx) {
     return process_exit_of_syscalls_read_recvfrom(ctx, ctx->ret);
 }
-
-
 
