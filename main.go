@@ -44,6 +44,14 @@ func main() {
 	a.AdvertisePidSockMap()
 
 	if os.Getenv("TRACE_ENABLED") == "true" {
+		directoryPath := "/mnt/data/"
+
+		// Create the directory if it doesn't exist
+		if err := os.MkdirAll(directoryPath, os.ModePerm); err != nil {
+			log.Logger.Fatal().Msgf("failed to create directory: %v", err)
+			return
+		}
+
 		traceFile, err := os.Create("/mnt/data/trace.out")
 		if err != nil {
 			log.Logger.Fatal().Msgf("failed to create trace output file: %v", err)
