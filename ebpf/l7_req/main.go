@@ -274,12 +274,19 @@ func Deploy(ch chan interface{}) {
 	fmt.Println("sys_exit_recvfrom linked")
 	defer l5.Close()
 
-	// l6, err := link.Tracepoint("syscalls", "sys_enter_sendmsg", objs.bpfPrograms.SysEnterSendmsg, nil)
-	// if err != nil {
-	// 	log.Logger.Fatal().Err(err).Msg("link sys_enter_sendto tracepoint")
-	// }
-	// fmt.Println("sys_enter_sendmsg linked")
-	// defer l6.Close()
+	l6, err := link.Tracepoint("syscalls", "sys_exit_sendto", objs.bpfPrograms.SysExitSendto, nil)
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("link sys_exit_sendto tracepoint")
+	}
+	fmt.Println("sys_exit_sendto linked")
+	defer l6.Close()
+
+	l7, err := link.Tracepoint("syscalls", "sys_exit_write", objs.bpfPrograms.SysExitWrite, nil)
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("link sys_exit_write tracepoint")
+	}
+	fmt.Println("sys_exit_write linked")
+	defer l7.Close()
 
 	// initialize perf event readers
 	l7Events, err := perf.NewReader(objs.L7Events, 64*os.Getpagesize())
@@ -324,11 +331,18 @@ func Deploy(ch chan interface{}) {
 					method = "Unknown"
 				}
 
-				if protocol == L7_PROTOCOL_POSTGRES {
+				// if protocol == L7_PROTOCOL_POSTGRES {
+				// 	log.Logger.Debug().Str("protocol", protocol).Str("method", method).
+				// 		Str("payload", string(l7Event.Payload[:l7Event.PayloadSize])).
+				// 		Uint32("pid", l7Event.Pid).
+				// 		Msg("postgres event")
+				// }
+
+				if l7Event.Pid == 2625 {
 					log.Logger.Debug().Str("protocol", protocol).Str("method", method).
 						Str("payload", string(l7Event.Payload[:l7Event.PayloadSize])).
 						Uint32("pid", l7Event.Pid).
-						Msg("postgres event")
+						Msg("from hammer")
 				}
 
 				ch <- L7Event{

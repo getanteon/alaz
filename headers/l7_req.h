@@ -44,7 +44,17 @@ struct trace_event_raw_sys_exit_recvfrom {
     __s64 ret;
 };
 
+struct trace_event_raw_sys_exit_write {
+    __u64 unused;
+    __s32 id;
+    __s64 ret;
+};
 
+struct trace_event_raw_sys_exit_sendto {
+    __u64 unused;
+    __s32 id;
+    __s64 ret;
+};
 
 struct trace_event_raw_sys_enter_write {
 	struct trace_entry ent;

@@ -94,6 +94,8 @@ type bpfProgramSpecs struct {
 	SysEnterWrite    *ebpf.ProgramSpec `ebpf:"sys_enter_write"`
 	SysExitRead      *ebpf.ProgramSpec `ebpf:"sys_exit_read"`
 	SysExitRecvfrom  *ebpf.ProgramSpec `ebpf:"sys_exit_recvfrom"`
+	SysExitSendto    *ebpf.ProgramSpec `ebpf:"sys_exit_sendto"`
+	SysExitWrite     *ebpf.ProgramSpec `ebpf:"sys_exit_write"`
 }
 
 // bpfMapSpecs contains maps before they are loaded into the kernel.
@@ -102,6 +104,7 @@ type bpfProgramSpecs struct {
 type bpfMapSpecs struct {
 	ActiveL7Requests *ebpf.MapSpec `ebpf:"active_l7_requests"`
 	ActiveReads      *ebpf.MapSpec `ebpf:"active_reads"`
+	ActiveWrites     *ebpf.MapSpec `ebpf:"active_writes"`
 	L7EventHeap      *ebpf.MapSpec `ebpf:"l7_event_heap"`
 	L7Events         *ebpf.MapSpec `ebpf:"l7_events"`
 	L7RequestHeap    *ebpf.MapSpec `ebpf:"l7_request_heap"`
@@ -128,6 +131,7 @@ func (o *bpfObjects) Close() error {
 type bpfMaps struct {
 	ActiveL7Requests *ebpf.Map `ebpf:"active_l7_requests"`
 	ActiveReads      *ebpf.Map `ebpf:"active_reads"`
+	ActiveWrites     *ebpf.Map `ebpf:"active_writes"`
 	L7EventHeap      *ebpf.Map `ebpf:"l7_event_heap"`
 	L7Events         *ebpf.Map `ebpf:"l7_events"`
 	L7RequestHeap    *ebpf.Map `ebpf:"l7_request_heap"`
@@ -137,6 +141,7 @@ func (m *bpfMaps) Close() error {
 	return _BpfClose(
 		m.ActiveL7Requests,
 		m.ActiveReads,
+		m.ActiveWrites,
 		m.L7EventHeap,
 		m.L7Events,
 		m.L7RequestHeap,
@@ -153,6 +158,8 @@ type bpfPrograms struct {
 	SysEnterWrite    *ebpf.Program `ebpf:"sys_enter_write"`
 	SysExitRead      *ebpf.Program `ebpf:"sys_exit_read"`
 	SysExitRecvfrom  *ebpf.Program `ebpf:"sys_exit_recvfrom"`
+	SysExitSendto    *ebpf.Program `ebpf:"sys_exit_sendto"`
+	SysExitWrite     *ebpf.Program `ebpf:"sys_exit_write"`
 }
 
 func (p *bpfPrograms) Close() error {
@@ -163,6 +170,8 @@ func (p *bpfPrograms) Close() error {
 		p.SysEnterWrite,
 		p.SysExitRead,
 		p.SysExitRecvfrom,
+		p.SysExitSendto,
+		p.SysExitWrite,
 	)
 }
 

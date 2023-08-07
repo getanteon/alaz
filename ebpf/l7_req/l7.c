@@ -99,12 +99,31 @@ struct read_args {
     __u64 read_start_ns;  
 };
 
+// used for cases in which we don't have a read event
+// we are only tracking write events.
+// so we need to know when a write event is complete
+// so we can send the l7 event to userspace
+struct write_args {
+    __u64 fd;
+    char* buf;
+    __u64 size;
+    __u64 write_start_ns;  
+};
+
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __type(key, __u64); // pid_tgid
     __uint(value_size, sizeof(struct read_args));
     __uint(max_entries, 10240);
 } active_reads SEC(".maps");
+
+// used for cases in which we only use write events
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, __u64); // pid_tgid
+    __uint(value_size, sizeof(struct write_args));
+    __uint(max_entries, 10240);
+} active_writes SEC(".maps");
 
 // Processing enter of write and sendto syscalls
 static __always_inline
@@ -157,6 +176,10 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, char* buf, __u64
         }else if (is_rabbitmq_publish(buf,count)){
             req->protocol = PROTOCOL_AMQP;
             req->method = METHOD_PUBLISH;
+            struct write_args args = {};
+            args.fd = fd;
+            args.write_start_ns = bpf_ktime_get_ns();
+            bpf_map_update_elem(&active_writes, &id, &args, BPF_ANY);
             // TODO: send in exit of write/sendto, write duration
         }else if (is_postgres_query(buf, count, &req->request_type)){
             if (req->request_type == POSTGRES_FRAME_CLOSE){
@@ -245,6 +268,68 @@ int process_enter_of_syscalls_read_recvfrom(__u64 fd, char* buf, __u64 size) {
         bpf_trace_printk(msg, sizeof(msg), res);
     }
     return 0;
+}
+
+
+static __always_inline
+int process_exit_of_syscalls_write_sendto(void* ctx, __s64 ret){
+
+    __u64 id = bpf_get_current_pid_tgid();
+
+    // we only used this func for amqp, others will only be in active_l7_requests
+    // used active_writes for cases that only depends on writes, like amqp publish
+    struct write_args *active_write = bpf_map_lookup_elem(&active_writes, &id);
+    if (!active_write) {
+        bpf_map_delete_elem(&active_writes, &id);
+        return 0;
+    }
+
+    struct socket_key k = {};
+    k.pid = id >> 32;
+    k.fd = active_write->fd;
+
+    // active_l7_requests 
+    struct l7_request *active_req = bpf_map_lookup_elem(&active_l7_requests, &k);
+    if(!active_req) // if not found
+    {
+        return 0;
+    }
+
+    // write success
+    if(ret>=0){
+        // send l7 event
+        int zero = 0;
+        struct l7_event *e = bpf_map_lookup_elem(&l7_event_heap, &zero);
+        if (!e) {
+            bpf_map_delete_elem(&active_writes, &id);
+            return 0;
+        }
+
+        e->protocol = active_req->protocol;
+        e->fd = k.fd;
+        e->pid = k.pid;
+        e->method = active_req->method;
+        e->status = 0;
+        e->failed = 0; // success
+        e->duration = bpf_ktime_get_ns()- active_write->write_start_ns; // total write time
+
+        // request payload
+        e->payload_size = active_req->payload_size;
+        e->payload_read_complete = active_req->payload_read_complete;
+        
+        // copy req payload
+        bpf_probe_read(e->payload, MAX_PAYLOAD_SIZE, active_req->payload);
+
+        bpf_map_delete_elem(&active_l7_requests, &k);
+        bpf_map_delete_elem(&active_writes, &id);
+
+        bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
+    }else{
+        // write failed
+        bpf_map_delete_elem(&active_writes, &id);
+        bpf_map_delete_elem(&active_l7_requests, &k);
+    }
+     return 0;
 }
 
 static __always_inline
@@ -434,43 +519,15 @@ int sys_enter_sendto(struct trace_event_raw_sys_enter_sendto* ctx) {
    return process_enter_of_syscalls_write_sendto(ctx, ctx->fd, ctx->buff, ctx->len);
 }
 
-// SEC("tracepoint/syscalls/sys_enter_sendmsg")
-// int sys_enter_sendmsg(struct trace_event_raw_sys_enter_sendmsg* ctx) {
-//     struct user_msghdr *msg;
-//     if (!ctx->msg) {
-//         return 0;
-//     }else{
-//         if (bpf_core_read(&msg, sizeof(msg), ctx->msg) < 0)
-//         {
-//             return 0;
-//         } 
+SEC("tracepoint/syscalls/sys_exit_write")
+int sys_exit_write(struct trace_event_raw_sys_exit_write* ctx) {
+    return process_exit_of_syscalls_write_sendto(ctx, ctx->ret);
+}
 
-//         struct iovec *msg_iov = BPF_CORE_READ(msg,msg_iov);
-//         // __u64 iov_size = BPF_CORE_READ(msg,msg_iovlen);
-
-//         // int msg_namelen = BPF_CORE_READ(msg,msg_namelen);
-        
-//         // if (!msg_name) {
-//         //     return 0;
-//         // }
-
-//         // TODO: investigate why this is not working
-
-//         char* address = BPF_CORE_READ(msg_iov,iov_base);
-//         __u64 iov_len = BPF_CORE_READ(msg_iov,iov_len);
-
-//         if (!msg_iov) {
-//             return 0;
-//         }
-
-//         char msgxx[] = "sys_enter_sendmsg - %ld";
-//         bpf_trace_printk(msgxx, sizeof(msgxx), msg->msg_namelen);
-
-//         return process_enter_of_syscalls_write_sendto(ctx, ctx->fd, address, iov_len);
-//     }
-// }
-
-// TODO: check if write was successful (return value), sys_exit_write ?
+SEC("tracepoint/syscalls/sys_exit_sendto")
+int sys_exit_sendto(struct trace_event_raw_sys_exit_sendto* ctx) {
+    return process_exit_of_syscalls_write_sendto(ctx, ctx->ret);
+}
 
 SEC("tracepoint/syscalls/sys_enter_read")
 int sys_enter_read(struct trace_event_raw_sys_enter_read* ctx) {
