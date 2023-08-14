@@ -206,7 +206,7 @@ func NewBackendDS(conf config.BackendConfig) *BackendDS {
 							return
 						}
 
-						req, err = http.NewRequest(http.MethodPost, fmt.Sprintf("%s:%s/alaz/metrics/?instance=%s&monitoring_id=%s", ds.host, ds.port, NodeID, MonitoringID), bytes.NewReader(body))
+						req, err = http.NewRequest(http.MethodPost, fmt.Sprintf("%s:%s/alaz/metrics/scrape/?instance=%s&monitoring_id=%s", ds.host, ds.port, NodeID, MonitoringID), bytes.NewReader(body))
 						if err != nil {
 							log.Logger.Error().Msgf("error creating metrics request: %v", err)
 							return
