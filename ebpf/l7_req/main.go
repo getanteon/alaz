@@ -76,8 +76,8 @@ const (
 // match with values in l7_req.c, order is important
 const (
 	BPF_POSTGRES_METHOD_UNKNOWN = iota
-	BPF_POSTGRES_METHOD_CLOSE
-	BPF_POSTGRES_METHOD_PREPARE
+	BPF_POSTGRES_METHOD_STATEMENT_CLOSE_OR_CONN_TERMINATE
+	BPF_POSTGRES_METHOD_SIMPLE_QUERY
 
 	// BPF_POSTGRES_METHOD_QUERY
 	// BPF_POSTGRES_METHOD_EXECUTE
@@ -116,8 +116,8 @@ const (
 
 // for postgres, user space
 const (
-	CLOSE   = "CLOSE"
-	PREPARE = "PREPARE"
+	CLOSE_OR_TERMINATE = "CLOSE_OR_TERMINATE"
+	SIMPLE_QUERY       = "SIMPLE_QUERY"
 )
 
 // Custom type for the enumeration
@@ -170,10 +170,10 @@ type PostgresMethodConversion uint32
 // String representation of the enumeration values
 func (e PostgresMethodConversion) String() string {
 	switch e {
-	case BPF_POSTGRES_METHOD_CLOSE:
-		return CLOSE
-	case BPF_POSTGRES_METHOD_PREPARE:
-		return PREPARE
+	case BPF_POSTGRES_METHOD_STATEMENT_CLOSE_OR_CONN_TERMINATE:
+		return CLOSE_OR_TERMINATE
+	case BPF_POSTGRES_METHOD_SIMPLE_QUERY:
+		return SIMPLE_QUERY
 	default:
 		return "Unknown"
 	}

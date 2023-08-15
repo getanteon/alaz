@@ -382,6 +382,26 @@ func parseHttpPayload(request string) (method string, path string, httpVersion s
 	return method, path, httpVersion
 }
 
+func parseSqlCommand(request string) (sqlCommand string) {
+	log.Logger.Debug().Str("request", request).Msg("parsing sql command")
+
+	// Q, 4 bytes of length, sql command
+
+	r := []byte(request)
+
+	// skip Q
+	r = r[1:]
+
+	// skip 4 bytes of length
+	r = r[4:]
+
+	// get sql command
+	sqlCommand = string(r)
+
+	log.Logger.Debug().Str("sqlCommand", sqlCommand).Msg("sql command parsed")
+	return
+}
+
 func (a *Aggregator) processL7(d l7_req.L7Event) {
 	var sockMap *SocketMap
 	var skLine *SocketLine
@@ -486,6 +506,14 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 		log.Logger.Debug().Str("path", reqDto.Path).Msg("path extracted from http payload")
 	}
 
+	if d.Protocol == l7_req.L7_PROTOCOL_POSTGRES && d.Method == l7_req.SIMPLE_QUERY {
+		// parse sql command from payload
+		// path = sql command
+		// method = sql message type
+		reqDto.Path = parseSqlCommand(string(d.Payload[0:d.PayloadSize]))
+		log.Logger.Debug().Str("path", reqDto.Path).Msg("path extracted from postgres payload")
+	}
+
 	// find pod info
 	a.clusterInfo.mu.RLock() // lock for reading
 	podUid, ok := a.clusterInfo.PodIPToPodUid[skInfo.Saddr]
@@ -526,6 +554,8 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 				// dns lookup successful
 				reqDto.ToUID = remoteDnsHost
 				reqDto.ToType = "outbound"
+			} else {
+				log.Logger.Error().Err(err).Str("Daddr", skInfo.Daddr).Msg("error getting hostname from ip")
 			}
 		}
 	}
@@ -539,7 +569,7 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 	// exchange sockets
 	// In Alaz context, From is always the one that makes the write
 	// and To is the one that makes the read
-	if d.Protocol == l7_req.L7_PROTOCOL_AMQP && d.Method == "DELIVER" {
+	if d.Protocol == l7_req.L7_PROTOCOL_AMQP && d.Method == l7_req.DELIVER {
 		reqDto.FromIP, reqDto.ToIP = reqDto.ToIP, reqDto.FromIP
 		reqDto.FromPort, reqDto.ToPort = reqDto.ToPort, reqDto.FromPort
 		reqDto.FromUID, reqDto.ToUID = reqDto.ToUID, reqDto.FromUID
