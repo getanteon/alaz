@@ -175,18 +175,12 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, char* buf, __u64
         }else if (parse_client_postgres_data(buf, count, &req->request_type)){
             // TODO: should wait for CloseComplete message in case of statement close 
             if (req->request_type == POSTGRES_MESSAGE_CLOSE || req->request_type == POSTGRES_MESSAGE_TERMINATE){
-                struct l7_event *e = bpf_map_lookup_elem(&l7_event_heap, &zero);
-                if (!e) {
-                    return 0;
-                }
-                e->protocol = PROTOCOL_POSTGRES;
-                e->fd = k.fd;
-                e->pid = k.pid;
-                e->method = METHOD_STATEMENT_CLOSE_OR_CONN_TERMINATE;
-                e->status = 1; // means success
-                bpf_probe_read(e->payload, MAX_PAYLOAD_SIZE, (void *)buf);
-                bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
-                return 0;
+                req->protocol = PROTOCOL_POSTGRES;
+                req->method = METHOD_STATEMENT_CLOSE_OR_CONN_TERMINATE;
+                struct write_args args = {};
+                args.fd = fd;
+                args.write_start_ns = bpf_ktime_get_ns();
+                bpf_map_update_elem(&active_writes, &id, &args, BPF_ANY);
             }
             req->protocol = PROTOCOL_POSTGRES;
         }else{
@@ -268,6 +262,7 @@ int process_exit_of_syscalls_write_sendto(void* ctx, __s64 ret){
 
     // we only used this func for amqp, others will only be in active_l7_requests
     // used active_writes for cases that only depends on writes, like amqp publish
+    // + postgres statement close, terminate
     struct write_args *active_write = bpf_map_lookup_elem(&active_writes, &id);
     if (!active_write) {
         bpf_map_delete_elem(&active_writes, &id);
@@ -299,7 +294,12 @@ int process_exit_of_syscalls_write_sendto(void* ctx, __s64 ret){
         e->fd = k.fd;
         e->pid = k.pid;
         e->method = active_req->method;
-        e->status = 0;
+        if (e->protocol == PROTOCOL_POSTGRES && e->method == METHOD_STATEMENT_CLOSE_OR_CONN_TERMINATE){
+            e->status = 1; // success
+        }else{
+            e->status = 0;
+        }
+
         e->failed = 0; // success
         e->duration = bpf_ktime_get_ns()- active_write->write_start_ns; // total write time
 
