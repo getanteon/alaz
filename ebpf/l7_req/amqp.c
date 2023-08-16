@@ -71,8 +71,6 @@
 #define AMQP_METHOD_DELIVER 60 // Deliver
 #define AMQP_METHOD_ACK 80
 #define AMQP_METHOD_REJECT 90
-
-
 static __always_inline
 int amqp_method_is(char *buf, __u64 buf_size, __u16 expected_method) {
     if (buf_size < 12) {

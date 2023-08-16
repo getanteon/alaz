@@ -112,7 +112,7 @@ int parse_client_postgres_data(char *buf, int buf_size, __u8 *request_type) {
     }
     len = bpf_htonl(len);
 
-    if (identifier == POSTGRES_MESSAGE_TERMINATE) {
+    if (identifier == POSTGRES_MESSAGE_TERMINATE && len == 4) {
         *request_type = identifier;
         return 1;
     }

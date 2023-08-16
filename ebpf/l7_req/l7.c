@@ -140,6 +140,8 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, char* buf, __u64
     }
 
     req->protocol = PROTOCOL_UNKNOWN;
+    req->method = METHOD_UNKNOWN;
+    req->request_type = 0;
     req->write_time_ns = bpf_ktime_get_ns();
 
     // TODO: If socket is not tcp (SOCK_STREAM), we are not interested in it
@@ -148,16 +150,7 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, char* buf, __u64
     k.pid = id >> 32;
     k.fd = fd;
 
-    if(buf && count > PAYLOAD_PREFIX_SIZE){
-        // read first 16 bytes of write buffer
-        char buf_prefix[PAYLOAD_PREFIX_SIZE];
-        long r = bpf_probe_read(&buf_prefix, sizeof(buf_prefix), (void *)(buf)) ;
-        
-        if (r < 0) {
-            char msg[] = "could not read into buf_prefix - %ld";
-            bpf_trace_printk(msg, sizeof(msg), r);
-            return 0;
-        }
+    if(buf){
         // We are tracking tcp connections (sockets) on tcp_state bpf program, sending them to userspace
         // and then we are tracking http requests on this bpf program, sending them to userspace
 
@@ -168,8 +161,7 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, char* buf, __u64
         // This can cause mismatched events. (udp request with tcp connection)
         // Userspace only knows about tcp connections, so we should only send l7_events that are related to a tcp connection. 
 
-
-        int method = parse_http_method(buf_prefix);
+        int method = parse_http_method(buf);
         if (method != -1){
             req->protocol = PROTOCOL_HTTP;
             req-> method = method;
@@ -180,7 +172,6 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, char* buf, __u64
             args.fd = fd;
             args.write_start_ns = bpf_ktime_get_ns();
             bpf_map_update_elem(&active_writes, &id, &args, BPF_ANY);
-            // TODO: send in exit of write/sendto, write duration
         }else if (parse_client_postgres_data(buf, count, &req->request_type)){
             // TODO: should wait for CloseComplete message in case of statement close 
             if (req->request_type == POSTGRES_MESSAGE_CLOSE || req->request_type == POSTGRES_MESSAGE_TERMINATE){
@@ -255,7 +246,6 @@ int process_enter_of_syscalls_read_recvfrom(__u64 fd, char* buf, __u64 size) {
     // }
 
     
-    
     struct read_args args = {};
     args.fd = fd;
     args.buf = buf;
@@ -274,7 +264,6 @@ int process_enter_of_syscalls_read_recvfrom(__u64 fd, char* buf, __u64 size) {
 
 static __always_inline
 int process_exit_of_syscalls_write_sendto(void* ctx, __s64 ret){
-
     __u64 id = bpf_get_current_pid_tgid();
 
     // we only used this func for amqp, others will only be in active_l7_requests
@@ -435,7 +424,6 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
 
     e->failed = 0; // success
 
-
     e->status = 0;
     if(read_info->buf && read_info->size > PAYLOAD_PREFIX_SIZE){
         if(e->protocol==PROTOCOL_HTTP){ // if http, try to parse status code
@@ -469,10 +457,6 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
        
     bpf_map_delete_elem(&active_reads, &id);
     bpf_map_delete_elem(&active_l7_requests, &k);
-
-    // u64 flags = BPF_F_CURRENT_CPU;
-    // u64 size = sizeof(*e);
-    // flags |= (u64) size << 32;
 
     long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
     if (r < 0) {

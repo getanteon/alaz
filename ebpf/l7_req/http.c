@@ -9,8 +9,20 @@
 #define METHOD_OPTIONS      8
 #define METHOD_TRACE        9
 
+#define MIN_METHOD_LEN      8
+#define MIN_RESP_LEN        12
+
 static __always_inline
-int parse_http_method(char *buf_prefix) {
+int parse_http_method(char *buf) {
+    char buf_prefix[MIN_METHOD_LEN];
+    long r = bpf_probe_read(&buf_prefix, sizeof(buf_prefix), (void *)(buf)) ;
+    
+    if (r < 0) {
+        char msg[] = "not enough characters to parse http method - %ld";
+        bpf_trace_printk(msg, sizeof(msg), r);
+        return 0;
+    }
+
     if (buf_prefix[0] == 'G' && buf_prefix[1] == 'E' && buf_prefix[2] == 'T') {
             return METHOD_GET;
     }else if(buf_prefix[0] == 'P' && buf_prefix[1] == 'O' && buf_prefix[2] == 'S' && buf_prefix[3] == 'T'){
@@ -34,7 +46,17 @@ int parse_http_method(char *buf_prefix) {
 }
 
 static __always_inline
-int parse_http_status(char *b) {
+int parse_http_status(char *buf) {
+
+    char b[MIN_RESP_LEN];
+    long r = bpf_probe_read(&b, sizeof(b), (void *)(buf)) ;
+    
+    if (r < 0) {
+        char msg[] = "not enough characters to parse http method - %ld";
+        bpf_trace_printk(msg, sizeof(msg), r);
+        return 0;
+    }
+
     // HTTP/1.1 200 OK
     if (b[0] != 'H' || b[1] != 'T' || b[2] != 'T' || b[3] != 'P' || b[4] != '/') {
         return -1;
