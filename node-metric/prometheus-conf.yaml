@@ -1,10 +1,4 @@
 apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: prometheus-server-conf
-  labels:
-    name: prometheus-server-conf
-  namespace: monitoring
 data:
   prometheus.rules: |-
     groups:
@@ -24,13 +18,22 @@ data:
     rule_files:
       - /etc/prometheus/prometheus.rules
     scrape_configs:
-      - job_name: 'node-exporter'
+      - job_name: 'node'
         kubernetes_sd_configs:
           - role: endpoints
         relabel_configs:
         - source_labels: [__meta_kubernetes_endpoints_name]
           regex: 'node-exporter'
           action: keep
+      - job_name: 'alaz-exporter2'
+        kubernetes_sd_configs:
+          - role: endpoints
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_endpoints_name]
+          regex: 'alaz-exporter2'
+          action: keep
+        static_configs:
+          - targets: ['alaz-exporter2.namespace.svc:8182']
       - job_name: 'kubernetes-apiservers'
         kubernetes_sd_configs:
         - role: endpoints
@@ -82,9 +85,18 @@ data:
         - source_labels: [__meta_kubernetes_pod_name]
           action: replace
           target_label: kubernetes_pod_name
-      - job_name: 'kube-state-metrics'
+      - job_name: 'k8s-kube-state-metrics-selfhosted'
+        kubernetes_sd_configs:
+          - role: endpoints
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_endpoints_name]
+          regex: 'kube-state-metrics-shard'
+          action: keep
         static_configs:
-          - targets: ['kube-state-metrics.kube-system.svc.cluster.local:8080']
+          - targets: ['kube-state-metrics-shard.namespace.svc:8080']
+        metric_relabel_configs:
+        - target_label: cluster
+          replacement: selfhosted
       - job_name: 'kubernetes-cadvisor'
         scheme: https
         tls_config:
@@ -129,3 +141,9 @@ data:
         - source_labels: [__meta_kubernetes_service_name]
           action: replace
           target_label: kubernetes_name
+kind: ConfigMap
+metadata:
+  labels:
+    name: prometheus-server-conf
+  name: prometheus-server-conf
+  namespace: monitoring

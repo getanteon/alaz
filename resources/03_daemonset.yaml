@@ -23,7 +23,14 @@ spec:
         - --no-collector.hwmon
         - --collector.filesystem.ignored-mount-points=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/pods/.+)($|/)
         - --collector.netclass.ignored-devices=^(veth.*)$
-        image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:v4.3.8
+        image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:v4.9.8
+        resources:
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+          requests:
+            cpu: 500m
+            memory: 400Mi
         env:
           - name: K8S_COLLECTOR_ENABLED
             value: "true"
@@ -48,9 +55,9 @@ spec:
           - name: DISABLE_LOGS
             value: "false"
           - name: DS_PG
-            value: "true"
-          - name: DS_BACKEND
             value: "false"
+          - name: DS_BACKEND
+            value: "true"
           - name : METRICS_BACKEND
             value: "true"
           - name: BACKEND_HOST
