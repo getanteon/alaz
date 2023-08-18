@@ -152,11 +152,6 @@ func NewAggregator(k8sChan <-chan interface{}, crChan <-chan interface{}, ebpfCh
 	}
 }
 
-// capture already established connections
-func (a *Aggregator) Init() {
-	// TODO: get all established connections from conntrack
-}
-
 func (a *Aggregator) Run() {
 	go a.processk8s()
 	go a.processCR()

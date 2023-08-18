@@ -46,14 +46,15 @@ func main() {
 	}
 
 	// deploy ebpf programs
-	if os.Getenv("EBPF_ENABLED") == "true" {
-		go ebpf.Deploy()
-	}
+	var ec *ebpf.EbpfCollector
+	if os.Getenv("EBPF_ENABLED") != "false" {
+		ec = ebpf.NewEbpfCollector(ctx)
+		go ec.Deploy()
 
-	a := aggregator.NewAggregator(kubeEvents, nil, ebpf.EbpfEvents)
-	a.Init()
-	a.Run()
-	a.AdvertisePidSockMap()
+		a := aggregator.NewAggregator(kubeEvents, nil, ec.EbpfEvents())
+		a.Run()
+		a.AdvertisePidSockMap()
+	}
 
 	if os.Getenv("TRACE_ENABLED") == "true" {
 		directoryPath := "/mnt/data/"
@@ -78,7 +79,6 @@ func main() {
 			log.Logger.Fatal().Msgf("failed to start trace: %v", err)
 		}
 	}
-	// defer trace.Stop()
 
 	http.HandleFunc("/stop-trace", func(w http.ResponseWriter, r *http.Request) {
 		trace.Stop()
@@ -91,6 +91,10 @@ func main() {
 
 	<-k8sCollector.Done()
 	log.Logger.Info().Msg("k8sCollector done")
+
+	<-ec.Done()
+	log.Logger.Info().Msg("ebpfCollector done")
+
 	log.Logger.Info().Msg("alaz exiting...")
 }
 

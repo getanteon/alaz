@@ -4,23 +4,55 @@ import (
 	"alaz/ebpf/l7_req"
 	"alaz/ebpf/tcp_state"
 	"alaz/log"
+	"context"
 	"os"
+	"sync"
 	"time"
 )
-
-var EbpfEvents chan interface{}
 
 type BpfEvent interface {
 	Type() string
 }
 
-func init() {
-	EbpfEvents = make(chan interface{}, 100000) // TODO: make configurable
+type EbpfCollector struct {
+	ctx        context.Context
+	done       chan struct{}
+	ebpfEvents chan interface{}
 }
 
-func Deploy() {
-	go tcp_state.Deploy(EbpfEvents)
-	go l7_req.Deploy(EbpfEvents)
+func NewEbpfCollector(parentCtx context.Context) *EbpfCollector {
+	ctx, _ := context.WithCancel(parentCtx)
+
+	return &EbpfCollector{
+		ctx:        ctx,
+		done:       make(chan struct{}),
+		ebpfEvents: make(chan interface{}, 100000),
+	}
+}
+
+func (e *EbpfCollector) Done() chan struct{} {
+	return e.done
+}
+
+func (e *EbpfCollector) EbpfEvents() chan interface{} {
+	return e.ebpfEvents
+}
+
+func (e *EbpfCollector) Deploy() {
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		tcp_state.DeployAndWait(e.ctx, e.ebpfEvents)
+	}()
+	go func() {
+		defer wg.Done()
+		l7_req.DeployAndWait(e.ctx, e.ebpfEvents)
+	}()
+	wg.Wait()
+
+	log.Logger.Info().Msg("ebpf programs exited")
+	close(e.done)
 
 	// go listenDebugMsgs()
 }
