@@ -389,16 +389,19 @@ func parseSqlCommand(request string) (sqlCommand string) {
 
 	r := []byte(request)
 
-	// skip Q
+	// skip Q, (simple query)
 	r = r[1:]
 
 	// skip 4 bytes of length
 	r = r[4:]
 
 	// get sql command
-	sqlCommand = string(r)
+	sqlStatement := string(r)
+	log.Logger.Debug().Str("sqlStatement", sqlStatement).Msg("sql statement parsed")
 
-	log.Logger.Debug().Str("sqlCommand", sqlCommand).Msg("sql command parsed")
+	// get sql command from sql statement(first word)
+	sqlCommand = strings.Split(sqlStatement, " ")[0]
+
 	return
 }
 
@@ -574,6 +577,16 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 		reqDto.FromPort, reqDto.ToPort = reqDto.ToPort, reqDto.FromPort
 		reqDto.FromUID, reqDto.ToUID = reqDto.ToUID, reqDto.FromUID
 		reqDto.FromType, reqDto.ToType = reqDto.ToType, reqDto.FromType
+	}
+
+	// TODO: remove this, for debugging
+	if d.Protocol == l7_req.L7_PROTOCOL_HTTP && d.Status == 0 {
+		log.Logger.Warn().Str("payload", string(d.Payload[0:d.PayloadSize])).
+			Str("fromIP", reqDto.FromIP).Uint16("fromPort", reqDto.FromPort).
+			Str("toIP", reqDto.ToIP).Uint16("toPort", reqDto.ToPort).
+			Str("protocol", reqDto.Protocol).Str("method", reqDto.Method).
+			Uint32("pid", d.Pid).Uint64("fd", d.Fd).
+			Str("path", reqDto.Path).Msg("http call with status 0 aggregator")
 	}
 
 	go func() {
