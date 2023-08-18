@@ -69,11 +69,9 @@ type BackendDS struct {
 	dsEventChan        chan interface{} // *DaemonSetEvent
 
 	// TODO:
-	// daemonset
 	// statefulset
 	// job
 	// cronjob
-
 }
 
 const (

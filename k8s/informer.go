@@ -1,12 +1,12 @@
 package k8s
 
 import (
-	"encoding/json"
+	"context"
 	"flag"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"alaz/log"
 
@@ -42,9 +42,11 @@ const (
 )
 
 type K8sCollector struct {
+	ctx              context.Context
 	informersFactory informers.SharedInformerFactory
 	watchers         map[K8SResourceType]cache.SharedIndexInformer
-	stopper          chan struct{} // stop signal for the informer
+	stopper          chan struct{} // stop signal for the informers
+	doneChan         chan struct{} // done signal for k8sCollector
 	// watchers
 	podInformer        v1.PodInformer
 	serviceInformer    v1.ServiceInformer
@@ -53,35 +55,12 @@ type K8sCollector struct {
 	endpointsInformer  v1.EndpointsInformer
 	daemonsetInformer  appsv1.DaemonSetInformer
 
-	k8sBigPicture *K8sBigPicture
-	Events        chan interface{}
-}
-
-func (k *K8sCollector) advertiseBigPicture() {
-	// http server
-	// advertise big picture
-	http.HandleFunc("/bigpicture", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		json.NewEncoder(w).Encode(k.k8sBigPicture)
-	})
+	Events chan interface{}
 }
 
 func (k *K8sCollector) Init(events chan interface{}) error {
 	log.Logger.Info().Msg("k8sCollector initializing...")
-	// stop signal for the informer
-	k.k8sBigPicture = &K8sBigPicture{
-		NamespaceToResources: make(map[string]K8sNamespaceResources),
-	}
 	k.Events = events
-
-	go k.advertiseBigPicture()
-
-	stopper := make(chan struct{})
-	k.stopper = stopper
-	defer close(stopper)
-
-	// go k.informersFactory.Start(k.stopper)
 
 	// Pod
 	k.podInformer = k.informersFactory.Core().V1().Pods()
@@ -146,19 +125,29 @@ func (k *K8sCollector) Init(events chan interface{}) error {
 		DeleteFunc: getOnDeleteDaemonSetFunc(k.Events),
 	})
 
+	wg := sync.WaitGroup{}
+	wg.Add(len(k.watchers))
 	for _, watcher := range k.watchers {
-		go watcher.Run(stopper)
+		go func(watcher cache.SharedIndexInformer) {
+			watcher.Run(k.stopper) // it will return when stopper is closed
+			wg.Done()
+		}(watcher)
 	}
-
-	<-stopper
+	wg.Wait()
+	log.Logger.Info().Msg("k8sCollector informers stopped")
+	k.doneChan <- struct{}{}
 
 	return nil
 }
 
-func NewK8sCollector() (*K8sCollector, error) {
+func (k *K8sCollector) Done() <-chan struct{} {
+	return k.doneChan
+}
+
+func NewK8sCollector(parentCtx context.Context) (*K8sCollector, error) {
+	ctx, _ := context.WithCancel(parentCtx)
 	// get incluster kubeconfig
 	var kubeconfig *string
-
 	var kubeConfig *rest.Config
 
 	if os.Getenv("IN_CLUSTER") == "false" {
@@ -191,19 +180,30 @@ func NewK8sCollector() (*K8sCollector, error) {
 
 	factory := informers.NewSharedInformerFactory(clientset, 0)
 
-	return &K8sCollector{
+	collector := &K8sCollector{
+		ctx:              ctx,
+		stopper:          make(chan struct{}),
+		doneChan:         make(chan struct{}),
 		informersFactory: factory,
 		watchers:         map[K8SResourceType]cache.SharedIndexInformer{},
-	}, nil
+	}
+
+	go func(c *K8sCollector) {
+		<-c.ctx.Done() // wait for context to be cancelled
+		c.close()
+	}(collector)
+
+	return collector, nil
+}
+
+func (k *K8sCollector) close() {
+	log.Logger.Info().Msg("k8sCollector closing...")
+	close(k.stopper) // stop informers
 }
 
 type K8sNamespaceResources struct {
 	Pods     map[string]corev1.Pod     `json:"pods"`     // map[podName]Pod
 	Services map[string]corev1.Service `json:"services"` // map[serviceName]Service
-}
-
-type K8sBigPicture struct {
-	NamespaceToResources map[string]K8sNamespaceResources `json:"namespaceToResources"` // map[namespace]K8sNamespaceResources
 }
 
 type K8sResourceMessage struct {
