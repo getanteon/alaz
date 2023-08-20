@@ -1,0 +1,159 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alaz-serviceaccount
+  namespace: ddosify
+---
+# For alaz to keep track of changes in cluster
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: alaz-role
+  namespace: ddosify
+rules:
+- apiGroups:
+  - "*"
+  resources:
+  - pods
+  - services
+  - endpoints
+  - replicasets
+  - deployments
+  - daemonsets
+  verbs:
+  - "get"
+  - "list"
+  - "watch"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: alaz-role-binding
+  namespace: ddosify
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: alaz-role
+subjects:
+- kind: ServiceAccount
+  name: alaz-serviceaccount
+  namespace: ddosify
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: alaz-daemonset
+  namespace: ddosify
+spec:
+  selector:
+    matchLabels:
+      app: alaz
+  template:
+    metadata:
+      labels:
+        app: alaz
+    spec:
+      serviceAccount: alaz-serviceaccount                                                                                                              │
+      serviceAccountName: alaz-serviceaccount
+      containers:
+      - name: alaz-pod
+        args:
+        - --path.sysfs=/host/sys
+        - --path.rootfs=/host/root
+        - --no-collector.wifi
+        - --no-collector.hwmon
+        - --collector.filesystem.ignored-mount-points=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/pods/.+)($|/)
+        - --collector.netclass.ignored-devices=^(veth.*)$
+        image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:v4.9.8
+        resources:
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+          requests:
+            cpu: 500m
+            memory: 400Mi
+        env:
+          - name: K8S_COLLECTOR_ENABLED
+            value: "true"
+          - name: CR_COLLECTOR_ENABLED
+            value: "true"
+          - name: EBPF_ENABLED
+            value: "true"
+          - name: IN_CLUSTER
+            value: "true"
+          - name: POSTGRES_HOST
+            value: "postgres-service.ddosify"
+          - name: POSTGRES_PORT
+            value: "5432"
+          - name: POSTGRES_USER
+            value: "alazuser"
+          - name: POSTGRES_PASSWORD
+            value: "alazpwd"
+          - name: POSTGRES_DB
+            value: "alazdb"
+          - name: LOG_LEVEL
+            value: "0"
+          - name: DISABLE_LOGS
+            value: "false"
+          - name: DS_PG
+            value: "false"
+          - name: DS_BACKEND
+            value: "true"
+          - name : METRICS_BACKEND
+            value: "true"
+          - name: BACKEND_HOST
+            value: https://staging-backend-cf.ddosify.com
+          - name: BACKEND_PORT
+            value: "443"
+          - name: MONITORING_ID
+            value: b8fb4b18-7ccd-4ba2-afa3-ba19402c1aec
+          - name: NODE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
+        ports:
+          - containerPort: 8181
+        securityContext:
+          privileged: true
+          capabilities:
+            add:
+              - BPF
+              - PERFMON
+              - NET_ADMIN
+              - SYS_RESOURCE
+        volumeMounts:
+          - mountPath: /sys/kernel/debug
+            name: debugfs
+            readOnly: false
+          - mountPath: /proc
+            name: proc
+            readOnly: true
+          - mountPath: /var/run/containerd/containerd.sock
+            name: containerd-sock
+            readOnly: true
+          # for node-exporter
+          - mountPath: /host/sys
+            mountPropagation: HostToContainer
+            name: sys
+            readOnly: true
+          - mountPath: /host/root
+            mountPropagation: HostToContainer
+            name: root
+            readOnly: true
+      volumes:
+        - name: debugfs
+          hostPath:
+            path: /sys/kernel/debug
+        - name: proc
+          hostPath:
+            path: /proc
+        - name: containerd-sock
+          hostPath:
+            path: /var/run/containerd/containerd.sock
+        # for node-exporter
+        - name: sys
+          hostPath:
+            path: /sys
+        - name: root
+          hostPath:
+            path: /
