@@ -138,7 +138,7 @@ func (nl *SocketLine) GetAlreadyExistingSockets() {
 	nl.mu.Lock()
 	defer nl.mu.Unlock()
 
-	log.Logger.Info().Msgf("getting already existing sockets for pid %d, fd %d", nl.pid, nl.fd)
+	log.Logger.Debug().Msgf("getting already existing sockets for pid %d, fd %d", nl.pid, nl.fd)
 
 	socks := map[string]sock{}
 
@@ -149,7 +149,7 @@ func (nl *SocketLine) GetAlreadyExistingSockets() {
 
 		ss, err := readSockets(sockPath)
 		if err != nil {
-			log.Logger.Error().Err(err).Msgf("failed to read sockets from %s", sockPath)
+			log.Logger.Warn().Err(err).Msgf("failed to read sockets from %s", sockPath)
 			return
 		}
 
@@ -162,7 +162,7 @@ func (nl *SocketLine) GetAlreadyExistingSockets() {
 	fdDir := strings.Join([]string{"/proc", fmt.Sprint(nl.pid), "fd"}, "/")
 	fdEntries, err := os.ReadDir(fdDir)
 	if err != nil {
-		log.Logger.Error().Err(err).Msgf("failed to read directory %s", fdDir)
+		log.Logger.Warn().Err(err).Msgf("failed to read directory %s", fdDir)
 		return
 	}
 
@@ -170,13 +170,13 @@ func (nl *SocketLine) GetAlreadyExistingSockets() {
 	for _, entry := range fdEntries {
 		fd, err := strconv.ParseUint(entry.Name(), 10, 64)
 		if err != nil {
-			log.Logger.Error().Err(err).Uint32("pid", nl.pid).
+			log.Logger.Warn().Err(err).Uint32("pid", nl.pid).
 				Uint64("fd", nl.fd).Msgf("failed to parse %s as uint", entry.Name())
 			continue
 		}
 		dest, err := os.Readlink(path.Join(fdDir, entry.Name()))
 		if err != nil {
-			log.Logger.Error().Err(err).
+			log.Logger.Warn().Err(err).
 				Uint32("pid", nl.pid).
 				Uint64("fd", nl.fd).Msgf("failed to read link %s", path.Join(fdDir, entry.Name()))
 			continue

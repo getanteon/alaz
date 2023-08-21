@@ -222,6 +222,6 @@ func listenDebugMsgs() {
 		if err != nil {
 			log.Logger.Error().Err(err).Msg("error reading from trace_pipe")
 		}
-		log.Logger.Info().Msgf("read %d bytes: %s\n", n, buf[:n])
+		log.Logger.Debug().Msgf("read %d bytes: %s\n", n, buf[:n])
 	}
 }

@@ -2,7 +2,6 @@ package l7_req
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"unsafe"
 
@@ -220,7 +219,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_enter_read tracepoint")
 	}
-	fmt.Println("sys_enter_read linked")
+	log.Logger.Info().Msg("sys_enter_read linked")
 	defer func() {
 		log.Logger.Info().Msg("closing sys_enter_read tracepoint")
 		l.Close()
@@ -228,10 +227,10 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 
 	l1, err := link.Tracepoint("syscalls", "sys_enter_write", objs.bpfPrograms.SysEnterWrite, nil)
 	if err != nil {
-		log.Logger.Debug().Str("verifier log", string(objs.bpfPrograms.SysEnterWrite.VerifierLog)).Msg("verifier log")
+		log.Logger.Warn().Str("verifier log", string(objs.bpfPrograms.SysEnterWrite.VerifierLog)).Msg("verifier log")
 		log.Logger.Fatal().Err(err).Msg("link sys_enter_write tracepoint")
 	}
-	fmt.Println("sys_enter_write linked")
+	log.Logger.Info().Msg("sys_enter_write linked")
 	defer func() {
 		log.Logger.Info().Msg("closing sys_enter_write tracepoint")
 		l1.Close()
@@ -241,7 +240,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_exit_read tracepoint")
 	}
-	fmt.Println("sys_exit_read linked")
+	log.Logger.Info().Msg("sys_exit_read linked")
 	defer func() {
 		log.Logger.Info().Msg("closing sys_exit_read tracepoint")
 		l2.Close()
@@ -251,7 +250,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_enter_sendto tracepoint")
 	}
-	fmt.Println("sys_enter_sendto linked")
+	log.Logger.Info().Msg("sys_enter_sendto linked")
 	defer func() {
 		log.Logger.Info().Msg("closing sys_enter_sendto tracepoint")
 		l3.Close()
@@ -261,7 +260,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_enter_recvfrom tracepoint")
 	}
-	fmt.Println("sys_enter_recvfrom linked")
+	log.Logger.Info().Msg("sys_enter_recvfrom linked")
 	defer func() {
 		log.Logger.Info().Msg("closing sys_enter_recvfrom tracepoint")
 		l4.Close()
@@ -271,7 +270,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_exit_recvfrom tracepoint")
 	}
-	fmt.Println("sys_exit_recvfrom linked")
+	log.Logger.Info().Msg("sys_exit_recvfrom linked")
 	defer func() {
 		log.Logger.Info().Msg("closing sys_exit_recvfrom tracepoint")
 		l5.Close()
@@ -281,7 +280,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_exit_sendto tracepoint")
 	}
-	fmt.Println("sys_exit_sendto linked")
+	log.Logger.Info().Msg("sys_exit_sendto linked")
 	defer func() {
 		log.Logger.Info().Msg("closing sys_exit_sendto tracepoint")
 		l6.Close()
@@ -291,7 +290,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_exit_write tracepoint")
 	}
-	fmt.Println("sys_exit_write linked")
+	log.Logger.Info().Msg("sys_exit_write linked")
 	defer func() {
 		log.Logger.Info().Msg("closing sys_exit_write tracepoint")
 		l7.Close()

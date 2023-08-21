@@ -317,10 +317,6 @@ func parseSqlCommand(request string) string {
 	// get sql command
 	sqlStatement := string(r)
 
-	// log.Logger.Debug().Str("sqlStatement", sqlStatement).Msg("sql statement parsed")
-	// // get sql command from sql statement(first word)
-	// sqlCommand = strings.Split(sqlStatement, " ")[0]
-
 	return sqlStatement
 }
 
@@ -349,7 +345,7 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 	sockMap.mu.RUnlock() // unlock for reading
 
 	if !ok {
-		log.Logger.Info().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("error finding skLine, go look for it")
+		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("error finding skLine, go look for it")
 		// start new socket line, find already established connections
 		skLine = NewSocketLine(d.Pid, d.Fd)
 		skLine.GetAlreadyExistingSockets() // find already established connections
@@ -390,7 +386,7 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 		time.Sleep(rt)
 		rt *= 2 // exponential backoff
 		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Uint64("writeTimeNs", d.WriteTimeNs).
-			Msg("retrying getting socket info fro skLine")
+			Msg("retrying getting socket info from skLine")
 
 		if rc == 0 {
 			break
@@ -398,14 +394,14 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 	}
 
 	if rc < retryLimit && skInfo != nil {
-		log.Logger.Info().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Uint64("writeTimeNs", d.WriteTimeNs).
+		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Uint64("writeTimeNs", d.WriteTimeNs).
 			Msg("found socket info with retry")
 	}
 
 	if err != nil || skInfo == nil {
-		log.Logger.Error().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Uint64("writeTimeNs", d.WriteTimeNs).
+		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Uint64("writeTimeNs", d.WriteTimeNs).
 			Str("method", d.Method).Uint32("status", d.Status).Str("protocol", d.Protocol).Str("payload", string(d.Payload[0:d.PayloadSize])).
-			Msg("could not find !!socket info for skLine, discarding request")
+			Msg("could not match socket, discarding request")
 		return
 	}
 
@@ -441,7 +437,7 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 	podUid, ok := a.clusterInfo.PodIPToPodUid[skInfo.Saddr]
 	a.clusterInfo.mu.RUnlock() // unlock for reading
 	if !ok {
-		log.Logger.Warn().Str("Saddr", skInfo.Saddr).
+		log.Logger.Debug().Str("Saddr", skInfo.Saddr).
 			Int("pid", int(d.Pid)).
 			Uint64("fd", d.Fd).
 			Msg("error finding pod with sockets saddr")
@@ -477,7 +473,7 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 				reqDto.ToUID = remoteDnsHost
 				reqDto.ToType = "outbound"
 			} else {
-				log.Logger.Error().Err(err).Str("Daddr", skInfo.Daddr).Msg("error getting hostname from ip")
+				log.Logger.Warn().Err(err).Str("Daddr", skInfo.Daddr).Msg("error getting hostname from ip")
 			}
 		}
 	}

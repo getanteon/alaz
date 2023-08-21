@@ -122,7 +122,6 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 				}
 				log.Logger.Warn().Msgf("will retry, response body: %s", string(rb))
 				log.Logger.Warn().Msgf("will retry, status code: %d", resp.StatusCode)
-
 			}
 		}
 		return shouldRetry, nil
@@ -271,7 +270,7 @@ func (b *BackendDS) DoRequest(req *http.Request) error {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("not success: %d, %s", resp.StatusCode, string(body))
 	} else {
-		log.Logger.Warn().Str("reqHostPath", req.URL.Host+req.URL.Path).Msg("success on request")
+		log.Logger.Info().Str("reqHostPath", req.URL.Host+req.URL.Path).Msg("success on request")
 	}
 
 	return nil
@@ -300,7 +299,7 @@ func (b *BackendDS) sendToBackend(payload interface{}, endpoint string) {
 		return
 	}
 
-	log.Logger.Warn().Str("endpoint", endpoint).Any("payload", payload).Msg("sending batch to backend")
+	log.Logger.Debug().Str("endpoint", endpoint).Any("payload", payload).Msg("sending batch to backend")
 	err = b.DoRequest(httpReq)
 	if err != nil {
 		log.Logger.Error().Msgf("backend persist error at ep %s : %v", endpoint, err)
