@@ -294,7 +294,7 @@ func (b *BackendDS) sendToBackend(payload interface{}, endpoint string) {
 		return
 	}
 
-	httpReq, err := http.NewRequest(http.MethodPost, b.host+":"+b.port+endpoint, bytes.NewBuffer(payloadBytes))
+	httpReq, err := http.NewRequest(http.MethodPost, b.host+endpoint, bytes.NewBuffer(payloadBytes))
 	if err != nil {
 		log.Logger.Error().Msgf("error creating http request: %v", err)
 		return
@@ -526,12 +526,6 @@ func (h *nodeExporterHandler) innerHandler(filters ...string) (http.Handler, err
 	handler := promhttp.HandlerFor(
 		prometheus.Gatherers{r},
 		promhttp.HandlerOpts{},
-		// promhttp.HandlerOpts{
-		// 	ErrorLog:            stdlog.New(log.NewStdlibAdapter(level.Error(h.logger)), "", 0),
-		// 	ErrorHandling:       promhttp.ContinueOnError,
-		// 	MaxRequestsInFlight: h.maxRequests,
-		// 	Registry:            h.exporterMetricsRegistry,
-		// },
 	)
 
 	return handler, nil

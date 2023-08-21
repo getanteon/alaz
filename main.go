@@ -10,7 +10,6 @@ import (
 
 	"alaz/log"
 	"context"
-	"net/http"
 )
 
 func main() {
@@ -44,13 +43,7 @@ func main() {
 
 		a := aggregator.NewAggregator(ctx, kubeEvents, nil, ec.EbpfEvents())
 		a.Run()
-		a.AdvertisePidSockMap()
 	}
-
-	go func() {
-		log.Logger.Info().Msg("listen on 8181")
-		http.ListenAndServe(":8181", nil)
-	}()
 
 	<-k8sCollector.Done()
 	log.Logger.Info().Msg("k8sCollector done")

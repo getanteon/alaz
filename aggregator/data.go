@@ -15,10 +15,8 @@ import (
 	"alaz/ebpf/tcp_state"
 	"alaz/log"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net"
-	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -120,37 +118,6 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, crChan
 func (a *Aggregator) Run() {
 	go a.processk8s()
 	go a.processEbpf()
-}
-
-func (a *Aggregator) AdvertisePidSockMap() {
-	http.HandleFunc("/pid-sock-map",
-		func(w http.ResponseWriter, r *http.Request) {
-			queryParam := r.URL.Query().Get("number")
-			if queryParam == "" {
-				http.Error(w, "Missing query parameter 'number'", http.StatusBadRequest)
-				return
-			}
-			number, err := strconv.ParseUint(queryParam, 10, 32)
-			if err != nil {
-				http.Error(w, "Invalid query parameter 'number'", http.StatusBadRequest)
-				return
-			}
-			pid := uint32(number)
-
-			a.clusterInfo.mu.RLock()
-			defer a.clusterInfo.mu.RUnlock()
-
-			if sockMap, ok := a.clusterInfo.PidToSocketMap[pid]; !ok {
-				http.Error(w, "Pid not found", http.StatusNotFound)
-				return
-			} else {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusOK)
-				_ = json.NewEncoder(w).Encode(sockMap)
-				return
-			}
-		},
-	)
 }
 
 func (a *Aggregator) processk8s() {
