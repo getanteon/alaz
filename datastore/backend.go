@@ -53,6 +53,7 @@ var innerMetricsPort int = 8182
 
 // BackendDS is a backend datastore
 type BackendDS struct {
+	ctx       context.Context
 	host      string
 	port      string
 	c         *http.Client
@@ -85,7 +86,8 @@ const (
 	reqEndpoint       = "/alaz/"
 )
 
-func NewBackendDS(conf config.BackendConfig) *BackendDS {
+func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *BackendDS {
+	ctx, _ := context.WithCancel(parentCtx)
 	rand.Seed(time.Now().UnixNano())
 
 	retryClient := retryablehttp.NewClient()
@@ -141,6 +143,7 @@ func NewBackendDS(conf config.BackendConfig) *BackendDS {
 	}
 
 	ds := &BackendDS{
+		ctx:                ctx,
 		host:               conf.Host,
 		port:               conf.Port,
 		c:                  client,
@@ -173,6 +176,8 @@ func NewBackendDS(conf config.BackendConfig) *BackendDS {
 			t := time.NewTicker(time.Duration(conf.MetricsExportInterval) * time.Second)
 			for {
 				select {
+				case <-ds.ctx.Done():
+					return
 				case <-t.C:
 					// make a request to /inner/metrics
 					// forward the response to /alaz/metrics
@@ -183,7 +188,7 @@ func NewBackendDS(conf config.BackendConfig) *BackendDS {
 							return
 						}
 
-						ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+						ctx, cancel := context.WithTimeout(ds.ctx, 5*time.Second)
 						defer cancel()
 
 						resp, err := ds.c.Do(req.WithContext(ctx))
@@ -238,6 +243,11 @@ func NewBackendDS(conf config.BackendConfig) *BackendDS {
 		}()
 	}
 
+	go func() {
+		<-ds.ctx.Done()
+		log.Logger.Info().Msg("backend datastore stopped")
+	}()
+
 	return ds
 }
 
@@ -245,7 +255,7 @@ func (b *BackendDS) DoRequest(req *http.Request) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(b.ctx, 30*time.Second)
 	defer cancel()
 
 	resp, err := b.c.Do(req.WithContext(ctx))
@@ -324,10 +334,11 @@ func (b *BackendDS) sendReqsInBatch() {
 
 	for {
 		select {
+		case <-b.ctx.Done():
+			log.Logger.Info().Msg("stopping sending reqs to backend")
+			return
 		case <-t.C:
 			send()
-			// case <-b.stopChan: // TODO
-			// 	return
 		}
 	}
 
@@ -370,13 +381,14 @@ func (b *BackendDS) sendEventsInBatch(ch chan interface{}, endpoint string, inte
 
 	for {
 		select {
+		case <-b.ctx.Done():
+			log.Logger.Info().Msg("stopping sending events to backend")
+			return
 		case <-t.C:
 			randomDuration := time.Duration(rand.Intn(50)) * time.Millisecond
 			time.Sleep(randomDuration)
 
 			b.send(ch, endpoint)
-			// case <-b.stopChan: // TODO
-			// 	return
 		}
 	}
 }

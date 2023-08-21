@@ -43,7 +43,7 @@ func main() {
 		ec = ebpf.NewEbpfCollector(ctx)
 		go ec.Deploy()
 
-		a := aggregator.NewAggregator(kubeEvents, nil, ec.EbpfEvents())
+		a := aggregator.NewAggregator(ctx, kubeEvents, nil, ec.EbpfEvents())
 		a.Run()
 		a.AdvertisePidSockMap()
 	}

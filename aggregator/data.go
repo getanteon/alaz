@@ -14,6 +14,7 @@ import (
 	"alaz/ebpf/l7_req"
 	"alaz/ebpf/tcp_state"
 	"alaz/log"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -94,7 +95,8 @@ var (
 var usePgDs bool = false
 var useBackendDs bool = true // default to true
 
-func NewAggregator(k8sChan <-chan interface{}, crChan <-chan interface{}, ebpfChan <-chan interface{}) *Aggregator {
+func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, crChan <-chan interface{}, ebpfChan <-chan interface{}) *Aggregator {
+	ctx, _ := context.WithCancel(parentCtx)
 	clusterInfo := &ClusterInfo{
 		PodIPToPodUid:         map[string]types.UID{},
 		ServiceIPToServiceUid: map[string]types.UID{},
@@ -119,7 +121,7 @@ func NewAggregator(k8sChan <-chan interface{}, crChan <-chan interface{}, ebpfCh
 	}
 
 	metricsExport, _ := strconv.ParseBool(os.Getenv("METRICS_BACKEND"))
-	dsBackend := datastore.NewBackendDS(config.BackendConfig{
+	dsBackend := datastore.NewBackendDS(ctx, config.BackendConfig{
 		Host:                  os.Getenv("BACKEND_HOST"),
 		Port:                  os.Getenv("BACKEND_PORT"),
 		MetricsExport:         metricsExport,
