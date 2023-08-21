@@ -68,7 +68,7 @@ type BackendDS struct {
 	containerEventChan chan interface{} // *ContainerEvent
 	dsEventChan        chan interface{} // *DaemonSetEvent
 
-	// TODO:
+	// TODO add:
 	// statefulset
 	// job
 	// cronjob
@@ -469,8 +469,7 @@ func newHandler(logger nodeExportLogger) *nodeExporterHandler {
 	}
 
 	if innerHandler, err := h.innerHandler(); err != nil {
-		// TODO: remove panic
-		panic(fmt.Sprintf("Couldn't create metrics handler: %s", err))
+		log.Logger.Error().Msgf("Couldn't create metrics handler: %s", err)
 	} else {
 		h.inner = innerHandler
 	}

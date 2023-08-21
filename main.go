@@ -2,7 +2,6 @@ package main
 
 import (
 	"alaz/aggregator"
-	"alaz/cruntimes"
 	"alaz/ebpf"
 	"alaz/k8s"
 	"os"
@@ -12,9 +11,7 @@ import (
 
 	"alaz/log"
 	"context"
-	"encoding/json"
 	"net/http"
-	"time"
 )
 
 func main() {
@@ -38,11 +35,6 @@ func main() {
 			panic(err)
 		}
 		go k8sCollector.Init(kubeEvents)
-	}
-
-	// container runtime collector
-	if os.Getenv("CR_COLLECTOR_ENABLED") == "true" {
-		go crCollector()
 	}
 
 	// deploy ebpf programs
@@ -96,34 +88,4 @@ func main() {
 	log.Logger.Info().Msg("ebpfCollector done")
 
 	log.Logger.Info().Msg("alaz exiting...")
-}
-
-func crCollector() {
-	ct, err := cruntimes.NewContainerdTracker()
-	if err != nil {
-		log.Logger.Fatal().Err(err).Msg("failed to create containerd tracker")
-	}
-
-	http.HandleFunc("/cr-pods", func(w http.ResponseWriter, r *http.Request) {
-		ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
-		km, err := ct.ListAll(ctx)
-		if err != nil {
-			w.Write([]byte(err.Error()))
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(km.PodMetadatas)
-	})
-
-	http.HandleFunc("/cr-containers", func(w http.ResponseWriter, r *http.Request) {
-		ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
-		km, err := ct.ListAll(ctx)
-		if err != nil {
-			w.Write([]byte(err.Error()))
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(km.ContainerMetadatas)
-	})
 }

@@ -346,14 +346,6 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 						method = "Unknown"
 					}
 
-					// TODO: remove this, for debugging
-					if protocol == L7_PROTOCOL_HTTP && l7Event.Status == 0 {
-						log.Logger.Warn().Str("protocol", protocol).Str("method", method).
-							Str("payload", string(l7Event.Payload[:l7Event.PayloadSize])).
-							Uint32("pid", l7Event.Pid).
-							Msg("http call with status 0 at ebpf map read")
-					}
-
 					ch <- L7Event{
 						Fd:                  l7Event.Fd,
 						Pid:                 l7Event.Pid,

@@ -85,11 +85,6 @@ func (nl *SocketLine) GetValue(timestamp uint64) (*SockInfo, error) {
 
 	// Return the value associated with the closest previous timestamp
 
-	// TODO: lru cache
-	// if no new values are added, return from cache
-	// A client that uses same socket for a long time will have a lot of requests
-	// no need to search for the same value again and again
-
 	nl.Values[index-1].LastMatch = uint64(time.Now().UnixNano())
 	return nl.Values[index-1].SockInfo, nil
 }
@@ -121,7 +116,7 @@ func (nl *SocketLine) DeleteUnused() {
 			}
 
 			// assumedInterval is inversely proportional to the number of requests being discarded
-			assumedInterval := uint64(5 * time.Minute) // TODO: make configurable
+			assumedInterval := uint64(5 * time.Minute)
 
 			// delete all values that
 			// closed and its LastMatch + assumedInterval < lastMatchedReqTime

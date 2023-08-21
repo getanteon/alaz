@@ -75,7 +75,6 @@ type Address struct {
 }
 
 type Container struct {
-	UID       string `json:"uid"` // TODO: remove
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
 	PodUID    string `json:"pod"` // Pod UID

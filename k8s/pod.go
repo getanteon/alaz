@@ -2,11 +2,9 @@ package k8s
 
 import (
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/util/uuid"
 )
 
 type Container struct {
-	UID       string `json:"uid"` // TODO: remove
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
 	PodUID    string `json:"pod"` // Pod UID
@@ -37,7 +35,6 @@ func getContainers(pod *corev1.Pod) []*Container {
 		}
 
 		containers = append(containers, &Container{
-			UID:       string(uuid.NewUUID()), // TODO: container has no UID, remove?
 			Name:      container.Name,
 			Namespace: pod.Namespace,
 			PodUID:    string(pod.UID),
@@ -72,9 +69,6 @@ func getOnAddPodFunc(ch chan interface{}) func(interface{}) {
 func getOnUpdatePodFunc(ch chan interface{}) func(interface{}, interface{}) {
 	return func(oldObj, newObj interface{}) {
 		pod := newObj.(*corev1.Pod)
-
-		// TODO: detect changes in containers ?? , we have no uid
-		// backend must all delete and add again in case of update
 
 		containers := getContainers(pod)
 		ch <- K8sResourceMessage{

@@ -2,7 +2,7 @@ package aggregator
 
 // aggregate data from different sources
 // 1. k8s
-// 2. containerd
+// 2. containerd (TODO)
 // 3. ebpf
 // 4. cgroup (TODO)
 // 5. docker (TODO)
@@ -32,7 +32,6 @@ import (
 type Aggregator struct {
 	// listen to events from different sources
 	k8sChan  <-chan interface{}
-	crChan   <-chan interface{}
 	ebpfChan <-chan interface{}
 
 	// store the service map
@@ -64,8 +63,7 @@ type SocketMap struct {
 }
 
 type ClusterInfo struct {
-	mu sync.RWMutex
-	// TODO: If pod has more than one container, we need to differentiate
+	mu                    sync.RWMutex
 	PodIPToPodUid         map[string]types.UID `json:"podIPToPodUid"`
 	ServiceIPToServiceUid map[string]types.UID `json:"serviceIPToServiceUid"`
 
@@ -144,7 +142,6 @@ func NewAggregator(k8sChan <-chan interface{}, crChan <-chan interface{}, ebpfCh
 
 	return &Aggregator{
 		k8sChan:       k8sChan,
-		crChan:        crChan,
 		ebpfChan:      ebpfChan,
 		clusterInfo:   clusterInfo,
 		ds:            ds,
@@ -154,7 +151,6 @@ func NewAggregator(k8sChan <-chan interface{}, crChan <-chan interface{}, ebpfCh
 
 func (a *Aggregator) Run() {
 	go a.processk8s()
-	go a.processCR()
 	go a.processEbpf()
 }
 
@@ -210,13 +206,6 @@ func (a *Aggregator) processk8s() {
 		default:
 			log.Logger.Warn().Msgf("unknown resource type %s", d.ResourceType)
 		}
-	}
-}
-
-func (a *Aggregator) processCR() {
-	for data := range a.crChan {
-		// TODO
-		_ = data
 	}
 }
 
@@ -572,16 +561,6 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 		reqDto.FromPort, reqDto.ToPort = reqDto.ToPort, reqDto.FromPort
 		reqDto.FromUID, reqDto.ToUID = reqDto.ToUID, reqDto.FromUID
 		reqDto.FromType, reqDto.ToType = reqDto.ToType, reqDto.FromType
-	}
-
-	// TODO: remove this, for debugging
-	if d.Protocol == l7_req.L7_PROTOCOL_HTTP && d.Status == 0 {
-		log.Logger.Warn().Str("payload", string(d.Payload[0:d.PayloadSize])).
-			Str("fromIP", reqDto.FromIP).Uint16("fromPort", reqDto.FromPort).
-			Str("toIP", reqDto.ToIP).Uint16("toPort", reqDto.ToPort).
-			Str("protocol", reqDto.Protocol).Str("method", reqDto.Method).
-			Uint32("pid", d.Pid).Uint64("fd", d.Fd).
-			Str("path", reqDto.Path).Msg("http call with status 0 aggregator")
 	}
 
 	go func() {
