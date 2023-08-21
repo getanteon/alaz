@@ -40,8 +40,6 @@ type Aggregator struct {
 
 	// send data to datastore
 	ds datastore.DataStore
-
-	dsDestination string
 }
 
 // We need to keep track of the following
@@ -103,23 +101,6 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, crChan
 		PidToSocketMap:        make(map[uint32]*SocketMap, 0),
 	}
 
-	usePgDs, _ = strconv.ParseBool(os.Getenv("DS_PG"))
-
-	if os.Getenv("DS_BACKEND") == "false" {
-		useBackendDs = false
-	}
-
-	var dsPg datastore.DataStore
-	if usePgDs {
-		dsPg = datastore.NewRepository(config.PostgresConfig{
-			Host:     os.Getenv("POSTGRES_HOST"),
-			Port:     os.Getenv("POSTGRES_PORT"),
-			Username: os.Getenv("POSTGRES_USER"),
-			Password: os.Getenv("POSTGRES_PASSWORD"),
-			DBName:   os.Getenv("POSTGRES_DB"),
-		})
-	}
-
 	metricsExport, _ := strconv.ParseBool(os.Getenv("METRICS_BACKEND"))
 	dsBackend := datastore.NewBackendDS(ctx, config.BackendConfig{
 		Host:                  os.Getenv("BACKEND_HOST"),
@@ -128,26 +109,11 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, crChan
 		MetricsExportInterval: 5,
 	})
 
-	var ds datastore.DataStore
-	var dsDestination string
-	if useBackendDs && !usePgDs {
-		ds = dsBackend
-		dsDestination = "backend"
-	} else if !useBackendDs && usePgDs {
-		ds = dsPg
-		dsDestination = "pg"
-	} else if useBackendDs && usePgDs {
-		// both are enabled, use backend
-		ds = dsBackend
-		dsDestination = "backend"
-	}
-
 	return &Aggregator{
-		k8sChan:       k8sChan,
-		ebpfChan:      ebpfChan,
-		clusterInfo:   clusterInfo,
-		ds:            ds,
-		dsDestination: dsDestination,
+		k8sChan:     k8sChan,
+		ebpfChan:    ebpfChan,
+		clusterInfo: clusterInfo,
+		ds:          dsBackend,
 	}
 }
 
