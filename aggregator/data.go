@@ -377,7 +377,7 @@ func parseHttpPayload(request string) (method string, path string, httpVersion s
 	return method, path, httpVersion
 }
 
-func parseSqlCommand(request string) (sqlCommand string) {
+func parseSqlCommand(request string) string {
 	log.Logger.Debug().Str("request", request).Msg("parsing sql command")
 
 	// Q, 4 bytes of length, sql command
@@ -392,12 +392,12 @@ func parseSqlCommand(request string) (sqlCommand string) {
 
 	// get sql command
 	sqlStatement := string(r)
-	log.Logger.Debug().Str("sqlStatement", sqlStatement).Msg("sql statement parsed")
 
-	// get sql command from sql statement(first word)
-	sqlCommand = strings.Split(sqlStatement, " ")[0]
+	// log.Logger.Debug().Str("sqlStatement", sqlStatement).Msg("sql statement parsed")
+	// // get sql command from sql statement(first word)
+	// sqlCommand = strings.Split(sqlStatement, " ")[0]
 
-	return
+	return sqlStatement
 }
 
 func (a *Aggregator) processL7(d l7_req.L7Event) {
