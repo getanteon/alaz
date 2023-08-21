@@ -25,7 +25,7 @@ func main() {
 
 	var k8sCollector *k8s.K8sCollector
 	kubeEvents := make(chan interface{}, 1000)
-	if os.Getenv("K8S_COLLECTOR_ENABLED") == "true" {
+	if os.Getenv("K8S_COLLECTOR_ENABLED") != "false" {
 		// k8s collector
 		var err error
 		k8sCollector, err = k8s.NewK8sCollector(ctx)
