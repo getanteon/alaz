@@ -208,7 +208,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 							return
 						}
 
-						req, err = http.NewRequest(http.MethodPost, fmt.Sprintf("%s:%s/alaz/metrics/scrape/?instance=%s&monitoring_id=%s", ds.host, ds.port, NodeID, MonitoringID), bytes.NewReader(body))
+						req, err = http.NewRequest(http.MethodPost, fmt.Sprintf("%s/alaz/metrics/scrape/?instance=%s&monitoring_id=%s", ds.host, NodeID, MonitoringID), bytes.NewReader(body))
 						if err != nil {
 							log.Logger.Error().Msgf("error creating metrics request: %v", err)
 							return
@@ -235,6 +235,8 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 							log.Logger.Error().Msgf("metrics response body: %s", string(rb))
 
 							return
+						} else {
+							log.Logger.Info().Msg("metrics sent successfully")
 						}
 					}()
 				}
@@ -318,7 +320,7 @@ func (b *BackendDS) sendReqsInBatch() {
 			select {
 			case req := <-b.reqChanBuffer:
 				batch = append(batch, req)
-			case <-time.After(1 * time.Second):
+			case <-time.After(200 * time.Millisecond):
 				loop = false
 			}
 		}
@@ -492,7 +494,7 @@ type nodeExportLogger struct {
 }
 
 func (l nodeExportLogger) Log(keyvals ...interface{}) error {
-	l.logger.Info().Msg(fmt.Sprint(keyvals...))
+	l.logger.Debug().Msg(fmt.Sprint(keyvals...))
 	return nil
 }
 
