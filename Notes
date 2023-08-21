@@ -1,17 +1,18 @@
 To clean debug print pipe -> cat /sys/kernel/debug/tracing/trace_pipe
 
 When debugging, bpf_trace_printk's "fmt_size" is important. Otherwise, you can get errors like below from verifier:
-    load program: permission denied: invalid access to map value, value_size=31 off=14 size=20: R1 min value is outside of the allowed memory range (228 line(s) omitted)
+load program: permission denied: invalid access to map value, value_size=31 off=14 size=20: R1 min value is outside of the allowed memory range (228 line(s) omitted)
 
-
- // const char *msg = "established";
-      // bpf_trace_printk(msg, 12);
+// To install bpftool:
+Clone https://github.com/torvalds/linux.git
+//  linux/tools/bpf/bpftool
+// make
+// gcc must be installed
 
 To see bpf calls with strace: 
     sudo strace -o calls.txt  -f -e trace=bpf,ioctl go run -exec sudo main.go bpf_bpfel.go
 
 See "/sys/kernel/debug/tracing/events" to find available tracepoints
-
 > cat /sys/kernel/debug/tracing/events/sock/inet_sock_set_state/format
 
 To generate kernel headers files necessary:
@@ -20,35 +21,12 @@ To generate kernel headers files necessary:
 See a tracepoints format:
     > cat /sys/kernel/debug/tracing/events/task/task_newtask/format
 
-> Printing examples:
-    // const char *msg = "Pid -> **%d**"; // 12 + specifier (2)
-    // bpf_trace_printk(msg, 14, pid);
-
-    // const char *msg2 = "Source Port: %d\n";
-    // bpf_trace_printk(msg2, 17, args.sport);
-
-    // const char *msg3 = "SAddr: %d\n";
-    // bpf_trace_printk(msg3, 11, e.saddr[0]);
-    // bpf_trace_printk(msg3, 11, e.saddr[1]);
-    // bpf_trace_printk(msg3, 11, e.saddr[2]);
-    // bpf_trace_printk(msg3, 11, e.saddr[3]);
-    // bpf_trace_printk(msg3, 11, e.saddr[4]);
-
 // To debug program in vscode:
     - First build the program with "go build -o myapp main.go bpf_bpfel.go"
     -  "mode": "exec",
         "program": "${workspaceFolder}/prog/tcp_state/myapp",
         "console": "integratedTerminal",
         "asRoot": true,
-
-// To get first 50 lines of logs from a pod: 
-> kubectl logs -n ddosify alaz-daemonset-jvkcn | head -n 50
-
-// Build and push to amazon docker hub:
-docker build -t alaz:test1 .
-docker tag alaz:test1 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:test1
-docker push 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:test1
-
 
 // Compile bpf.c files with clang and llvm
 
@@ -59,11 +37,10 @@ docker push 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:test1
     -O2 -g -o hello-buffer-config.bpf.o -c kprobe.c
 > llvm-strip -g hello-buffer-config.bpf.o (strip executable from debugging symbols)
 
-
 BPF_CLANG=clang-14 BPF_CFLAGS="-O2 -g -Wall -Werror -D__TARGET_ARCH_x86"  go generate ./...
 
 // To see available tracepoints:
-> cat /sys/kernel/tracing/available_events (SEC definition bunlarla match ediyor)
+> cat /sys/kernel/tracing/available_events (SEC definition matches with this)
 
 // How to take arguments of a function attached to a tracepoint:
  1) Look at the format from :
@@ -84,6 +61,7 @@ cat /sys/kernel/debug/tracing/events/syscalls/sys_enter_connect/format
 // Look format of the tracepoint:
 > cat /sys/kernel/debug/tracing/events/syscalls/sys_enter_connect/format
     name: sys_enter_connect
+
 ID: 1473
 format:
         field:unsigned short common_type;       offset:0;       size:2; signed:0;
@@ -105,27 +83,17 @@ Protocol Families : PF_INET, PF_INET6, PF_PACKET, PF_UNIX, PF_XDP
 Transport Protocols : IPPROTO_UDP or IPPROTO_TCP
 Sock Types : SOCK_STREAM, SOCK_DGRAM, or SOCK_RAW.
 
-
-docker run --name postgres-alaz -e POSTGRES_USER=alazuser -e POSTGRES_PASSWORD=alazpwd -e POSTGRES_DB=alazdb -p 5432:5432 -d postgres:13.6
-
-CGO_ENABLED=0 K8S_COLLECTOR_ENABLED=true IN_CLUSTER=false POSTGRES_HOST=localhost POSTGRES_PORT=5432 POSTGRES_USER=alazuser POSTGRES_PASSWORD=alazpwd POSTGRES_DB=alazdb go run main.go
-
-
 Detaching bpf programs with bpftool
 > bpftool perf list
 then 
 > kill -9
 
+in order to see map contents (human readable) with "bpftool map dump"
+define as:
+    __type(key, void *);
+    __type(value, struct sk_info);
 
-bpftool map dump ile human readable formatta gorebilmek icin
-__type(key, void *);
-__type(value, struct sk_info);
-
-seklinde tanimlaman lazim map icin
 // sk_info icinde pointer olursa  executing "common" at <$.TypeDeclaration>: error calling TypeDeclaration: Struct:"rw_args_t": field 1: type *btf.Pointer: not supported 
---> uint ile yazcan
-
-
 
 // Ebpf error: 
 https://github.com/cilium/ebpf/blob/master/btf/core.go  0xbad2310
@@ -140,17 +108,11 @@ basically, your vmlinux.h defines a struct field that wasn't defined when your k
 yani kerneldaki struct fieldina erismiyorsun. kendin tanimlamissin ama kernelde yok. bunu core_read yapmaya
 calisirsan kernelda bulamadigi icin mapping de yapamiyor error veriyor.
 
-core -> kernel structurelarina erisirken 
-kendi 
-
-
 exlude on strace:
-    sudo strace -o hammercalls.txt -f -e 'trace=!epoll_pwait,nanosleep,futex,setsockopt,getsockopt,epoll_ctl' -p 17555
+    sudo strace -o myapc.txt -f -e 'trace=!epoll_pwait,nanosleep,futex,setsockopt,getsockopt,epoll_ctl' -p 17555
 
 filter on strace:
     sudo strace -f -e trace=socket,connect,write,read,accept -p 805247
-
-
 
 write, read , close
 timeout case -> write , close ??
@@ -164,42 +126,22 @@ start_app_onpre(23005)---gunicorn(23118)-+-gunicorn(23123)---{gunicorn}(23155)
 
 
 sudo strace -o backend-calls.txt  -f -e 'trace=!epoll_pwait,select,fchmod,ioctl,geteuid,poll,openat,nanosleep,futex,setsockopt,getsockopt,epoll_ctl' -p 23123 -p 23124 -p 23125 -p 23126 -p 23127 -p 23128 -p 23128
-
 sudo strace -o backend-calls.txt  -f -e 'trace=!epoll_pwait,select,fchmod,ioctl,geteuid,openat,nanosleep,futex,setsockopt,getsockopt,epoll_ctl' -p 23123 -p 23124 -p 23125 -p 23126 -p 23127 -p 23128 -p 23128
 sudo strace -o hammerdebug-calls.txt  -f -e 'trace=!select,fchmod,ioctl,geteuid,nanosleep,futex,setsockopt,getsockopt,epoll_ctl' -p 30703
 sudo strace -o hammermanager-calls.txt  -f -e 'trace=!select,fchmod,ioctl,geteuid,nanosleep,futex,setsockopt,getsockopt,epoll_ctl' -p 22528 -p 22617 -p 22618 -p 22619 -p 22620 -p 22621 -p 22622
 
-
-
-To profile:
-> curl http://localhost:8181/stop-trace && scp -r ec2-user@18.197.20.20:/mnt/data/trace.out ~/trace.out && go tool trace trace.out
-
 // bcc tools 
-ortada python ve bcc module ekli olmasi lazim
-sudo python3 tcptracer.py | grep myapp
-tcplife
-
-
 pip3 install bcc
 sudo yum install bcc-tools
-
-https://github.com/torvalds/linux.git
-//  linux/tools/bpf/bpftool
-// make
-// gcc olmasi lazim
-
-
+tcptracer
+tcplife
+// tcptracer shows opening and closing of TCP connections 
 // tcptop summarizes throughput of TCP connections
 sudo python3 tcptop.py |  grep 5672 | grep hammer
-
-// tcptracer shows opening and closing of TCP connections 
-
-
 
 // tcpdump inside container and get pcap and analyze with wireshark on local
 > tcpdump -i eth0 src port 57036 -w capture.pcap
 tcpdump -i eth0 -w capture.pcap
-> k cp ddosify/hammerdebug-77bc5c64f6-ghvn6:capture.pcap ~/capture.pcap -c hammerdebug
 
 // see already established connections
 // sudo conntrack -L -p tcp | grep 192.168.52.61 | grep 5672

@@ -14,8 +14,8 @@ UIDGID := $(shell stat -c '%u:%g' ${REPODIR})
 
 # Prefer podman if installed, otherwise use docker.
 # Note: Setting the var at runtime will always override.
-CONTAINER_ENGINE ?= $(if $(shell command -v podman), podman, docker)
-CONTAINER_RUN_ARGS ?= $(if $(filter ${CONTAINER_ENGINE}, podman), --log-driver=none, --user "${UIDGID}")
+CONTAINER_ENGINE ?= docker
+CONTAINER_RUN_ARGS ?= $(--user "${UIDGID}")
 
 IMAGE := ebpf-builder
 VERSION := v1
