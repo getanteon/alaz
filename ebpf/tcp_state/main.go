@@ -1,7 +1,3 @@
-// This program demonstrates attaching an eBPF program to a kernel symbol.
-// The eBPF program will be attached to the start of the sys_execve
-// kernel function and prints out the number of times it has been called
-// every second.
 package tcp_state
 
 import (
@@ -107,19 +103,6 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	}
 	defer objs.Close()
 
-	// pinning a ebpf program
-	// err := objs.bpfPrograms.GetCommand.Pin("/sys/fs/bpf/kprobe_execve_command")
-	// if err != nil {
-	// 	log.Default().Printf("could not pin program, %v", err)
-	// }
-
-	// Open a Kprobe at the entry point of the kernel function and attach the
-	// pre-compiled program. Each time the kernel function enters, the program
-	// will increment the execution counter by 1. The read loop below polls this
-	// map value once per second.
-
-	// Read loop reporting the total amount of times the kernel
-	// function was entered, once per second.
 	ticker := time.NewTicker(1 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -172,28 +155,6 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	}()
 
 	// go listenDebugMsgs()
-
-	// go func() {
-	// 	for {
-	// 		record, err := tcpListenEvents.Read()
-	// 		if err != nil {
-	// 			log.Logger.Warn().Err(err).Msg("error reading from perf array")
-	// 		}
-
-	// 		if record.LostSamples != 0 {
-	// 			log.Logger.Warn().Msgf("lost samples tcp-listen %d", record.LostSamples)
-	// 		}
-
-	// 		// TODO: investigate why this is happening
-	// 		// sometimes the record is empty
-	// 		if record.RawSample == nil || len(record.RawSample) == 0 {
-	// 			continue
-	// 		}
-
-	// 		// bpfEvent := (*TcpEvent)(unsafe.Pointer(&record.RawSample[0]))
-	// 		// log.Logger.Info().Msgf("tcp listen event: %+v", bpfEvent)
-	// 	}
-	// }()
 
 	readDone := make(chan struct{})
 	go func() {

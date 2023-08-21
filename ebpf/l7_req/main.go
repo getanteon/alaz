@@ -1,14 +1,9 @@
-// This program demonstrates attaching an eBPF program to a kernel symbol.
-// The eBPF program will be attached to the start of the sys_execve
-// kernel function and prints out the number of times it has been called
-// every second.
 package l7_req
 
 import (
 	"context"
 	"fmt"
 	"os"
-	"time"
 	"unsafe"
 
 	"alaz/log"
@@ -220,19 +215,6 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		log.Logger.Fatal().Err(err).Msg("loading objects")
 	}
 	defer objs.Close()
-
-	// pinning a ebpf program
-	// err := objs.bpfPrograms.GetCommand.Pin("/sys/fs/bpf/kprobe_execve_command")
-	// if err != nil {
-	// 	log.Default().Printf("could not pin program, %v", err)
-	// }
-
-	// Open a Kprobe at the entry point of the kernel function and attach the
-	// pre-compiled program. Each time the kernel function enters, the program
-	// will increment the execution counter by 1. The read loop below polls this
-	// map value once per second.
-
-	time.Sleep(1 * time.Second)
 
 	l, err := link.Tracepoint("syscalls", "sys_enter_read", objs.bpfPrograms.SysEnterRead, nil)
 	if err != nil {

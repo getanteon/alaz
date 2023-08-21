@@ -1,8 +1,6 @@
-// #include "http.c"
-#include "../../headers/bpf.h"
-#include "../../headers/common.h"
-#include "../../headers/l7_req.h"
-
+#include "../headers/bpf.h"
+#include "../headers/common.h"
+#include "../headers/l7_req.h"
 
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_helpers.h>
@@ -73,7 +71,6 @@ struct {
      __type(value, struct l7_request);
      __uint(max_entries, 1);
 } l7_request_heap SEC(".maps");
-
 
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
@@ -193,10 +190,6 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, char* buf, __u64
         bpf_trace_printk(msgCtx, sizeof(msgCtx));
         return 0;
     }
-    
-    // copy request payload
-    // we should copy as much as the size of write buffer, 
-    // if we copy more, we will get a kernel error ?
 
     if(count > MAX_PAYLOAD_SIZE){
         // will not be able to copy all of it
@@ -319,7 +312,7 @@ int process_exit_of_syscalls_write_sendto(void* ctx, __s64 ret){
         bpf_map_delete_elem(&active_writes, &id);
         bpf_map_delete_elem(&active_l7_requests, &k);
     }
-     return 0;
+    return 0;
 }
 
 static __always_inline
@@ -338,15 +331,9 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
         k.pid = id >> 32;
         k.fd = read_info->fd;
 
-        // print error
-        char msg[] = "read or recvfrom failed - %ld";
-        bpf_trace_printk(msg, sizeof(msg), ret);
 
         // clean up
-        
-        // TODO: is it success ?????
         bpf_map_delete_elem(&active_reads, &id);
-        
         bpf_map_delete_elem(&active_l7_requests, &k);
 
         return 0;
@@ -458,6 +445,12 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
     bpf_map_delete_elem(&active_reads, &id);
     bpf_map_delete_elem(&active_l7_requests, &k);
 
+    // TODO: remove this, only for debugging
+    if (e->protocol == PROTOCOL_HTTP && e->status == 0) {
+        char msgCtx[] = "http call with status code 0, fd: %ld, pid: %ld";
+        bpf_trace_printk(msgCtx, sizeof(msgCtx), e->fd,e->pid);
+    }
+
     long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
     if (r < 0) {
         char msg[] = "could not write to l7_events - %ld";
@@ -466,7 +459,6 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
 
     return 0;
 }
-
 
 // After socket creation and connection establishment, the kernel will call the
 // write function of the socket's protocol handler to send data to the remote

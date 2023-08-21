@@ -18,8 +18,8 @@ import (
 )
 
 func main() {
-
 	ctx, cancel := context.WithCancel(context.Background())
+
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL)
 	go func() {
