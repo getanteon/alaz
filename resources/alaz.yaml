@@ -64,7 +64,7 @@ spec:
         - --no-collector.hwmon
         - --collector.filesystem.ignored-mount-points=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/pods/.+)($|/)
         - --collector.netclass.ignored-devices=^(veth.*)$
-        image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:v4.9.8
+        image: 158138719754.dkr.ecr.eu-central-2.amazonaws.com/alaz:v5.1
         resources:
           limits:
             cpu: 1000m
