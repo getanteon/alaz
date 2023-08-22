@@ -17,13 +17,13 @@ UIDGID := $(shell stat -c '%u:%g' ${REPODIR})
 CONTAINER_ENGINE ?= docker
 CONTAINER_RUN_ARGS ?= $(--user "${UIDGID}")
 
-IMAGE := ebpf-builder
-VERSION := v1
+IMAGE_GENERATE := ebpf-builder
+VERSION_GENERATE := v1
 
 # clang <8 doesn't tag relocs properly (STT_NOTYPE)
 # clang 9 is the first version emitting BTF
 TARGETS := \
-	
+
 
 .PHONY: all clean container-all container-shell generate
 
@@ -35,14 +35,14 @@ container-all:
 		-v "${REPODIR}":/ebpf -w /ebpf --env MAKEFLAGS \
 		--env CFLAGS="-fdebug-prefix-map=/ebpf=." \
 		--env HOME="/tmp" \
-		"${IMAGE}:${VERSION}" \
+		"${IMAGE_GENERATE}:${VERSION_GENERATE}" \
 		make all
 
 # (debug) Drop the user into a shell inside the container as root.
 container-shell:
 	${CONTAINER_ENGINE} run --rm -ti \
 		-v "${REPODIR}":/ebpf -w /ebpf \
-		"${IMAGE}:${VERSION}"
+		"${IMAGE_GENERATE}:${VERSION_GENERATE}"
 
 
 all: generate
@@ -60,3 +60,18 @@ generate:
 %-eb.elf : %.c
 	$(CLANG) $(CFLAGS) -target bpfeb -c $< -o $@
 	$(STRIP) -g $@
+
+
+## Alaz Image
+
+ALAZ_IMAGE_NAME := alaz
+ALAZ_TAG := v3
+REGISTRY := ddosify
+BUILDX_BUILDER := buildx-multi-arch
+ALAZ_DOCKERFILE := Dockerfile
+
+.PHONY: build_push
+build_push:
+	docker buildx inspect $(BUILDX_BUILDER) || \
+	docker buildx create --name=$(BUILDX_BUILDER) && \
+	docker buildx build --push --platform=linux/amd64,linux/arm64 --builder=$(BUILDX_BUILDER) --build-arg ALAZ_TAG=$(ALAZ_TAG) --tag=$(REGISTRY)/$(ALAZ_IMAGE_NAME):$(ALAZ_TAG) -f $(ALAZ_DOCKERFILE) .
