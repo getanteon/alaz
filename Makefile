@@ -19,10 +19,15 @@ CONTAINER_RUN_ARGS ?= $(--user "${UIDGID}")
 
 IMAGE_GENERATE := ebpf-builder
 VERSION_GENERATE := v1
+GENERATE_DOCKERFILE := ebpf-builder/Dockerfile
 
 # clang <8 doesn't tag relocs properly (STT_NOTYPE)
 # clang 9 is the first version emitting BTF
 TARGETS := \
+
+.PHONY: go_builder_image_build
+go_builder_image_build:
+	docker build -t ${IMAGE_GENERATE}:${VERSION_GENERATE} -f ${GENERATE_DOCKERFILE} .
 
 
 .PHONY: all clean go_generate container-shell generate
