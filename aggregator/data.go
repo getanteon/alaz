@@ -477,9 +477,6 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 			}
 		}
 	}
-	// if not found, it's 3rd party url or something else
-	// ToUID and ToType will be empty
-	// Check PodIPToPodUid ?? maybe it's a pod
 
 	reqDto.Completed = !d.Failed
 
