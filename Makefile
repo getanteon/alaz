@@ -25,12 +25,12 @@ VERSION_GENERATE := v1
 TARGETS := \
 
 
-.PHONY: all clean container-all container-shell generate
+.PHONY: all clean go_generate container-shell generate
 
-.DEFAULT_TARGET = container-all
+.DEFAULT_TARGET = go_generate
 
 # Build all ELF binaries using a containerized LLVM toolchain.
-container-all:
+go_generate:
 	+${CONTAINER_ENGINE} run --rm -ti ${CONTAINER_RUN_ARGS} \
 		-v "${REPODIR}":/ebpf -w /ebpf --env MAKEFLAGS \
 		--env CFLAGS="-fdebug-prefix-map=/ebpf=." \
