@@ -96,6 +96,7 @@ spec:
           privileged: true 
         terminationMessagePath: /dev/termination-log
         terminationMessagePolicy: File
+        # needed for linking ebpf trace programs
         volumeMounts:
         - mountPath: /sys/kernel/debug
           name: debugfs
@@ -107,6 +108,7 @@ spec:
       serviceAccount: alaz-serviceaccount
       serviceAccountName: alaz-serviceaccount
       terminationGracePeriodSeconds: 30
+      # needed for linking ebpf trace programs
       volumes:
       - name: debugfs
         hostPath:

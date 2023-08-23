@@ -23,7 +23,7 @@ By connecting to chosen container runtimes socket, alaz is able to gather more d
 - environment variables
 - ...
 
-> At time of today(6th July 2023). We do not take into consideration container runtimes data, we do not need it for todays objectives. Will be used later on while aggregating data.
+> At time of today(23th August 2023). We do not take into consideration container runtimes data, we do not need it for todays objectives. Will be used later on for collecting more detailed data.
 
 ##### #  	2) Ebpf Programs
 In Alaz's ebpf directory there are a couple of **ebpf programs written in C using libbpf**.
@@ -48,8 +48,13 @@ Used packages from cilium are :
  
 Current  programs are generally attached to kernel tracepoints like:
  - tracepoint/syscalls/sys_enter_write (l7_req)
+ - tracepoint/syscalls/sys_exit_write (l7_req)
+ - tracepoint/syscalls/sys_enter_sendto (l7_req)
+ - tracepoint/syscalls/sys_exit_sendto (l7_req)
  - tracepoint/syscalls/sys_enter_read (l7_req)
  - tracepoint/syscalls/sys_exit_read (l7_req)
+ - tracepoint/syscalls/sys_enter_recvfrom (l7_req)
+ - tracepoint/syscalls/sys_exit_recvfrom (l7_req)
  - tracepoint/sock/inet_sock_set_state (tcp_state)
  - tracepoint/syscalls/sys_enter_connect (tcp_state)
  - tracepoint/syscalls/sys_exit_connect (tcp_state)
@@ -61,15 +66,12 @@ Using **//go:embed** directive of golang. We embed *.o* files and load them into
 
 Then we build Alaz like a ordinary golang app more or less since compiled codes are embedded.
 
-
 #### How to Deploy Alaz
-Deployed as a DaemonSet resource on the cluster.
-Important points to notice are the capabilities in order to load bpf programs:
+Deployed as a privileged DaemonSet resource on the cluster.
 
-              - BPF
-              - PERFMON
-              - NET_ADMIN
-              - SYS_RESOURCE
+Alaz is required to run as a privileged container since it needs read access to `/proc` directory of the host machine.
+
+In order to link ebpf programs into kernel SYS_ADMIN and SYS_RESOURCE capabilities are required. For kernels 5.8+ BPF capability can be used instead of SYS_ADMIN. Since privileged container have all capabilties, we do not declare them explicitly.
 
 If we are going to use containerd, we must mount related sock path:
  `			- mountPath: /var/run/containerd/containerd.sock
