@@ -75,8 +75,13 @@ REGISTRY := ddosify
 BUILDX_BUILDER := buildx-multi-arch
 ALAZ_DOCKERFILE := Dockerfile
 
-.PHONY: build_push
-build_push:
+.PHONY: build_push_buildx
+build_push_buildx:
 	docker buildx inspect $(BUILDX_BUILDER) || \
 	docker buildx create --name=$(BUILDX_BUILDER) && \
 	docker buildx build --push --platform=linux/amd64,linux/arm64 --builder=$(BUILDX_BUILDER) --build-arg ALAZ_TAG=$(ALAZ_TAG) --tag=$(REGISTRY)/$(ALAZ_IMAGE_NAME):$(ALAZ_TAG) -f $(ALAZ_DOCKERFILE) .
+
+
+.PHONY: build_push
+build_push:
+	docker build -t $(REGISTRY)/$(ALAZ_IMAGE_NAME):$(ALAZ_TAG) -f $(ALAZ_DOCKERFILE) .
