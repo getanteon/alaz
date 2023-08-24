@@ -85,3 +85,5 @@ build_push_buildx:
 .PHONY: build_push
 build_push:
 	docker build -t $(REGISTRY)/$(ALAZ_IMAGE_NAME):$(ALAZ_TAG) -f $(ALAZ_DOCKERFILE) .
+	docker push $(REGISTRY)/$(ALAZ_IMAGE_NAME):$(ALAZ_TAG)
+
