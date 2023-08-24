@@ -103,3 +103,12 @@ type Request struct {
 	Method     string
 	Path       string
 }
+
+type BackendResponse struct {
+	Msg    string `json:"msg"`
+	Errors []struct {
+		EventNum int         `json:"event_num"`
+		Event    interface{} `json:"event"`
+		Error    string      `json:"error"`
+	} `json:"errors"`
+}

@@ -122,6 +122,22 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 				}
 				log.Logger.Warn().Msgf("will retry, response body: %s", string(rb))
 				log.Logger.Warn().Msgf("will retry, status code: %d", resp.StatusCode)
+			} else if resp.StatusCode == http.StatusOK {
+				shouldRetry = false
+				rb, err := io.ReadAll(resp.Body)
+				if err != nil {
+					log.Logger.Debug().Msgf("error reading response body: %v", err)
+				}
+				var resp BackendResponse
+				err = json.Unmarshal(rb, &resp)
+				if err != nil {
+					log.Logger.Debug().Msgf("error unmarshalling response body: %v", err)
+				}
+				if len(resp.Errors) > 0 {
+					for _, e := range resp.Errors {
+						log.Logger.Debug().Str("errorMsg", e.Error).Any("event", e.Event).Msgf("backend persist error")
+					}
+				}
 			}
 		}
 		return shouldRetry, nil
