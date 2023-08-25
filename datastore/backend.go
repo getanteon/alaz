@@ -206,7 +206,9 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 						ctx, cancel := context.WithTimeout(ds.ctx, 5*time.Second)
 						defer cancel()
 
-						resp, err := ds.c.Do(req.WithContext(ctx))
+						// use the default client, ds client reads response on success to look for failed events,
+						// therefore body here will be empty
+						resp, err := http.DefaultClient.Do(req.WithContext(ctx))
 
 						if err != nil {
 							log.Logger.Error().Msgf("error sending inner metrics request: %v", err)
