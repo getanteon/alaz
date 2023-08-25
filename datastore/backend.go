@@ -102,14 +102,6 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 			// connection refused, connection reset, connection timeout
 			shouldRetry = true
 			log.Logger.Warn().Msgf("will retry, error: %v", err)
-			if resp != nil {
-				rb, err := io.ReadAll(resp.Body)
-				if err != nil {
-					log.Logger.Warn().Msgf("error reading response body: %v", err)
-				}
-				log.Logger.Warn().Msgf("will retry, response body: %s", string(rb))
-			}
-
 		} else {
 			if resp.StatusCode == http.StatusBadRequest ||
 				resp.StatusCode == http.StatusTooManyRequests ||
@@ -120,8 +112,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 				if err != nil {
 					log.Logger.Warn().Msgf("error reading response body: %v", err)
 				}
-				log.Logger.Warn().Msgf("will retry, response body: %s", string(rb))
-				log.Logger.Warn().Msgf("will retry, status code: %d", resp.StatusCode)
+				log.Logger.Warn().Int("statusCode", resp.StatusCode).Str("respBody", string(rb)).Msgf("will retry...")
 			} else if resp.StatusCode == http.StatusOK {
 				shouldRetry = false
 				rb, err := io.ReadAll(resp.Body)
