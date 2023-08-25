@@ -109,3 +109,10 @@ enum {
 	IPPROTO_MPTCP = 262,
 	IPPROTO_MAX = 263,
 };
+
+#define bpf_read_into_from(dst, src)                            \
+({                                                    \
+    if (bpf_probe_read(&dst, sizeof(dst), src) < 0) { \
+        return 0;                                     \
+    }                                                 \
+})

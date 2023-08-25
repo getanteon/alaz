@@ -191,14 +191,12 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, char* buf, __u64
         return 0;
     }
 
+    bpf_probe_read(&req->payload, sizeof(req->payload), (const void *)buf);
     if(count > MAX_PAYLOAD_SIZE){
         // will not be able to copy all of it
-        bpf_probe_read(&req->payload, sizeof(req->payload), (const void *)buf);
         req->payload_size = MAX_PAYLOAD_SIZE;
         req->payload_read_complete = 0;
     }else{
-        // copy only the first ctx->count bytes (all we have)
-        bpf_probe_read(&req->payload, count, (const void *)buf);
         req->payload_size = count;
         req->payload_read_complete = 1;
     }

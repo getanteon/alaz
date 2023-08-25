@@ -71,26 +71,27 @@
 #define AMQP_METHOD_DELIVER 60 // Deliver
 #define AMQP_METHOD_ACK 80
 #define AMQP_METHOD_REJECT 90
+
 static __always_inline
 int amqp_method_is(char *buf, __u64 buf_size, __u16 expected_method) {
     if (buf_size < 12) {
         return 0;
     }
     __u8 type = 0;
-    bpf_probe_read(&type,sizeof(type),buf); // read the frame type
+    bpf_read_into_from(type,buf); // read the frame type
     if (type != AMQP_FRAME_TYPE_METHOD) {
         return 0;
     }
 
     __u32 size = 0;
-    bpf_probe_read(&size,sizeof(size),buf+3); // read the frame size
+    bpf_read_into_from(size,buf+3); // read the frame size
     size = bpf_htonl(size);
     if (7 + size + 1 > buf_size) { // buf_size is smaller than the frame size
         return 0;
     }
 
     __u8 end = 0;
-    bpf_probe_read(&end,sizeof(end),buf+7+size); // read the frame end, which is the last byte of the frame
+    bpf_read_into_from(end,buf+7+size); // read the frame end, which is the last byte of the frame
     if (end != AMQP_FRAME_END) {
         return 0;
     }
@@ -99,13 +100,13 @@ int amqp_method_is(char *buf, __u64 buf_size, __u16 expected_method) {
     // check the class and method from the frame payload
 
     __u16 class = 0;
-    bpf_probe_read(&class,sizeof(class),buf+7);  // read the class-id
+    bpf_read_into_from(class,buf+7);  // read the class-id
     if (bpf_htons(class) != AMQP_CLASS_BASIC) {
         return 0;
     }
 
     __u16 method = 0;
-    bpf_probe_read(&method,sizeof(method),buf+9);
+    bpf_read_into_from(method,buf+9);
     if (bpf_htons(method) != expected_method) {
         return 0;
     }

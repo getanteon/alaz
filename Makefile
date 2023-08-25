@@ -4,7 +4,7 @@
 CLANG ?= clang-14
 STRIP ?= llvm-strip-14
 OBJCOPY ?= llvm-objcopy-14
-CFLAGS := -O2 -g -Wall -Werror -D__TARGET_ARCH_x86 $(CFLAGS)
+CFLAGS := -O2 -g -Wall -Werror $(CFLAGS)
 
 
 # Obtain an absolute path to the directory of the Makefile.
