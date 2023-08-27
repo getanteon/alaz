@@ -1,4 +1,4 @@
-# Alaz
+# Alaz - Ddosify eBPF Agent
 
 <h1 align="center">
     <img src="https://imagedelivery.net/jnIqn6NB1gbMLXIvlYKo5A/172d2843-4868-40e9-1bb0-1176d477d600/public" alt="Alaz Ddosify Usage" width="777px" /><br />
@@ -14,7 +14,7 @@
 </p>
 
 
-Alaz is an open-source Ddosify discovery agent that can inspect and collect Kubernetes (K8s) service traffic without the need for code instrumentation, sidecars, or service restarts. This is possible due to its use of eBPF technology. Alaz can create a Service Map that helps identify golden signals and problems like high latencies, 5xx errors, zombie services, SQL queries. Additionally, it can gather system information and resources via the Prometheus Node Exporter, which is readily available on the agent.
+Alaz is an open-source Ddosify eBPF agent that can inspect and collect Kubernetes (K8s) service traffic without the need for code instrumentation, sidecars, or service restarts. This is possible due to its use of eBPF technology. Alaz can create a Service Map that helps identify golden signals and problems like high latencies, 5xx errors, zombie services, SQL queries. Additionally, it can gather system information and resources via the Prometheus Node Exporter, which is readily available on the agent.
 
 ## Features
 
