@@ -1,7 +1,7 @@
 # Alaz
 
 <h1 align="center">
-    <img src="https://imagedelivery.net/jnIqn6NB1gbMLXIvlYKo5A/172d2843-4868-40e9-1bb0-1176d477d600/public" alt="Alaz Ddosify Usage" width="444px" /><br />
+    <img src="https://imagedelivery.net/jnIqn6NB1gbMLXIvlYKo5A/172d2843-4868-40e9-1bb0-1176d477d600/public" alt="Alaz Ddosify Usage" width="777px" /><br />
 </h1>
 <p align="center">
     <a href="https://github.com/ddosify/alaz/releases" target="_blank"><img src="https://img.shields.io/github/v/release/ddosify/alaz?style=for-the-badge&logo=github&color=orange" alt="alaz latest version" /></a>&nbsp;
