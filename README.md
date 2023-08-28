@@ -31,7 +31,7 @@ Alaz is an open-source Ddosify eBPF agent that can inspect and collect Kubernete
 
 To use Alaz, you need to have a [Ddosify Cloud](https://app.ddosify.com/register) account or [Ddosify Self Hosted](https://github.com/ddosify/ddosify/tree/master/selfhosted) installed. 
 
-### For Ddosify Cloud
+### ☁️ For Ddosify Cloud
 
 1. Register for a [Ddosify Cloud account](https://app.ddosify.com/register).
 2. Add a cluster on the [Monitoring page](https://app.ddosify.com/monitoring). You will receive a monitoring ID and instructions.
@@ -59,7 +59,7 @@ kubectl create namespace ddosify
 helm upgrade --install --namespace ddosify alaz ddosify/alaz --set daemonSet.container.env.MONITORING_ID=$MONITORING_ID
 ```
 
-### For Ddosify Self Hosted
+### 🏠 For Ddosify Self Hosted
 
 1. Install [Ddosify Self Hosted](https://github.com/ddosify/ddosify/tree/master/selfhosted)
 2. Add a cluster on the [Monitoring page](http://localhost:8014/monitoring). You will receive a monitoring ID and instructions.
