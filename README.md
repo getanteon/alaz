@@ -28,7 +28,30 @@ To use Alaz, you need to have a Ddosify Cloud account. Follow these steps to get
 
 1. Register for a [Ddosify Cloud account](https://app.ddosify.com/register).
 2. Add a cluster on the [Monitoring page](https://app.ddosify.com/monitoring). You will receive a monitoring ID and instructions.
-3. Run the agent on your Kubernetes cluster using the instructions you received.
+3. Run the agent on your Kubernetes cluster using the instructions you received. There are two options for Kubernetes deployment: 
+
+### Using the kubectl
+
+```bash
+curl -sSL https://raw.githubusercontent.com/ddosify/alaz/master/resources/alaz.yaml
+
+# Replace <MONITORING_ID> with your monitoring ID from the Ddosify Cloud. Change XXXXX with your monitoring ID.
+MONITORING_ID=XXXXX
+sed -i "" "s/<MONITORING_ID>/$MONITORING_ID/g" alaz.yaml
+kubectl create namespace ddosify
+kubectl apply -f alaz.yaml
+```
+
+### Using the Helm
+
+```bash
+# Replace <MONITORING_ID> with your monitoring ID from the Ddosify Cloud. Change XXXXX with your monitoring ID.
+MONITORING_ID=XXXXX
+helm repo add ddosify https://ddosify.github.io/ddosify-helm-charts/
+helm repo update
+kubectl create namespace ddosify
+helm upgrade --install --namespace ddosify alaz ddosify/alaz --set daemonSet.container.env.MONITORING_ID=$MONITORING_ID
+```
 
 Alaz runs as a DaemonSet on your Kubernetes cluster. It collects metrics and sends them to Ddosify Cloud. You can view the metrics on the Ddosify Cloud dashboard. For the detailed Alaz architecture, see [Alaz Architecture](./Alaz-Architecture.md).
 
