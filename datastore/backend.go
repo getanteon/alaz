@@ -32,20 +32,15 @@ var MonitoringID string
 var NodeID string
 
 func init() {
-	x := os.Getenv("MONITORING_ID")
-	if x == "" {
-		MonitoringID = string(uuid.NewUUID())
-	} else {
-		MonitoringID = x
+	MonitoringID = os.Getenv("MONITORING_ID")
+	if MonitoringID == "" {
+		log.Logger.Fatal().Msg("MONITORING_ID is not set")
 	}
 
-	x = os.Getenv("NODE_NAME")
-	if x == "" {
-		NodeID = string(uuid.NewUUID())
-	} else {
-		NodeID = x
+	NodeID = os.Getenv("NODE_NAME")
+	if NodeID == "" {
+		log.Logger.Fatal().Msg("NODE_NAME is not set")
 	}
-
 }
 
 var resourceBatchSize int64 = 50
