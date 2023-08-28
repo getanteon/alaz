@@ -38,10 +38,9 @@ To use Alaz, you need to have a Ddosify Cloud account. Follow these steps to get
 ### Using the kubectl
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/ddosify/alaz/master/resources/alaz.yaml
-
 # Replace <MONITORING_ID> with your monitoring ID from the Ddosify Cloud. Change XXXXX with your monitoring ID.
 MONITORING_ID=XXXXX
+curl -sSL https://raw.githubusercontent.com/ddosify/alaz/master/resources/alaz.yaml
 sed -i "" "s/<MONITORING_ID>/$MONITORING_ID/g" alaz.yaml
 kubectl create namespace ddosify
 kubectl apply -f alaz.yaml
