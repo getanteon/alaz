@@ -1,9 +1,4 @@
 apiVersion: v1
-kind: Namespace
-metadata:
-  name: ddosify
----
-apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: alaz-serviceaccount
@@ -64,11 +59,11 @@ spec:
         - name: METRICS_BACKEND
           value: "true"
         - name: BACKEND_HOST
-          value: https://staging-backend-cf.ddosify.com:443
+          value: https://api.ddosify.com:443
         - name: LOG_LEVEL
           value: "1"
         - name: MONITORING_ID
-          value: b8fb4b18-7ccd-4ba2-afa3-ba19402c1aec
+          value: <MONITORING_ID>
         - name: NODE_NAME
           valueFrom:
             fieldRef:
