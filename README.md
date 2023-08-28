@@ -59,6 +59,10 @@ helm upgrade --install --namespace ddosify alaz ddosify/alaz --set daemonSet.con
 
 Alaz runs as a DaemonSet on your Kubernetes cluster. It collects metrics and sends them to Ddosify Cloud. You can view the metrics on the Ddosify Cloud dashboard. For the detailed Alaz architecture, see [Alaz Architecture](./Alaz-Architecture.md).
 
+## Limitations
+
+Alaz is currently only available for Linux Kubernetes clusters. It does not support Windows or MacOS. In the future, we plan to support Docker containers. 
+
 ## Contributing
 
 Contributions to Alaz are welcome! To contribute, please follow these steps:
