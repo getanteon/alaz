@@ -93,7 +93,7 @@ helm upgrade --install --namespace ddosify alaz ddosify/alaz --set monitoringID=
 
 Then you can view the metrics and Kubernetes Service Map on the Ddosify Self Hosted Observability dashboard. For more information, see [Ddosify Docs](https://docs.ddosify.com/observability/).
 
-Alaz runs as a DaemonSet on your Kubernetes cluster. It collects metrics and sends them to Ddosify Cloud or Ddosify Self Hosted. You can view the metrics on the Ddosify Observability dashboard. For the detailed Alaz architecture, see [Alaz Architecture](./Alaz-Architecture.md).
+Alaz runs as a DaemonSet on your Kubernetes cluster. It collects metrics and sends them to Ddosify Cloud or Ddosify Self Hosted. You can view the metrics on the Ddosify Observability dashboard. For the detailed Alaz architecture, see [Alaz Architecture](https://github.com/ddosify/alaz/blob/master/Alaz-Architecture.md).
 
 ## Limitations
 
