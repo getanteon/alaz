@@ -104,7 +104,7 @@ Alaz runs as a DaemonSet on your Kubernetes cluster. It collects metrics and sen
 Alaz runs on Linux Kubernetes clusters. Windows or MacOS are not supported.
 In the future, we plan to support Docker containers.
 
-Alaz is an ebpf application that uses [CO-RE](https://github.com/libbpf/libbpf#bpf-co-re-compile-once--run-everywhere).
+Alaz is an eBPF application that uses [CO-RE](https://github.com/libbpf/libbpf#bpf-co-re-compile-once--run-everywhere).
 Most of the latest linux distributions support CO-RE. In order to CO-RE to work, the kernel has to built with BTF(bpf type format) information.
 
 You can check your kernel version with ``` uname -r``` 
