@@ -1,0 +1,110 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alaz-serviceaccount
+  namespace: ddosify
+---
+# For alaz to keep track of changes in cluster
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: alaz-role
+  namespace: ddosify
+rules:
+- apiGroups:
+  - "*"
+  resources:
+  - pods
+  - services
+  - endpoints
+  - replicasets
+  - deployments
+  - daemonsets
+  verbs:
+  - "get"
+  - "list"
+  - "watch"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: alaz-role-binding
+  namespace: ddosify
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: alaz-role
+subjects:
+- kind: ServiceAccount
+  name: alaz-serviceaccount
+  namespace: ddosify
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: alaz-daemonset
+  namespace: ddosify
+spec:
+  selector:
+    matchLabels:
+      app: alaz
+  template:
+    metadata:
+      labels:
+        app: alaz
+    spec:
+      hostPID: true
+      containers:
+      - env:
+        - name: METRICS_BACKEND
+          value: "true"
+        - name: BACKEND_HOST
+          value: https://api.ddosify.com:443
+        - name: LOG_LEVEL
+          value: "1"
+        - name: MONITORING_ID
+          value: <MONITORING_ID>
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: spec.nodeName
+        args:
+        - --no-collector.wifi
+        - --no-collector.hwmon
+        - --collector.filesystem.ignored-mount-points=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/pods/.+)($|/)
+        - --collector.netclass.ignored-devices=^(veth.*)$
+        image: ddosify/alaz:v0.1.2
+        imagePullPolicy: IfNotPresent
+        name: alaz-pod
+        ports:
+        - containerPort: 8181
+          protocol: TCP
+        resources:
+          limits:
+            cpu: "1"
+            memory: 1Gi
+          requests:
+            cpu: 500m
+            memory: 400Mi
+        securityContext:
+          privileged: true 
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        # needed for linking ebpf trace programs
+        volumeMounts:
+        - mountPath: /sys/kernel/debug
+          name: debugfs
+          readOnly: false
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      serviceAccount: alaz-serviceaccount
+      serviceAccountName: alaz-serviceaccount
+      terminationGracePeriodSeconds: 30
+      # needed for linking ebpf trace programs
+      volumes:
+      - name: debugfs
+        hostPath:
+          path: /sys/kernel/debug
