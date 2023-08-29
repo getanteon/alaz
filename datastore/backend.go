@@ -161,7 +161,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 
 	go ds.sendReqsInBatch()
 
-	eventsInterval := 5 * time.Second
+	eventsInterval := 10 * time.Second
 	go ds.sendEventsInBatch(ds.podEventChan, podEndpoint, eventsInterval)
 	go ds.sendEventsInBatch(ds.svcEventChan, svcEndpoint, eventsInterval)
 	go ds.sendEventsInBatch(ds.rsEventChan, rsEndpoint, eventsInterval)
@@ -313,7 +313,7 @@ func (b *BackendDS) sendToBackend(payload interface{}, endpoint string) {
 }
 
 func (b *BackendDS) sendReqsInBatch() {
-	t := time.NewTicker(5 * time.Second)
+	t := time.NewTicker(10 * time.Second)
 	defer t.Stop()
 
 	send := func() {

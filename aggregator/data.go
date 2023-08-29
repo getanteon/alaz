@@ -104,7 +104,7 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, crChan
 		Host:                  os.Getenv("BACKEND_HOST"),
 		Port:                  os.Getenv("BACKEND_PORT"),
 		MetricsExport:         metricsExport,
-		MetricsExportInterval: 5,
+		MetricsExportInterval: 10,
 	})
 
 	return &Aggregator{
