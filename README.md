@@ -56,7 +56,7 @@ MONITORING_ID=XXXXX
 helm repo add ddosify https://ddosify.github.io/ddosify-helm-charts/
 helm repo update
 kubectl create namespace ddosify
-helm upgrade --install --namespace ddosify alaz ddosify/alaz --set daemonSet.container.env.MONITORING_ID=$MONITORING_ID
+helm upgrade --install --namespace ddosify alaz ddosify/alaz --set monitoringID=$MONITORING_ID
 ```
 
 Then you can view the metrics and Kubernetes Service Map on the [Ddosify Observability dashboard](https://app.ddosify.com/clusters). For more information, see [Ddosify Docs](https://docs.ddosify.com/observability/).
