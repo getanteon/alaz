@@ -4,10 +4,6 @@
     <img src="https://imagedelivery.net/jnIqn6NB1gbMLXIvlYKo5A/172d2843-4868-40e9-1bb0-1176d477d600/public" alt="Alaz Ddosify Usage" width="777px" /><br />
 </h1>
 <p align="center">
-    <a href="https://github.com/ddosify/alaz/releases" target="_blank"><img src="https://img.shields.io/github/v/release/ddosify/alaz?style=for-the-badge&logo=github&color=orange" alt="alaz latest version" /></a>&nbsp;
-    <a href="https://pkg.go.dev/go.ddosify.com/ddosify" target="_blank"><img src="https://img.shields.io/github/go-mod/go-version/ddosify/alaz?style=for-the-badge&logo=go" alt="alaz golang version" /></a>&nbsp;
-    <a href="https://app.codecov.io/gh/ddosify/alaz" target="_blank"><img src="https://img.shields.io/codecov/c/github/ddosify/alaz?style=for-the-badge&logo=codecov" alt="go coverage" /></a>&nbsp;
-    <a href="https://goreportcard.com/report/github.com/ddosify/alaz" target="_blank"><img src="https://goreportcard.com/badge/github.com/ddosify/alaz?style=for-the-badge&logo=go" alt="go report" /></a>&nbsp;
     <a href="https://github.com/ddosify/alaz/blob/master/LICENSE" target="_blank"><img src="https://img.shields.io/badge/LICENSE-AGPL--3.0-orange?style=for-the-badge&logo=none" alt="alaz license" /></a>
     <a href="https://discord.gg/9KdnrSUZQg" target="_blank"><img src="https://img.shields.io/discord/898523141788287017?style=for-the-badge&logo=discord&label=DISCORD" alt="ddosify discord server" /></a>
     <a href="https://hub.docker.com/r/ddosify/alaz" target="_blank"><img src="https://img.shields.io/docker/v/ddosify/alaz?style=for-the-badge&logo=docker&label=docker&sort=semver" alt="alaz docker image" /></a>
