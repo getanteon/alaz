@@ -110,6 +110,22 @@ Then you can view the metrics and Kubernetes Service Map on the Ddosify Self-Hos
 
 Alaz runs as a DaemonSet on your Kubernetes cluster. It collects metrics and sends them to Ddosify Cloud or Ddosify Self-Hosted. You can view the metrics on the Ddosify Observability dashboard. For the detailed Alaz architecture, see [Alaz Architecture](https://github.com/ddosify/alaz/blob/master/Alaz-Architecture.md).
 
+## Cleanup
+
+To remove Alaz from your Kubernetes cluster, run the following command:
+
+- For Kubectl
+
+```bash
+kubectl delete -f https://raw.githubusercontent.com/ddosify/alaz/master/resources/alaz.yaml
+```
+
+- For Helm
+
+```bash
+helm delete alaz --namespace ddosify
+```
+
 ## Limitations
 
 Alaz runs on Linux Kubernetes clusters. Windows or MacOS are not supported.
