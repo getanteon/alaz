@@ -17,22 +17,27 @@ Alaz is an open-source Ddosify eBPF agent that can inspect and collect Kubernete
 
 ## Features
 
-- ✅ **Low-Overhead:** 
+✅ **Low-Overhead:** 
 
-    Inspect and collect K8s service traffic without the need for code instrumentation, sidecars, or service restarts.
-- ✅ **Effortless:** 
+Inspect and collect K8s service traffic without the need for code instrumentation, sidecars, or service restarts.
 
-    Ddosify will create the Service Map & Metrics Dashboard that helps identify golden signals and issues such as high latencies, 5xx errors, zombie services.
-- ✅ **Prometheus Compatible:** 
+✅ **Effortless:** 
 
-    Gather system information and resources via the Prometheus Node Exporter, which is readily available on the agent.
-- ✅ **Cloud or On-premise:** 
+Ddosify will create the Service Map & Metrics Dashboard that helps identify golden signals and issues such as high latencies, 5xx errors, zombie services.
 
-    Export metrics to [Ddosify Cloud](https://ddosify.com), or install the [Ddosify Self-Hosted](https://github.com/ddosify/ddosify/tree/master/selfhosted) in your infrastructure and manage everything according to your needs.
-- ✅ **Test & Observe:** 
+✅ **Prometheus Compatible:** 
 
-    Ddosify Performance Testing and Alaz can work collaboratively. You can start a load test and monitor your system simultaneously. This will help you spot performance issues instantly. Check out the [Ddosify GitHub Repository](https://github.com/ddosify/ddosify) for more information about Ddosify Stack.
-- ✅ Works on both Arm64 and x86_64 architectures.
+Gather system information and resources via the Prometheus Node Exporter, which is readily available on the agent.
+
+✅ **Cloud or On-premise:** 
+
+Export metrics to [Ddosify Cloud](https://ddosify.com), or install the [Ddosify Self-Hosted](https://github.com/ddosify/ddosify/tree/master/selfhosted) in your infrastructure and manage everything according to your needs.
+
+✅ **Test & Observe:** 
+
+Ddosify Performance Testing and Alaz can work collaboratively. You can start a load test and monitor your system simultaneously. This will help you spot performance issues instantly. Check out the [Ddosify GitHub Repository](https://github.com/ddosify/ddosify) for more information about Ddosify Stack.
+
+✅ Works on both Arm64 and x86_64 architectures.
 
 ## Getting Started
 
