@@ -12,20 +12,36 @@
 
 Alaz is an open-source Ddosify eBPF agent that can inspect and collect Kubernetes (K8s) service traffic without the need for code instrumentation, sidecars, or service restarts. This is possible due to its use of eBPF technology. Alaz can create a Service Map that helps identify golden signals and problems like high latencies, 5xx errors, zombie services, SQL queries. Additionally, it can gather system information and resources via the Prometheus Node Exporter, which is readily available on the agent. Alaz Docker image is available on [Docker Hub](https://hub.docker.com/r/ddosify/alaz).
 
+
 ➡️ For more information about Ddosify, see [Ddosify](https://github.com/ddosify/ddosify).
 
 ## Features
 
-- ✅ Inspect and collect K8s service traffic without the need for code instrumentation, sidecars, or service restarts.
-- ✅ Create a Service Map that helps identify golden signals and problems like high latencies, 5xx errors, zombie services.
-- ✅ Gather system information and resources via the Prometheus Node Exporter, which is readily available on the agent.
-- ✅ Works on both Arm64 and x86_64 architectures.
-- ✅ Prometheus compatible metrics.
-- ✅ Ddosify Cloud and Ddosify Self Hosted (On-Premise) support.
+✅ **Low-Overhead:** 
+
+Inspect and collect K8s service traffic without the need for code instrumentation, sidecars, or service restarts.
+
+✅ **Effortless:** 
+
+Ddosify will create the Service Map & Metrics Dashboard that helps identify golden signals and issues such as high latencies, 5xx errors, zombie services.
+
+✅ **Prometheus Compatible:** 
+
+Gather system information and resources via the Prometheus Node Exporter, which is readily available on the agent.
+
+✅ **Cloud or On-premise:** 
+
+Export metrics to [Ddosify Cloud](https://ddosify.com), or install the [Ddosify Self-Hosted](https://github.com/ddosify/ddosify/tree/master/selfhosted) in your infrastructure and manage everything according to your needs.
+
+✅ **Test & Observe:** 
+
+Ddosify Performance Testing and Alaz can work collaboratively. You can start a load test and monitor your system simultaneously. This will help you spot performance issues instantly. Check out the [Ddosify GitHub Repository](https://github.com/ddosify/ddosify) for more information about Ddosify Stack.
+
+✅ Works on both Arm64 and x86_64 architectures.
 
 ## Getting Started
 
-To use Alaz, you need to have a [Ddosify Cloud](https://app.ddosify.com/register) account or [Ddosify Self Hosted](https://github.com/ddosify/ddosify/tree/master/selfhosted) installed. 
+To use Alaz, you need to have a [Ddosify Cloud](https://app.ddosify.com/register) account or [Ddosify Self-Hosted](https://github.com/ddosify/ddosify/tree/master/selfhosted) installed. 
 
 ### ☁️ For Ddosify Cloud
 
@@ -57,10 +73,10 @@ helm upgrade --install --namespace ddosify alaz ddosify/alaz --set monitoringID=
 
 Then you can view the metrics and Kubernetes Service Map on the [Ddosify Observability dashboard](https://app.ddosify.com/clusters). For more information, see [Ddosify Observability Docs](https://docs.ddosify.com/cloud/observability/).
 
-### 🏠 For Ddosify Self Hosted
+### 🏠 For Ddosify Self-Hosted
 
-1. Install [Ddosify Self Hosted](https://github.com/ddosify/ddosify/tree/master/selfhosted)
-2. Add a cluster on the Observability page of your Self Hosted frontend. You will receive a Monitoring ID and instructions.
+1. Install [Ddosify Self-Hosted](https://github.com/ddosify/ddosify/tree/master/selfhosted)
+2. Add a cluster on the Observability page of your Self-Hosted frontend. You will receive a Monitoring ID and instructions.
 2. Run the agent on your Kubernetes cluster using the instructions you received. There are two options for Kubernetes deployment:
 
 #### Using the kubectl
@@ -68,7 +84,7 @@ Then you can view the metrics and Kubernetes Service Map on the [Ddosify Observa
 ```bash
 # Replace <MONITORING_ID> with your monitoring ID from the Ddosify Cloud. Change XXXXX with your monitoring ID.
 MONITORING_ID=XXXXX
-# Replace <BACKEND_HOST> with your backend host for Ddosify Self Hosted. Change XXXXX with your backend host.
+# Replace <BACKEND_HOST> with your backend host for Ddosify Self-Hosted. Change XXXXX with your backend host.
 BACKEND_HOST=XXXXX
 curl -sSL https://raw.githubusercontent.com/ddosify/alaz/master/resources/alaz.yaml
 sed -i "" "s/<MONITORING_ID>/$MONITORING_ID/g" alaz.yaml
@@ -82,7 +98,7 @@ kubectl apply -f alaz.yaml
 ```bash
 # Replace <MONITORING_ID> with your monitoring ID from the Ddosify Cloud. Change XXXXX with your monitoring ID.
 MONITORING_ID=XXXXX
-# Replace <BACKEND_HOST> with your backend host for Ddosify Self Hosted. Change XXXXX with your backend host. Backend host should be accessible from the Kubernetes cluster.
+# Replace <BACKEND_HOST> with your backend host for Ddosify Self-Hosted. Change XXXXX with your backend host. Backend host should be accessible from the Kubernetes cluster.
 BACKEND_HOST=XXXXX
 helm repo add ddosify https://ddosify.github.io/ddosify-helm-charts/
 helm repo update
@@ -90,9 +106,9 @@ kubectl create namespace ddosify
 helm upgrade --install --namespace ddosify alaz ddosify/alaz --set monitoringID=$MONITORING_ID --set backendHost=$BACKEND_HOST
 ```
 
-Then you can view the metrics and Kubernetes Service Map on the Ddosify Self Hosted Observability dashboard. For more information, see [Ddosify Observability Docs](https://docs.ddosify.com/cloud/observability/).
+Then you can view the metrics and Kubernetes Service Map on the Ddosify Self-Hosted Observability dashboard. For more information, see [Ddosify Observability Docs](https://docs.ddosify.com/cloud/observability/).
 
-Alaz runs as a DaemonSet on your Kubernetes cluster. It collects metrics and sends them to Ddosify Cloud or Ddosify Self Hosted. You can view the metrics on the Ddosify Observability dashboard. For the detailed Alaz architecture, see [Alaz Architecture](https://github.com/ddosify/alaz/blob/master/Alaz-Architecture.md).
+Alaz runs as a DaemonSet on your Kubernetes cluster. It collects metrics and sends them to Ddosify Cloud or Ddosify Self-Hosted. You can view the metrics on the Ddosify Observability dashboard. For the detailed Alaz architecture, see [Alaz Architecture](https://github.com/ddosify/alaz/blob/master/Alaz-Architecture.md).
 
 ## Limitations
 
