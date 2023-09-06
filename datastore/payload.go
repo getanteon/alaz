@@ -174,7 +174,6 @@ func convertEpToEpEvent(ep Endpoints, eventType string) EpEvent {
 
 func convertContainerToContainerEvent(c Container, eventType string) ContainerEvent {
 	return ContainerEvent{
-		UID:       c.UID,
 		EventType: eventType,
 		Name:      c.Name,
 		Namespace: c.Namespace,

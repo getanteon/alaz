@@ -348,7 +348,7 @@ func TestSocketLine(t *testing.T) {
 }
 
 func TestXxx(t *testing.T) {
-	assumedInterval := uint64(2 * time.Second) // TODO: make configurable
+	assumedInterval := uint64(2 * time.Second)
 	nl := NewSocketLine(1, 0)
 
 	wg := sync.WaitGroup{}

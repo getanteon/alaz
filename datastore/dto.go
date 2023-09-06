@@ -75,7 +75,6 @@ type Address struct {
 }
 
 type Container struct {
-	UID       string `json:"uid"` // TODO: remove
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
 	PodUID    string `json:"pod"` // Pod UID
@@ -103,4 +102,13 @@ type Request struct {
 	FailReason string
 	Method     string
 	Path       string
+}
+
+type BackendResponse struct {
+	Msg    string `json:"msg"`
+	Errors []struct {
+		EventNum int         `json:"event_num"`
+		Event    interface{} `json:"event"`
+		Error    string      `json:"error"`
+	} `json:"errors"`
 }

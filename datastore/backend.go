@@ -32,20 +32,15 @@ var MonitoringID string
 var NodeID string
 
 func init() {
-	x := os.Getenv("MONITORING_ID")
-	if x == "" {
-		MonitoringID = string(uuid.NewUUID())
-	} else {
-		MonitoringID = x
+	MonitoringID = os.Getenv("MONITORING_ID")
+	if MonitoringID == "" {
+		log.Logger.Fatal().Msg("MONITORING_ID is not set")
 	}
 
-	x = os.Getenv("NODE_NAME")
-	if x == "" {
-		NodeID = string(uuid.NewUUID())
-	} else {
-		NodeID = x
+	NodeID = os.Getenv("NODE_NAME")
+	if NodeID == "" {
+		log.Logger.Fatal().Msg("NODE_NAME is not set")
 	}
-
 }
 
 var resourceBatchSize int64 = 50
@@ -53,6 +48,7 @@ var innerMetricsPort int = 8182
 
 // BackendDS is a backend datastore
 type BackendDS struct {
+	ctx       context.Context
 	host      string
 	port      string
 	c         *http.Client
@@ -68,7 +64,7 @@ type BackendDS struct {
 	containerEventChan chan interface{} // *ContainerEvent
 	dsEventChan        chan interface{} // *DaemonSetEvent
 
-	// TODO:
+	// TODO add:
 	// statefulset
 	// job
 	// cronjob
@@ -85,7 +81,8 @@ const (
 	reqEndpoint       = "/alaz/"
 )
 
-func NewBackendDS(conf config.BackendConfig) *BackendDS {
+func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *BackendDS {
+	ctx, _ := context.WithCancel(parentCtx)
 	rand.Seed(time.Now().UnixNano())
 
 	retryClient := retryablehttp.NewClient()
@@ -100,14 +97,6 @@ func NewBackendDS(conf config.BackendConfig) *BackendDS {
 			// connection refused, connection reset, connection timeout
 			shouldRetry = true
 			log.Logger.Warn().Msgf("will retry, error: %v", err)
-			if resp != nil {
-				rb, err := io.ReadAll(resp.Body)
-				if err != nil {
-					log.Logger.Warn().Msgf("error reading response body: %v", err)
-				}
-				log.Logger.Warn().Msgf("will retry, response body: %s", string(rb))
-			}
-
 		} else {
 			if resp.StatusCode == http.StatusBadRequest ||
 				resp.StatusCode == http.StatusTooManyRequests ||
@@ -118,9 +107,23 @@ func NewBackendDS(conf config.BackendConfig) *BackendDS {
 				if err != nil {
 					log.Logger.Warn().Msgf("error reading response body: %v", err)
 				}
-				log.Logger.Warn().Msgf("will retry, response body: %s", string(rb))
-				log.Logger.Warn().Msgf("will retry, status code: %d", resp.StatusCode)
-
+				log.Logger.Warn().Int("statusCode", resp.StatusCode).Str("respBody", string(rb)).Msgf("will retry...")
+			} else if resp.StatusCode == http.StatusOK {
+				shouldRetry = false
+				rb, err := io.ReadAll(resp.Body)
+				if err != nil {
+					log.Logger.Debug().Msgf("error reading response body: %v", err)
+				}
+				var resp BackendResponse
+				err = json.Unmarshal(rb, &resp)
+				if err != nil {
+					log.Logger.Debug().Msgf("error unmarshalling response body: %v", err)
+				}
+				if len(resp.Errors) > 0 {
+					for _, e := range resp.Errors {
+						log.Logger.Debug().Str("errorMsg", e.Error).Any("event", e.Event).Msgf("backend persist error")
+					}
+				}
 			}
 		}
 		return shouldRetry, nil
@@ -141,6 +144,7 @@ func NewBackendDS(conf config.BackendConfig) *BackendDS {
 	}
 
 	ds := &BackendDS{
+		ctx:                ctx,
 		host:               conf.Host,
 		port:               conf.Port,
 		c:                  client,
@@ -157,7 +161,7 @@ func NewBackendDS(conf config.BackendConfig) *BackendDS {
 
 	go ds.sendReqsInBatch()
 
-	eventsInterval := 5 * time.Second
+	eventsInterval := 10 * time.Second
 	go ds.sendEventsInBatch(ds.podEventChan, podEndpoint, eventsInterval)
 	go ds.sendEventsInBatch(ds.svcEventChan, svcEndpoint, eventsInterval)
 	go ds.sendEventsInBatch(ds.rsEventChan, rsEndpoint, eventsInterval)
@@ -173,6 +177,8 @@ func NewBackendDS(conf config.BackendConfig) *BackendDS {
 			t := time.NewTicker(time.Duration(conf.MetricsExportInterval) * time.Second)
 			for {
 				select {
+				case <-ds.ctx.Done():
+					return
 				case <-t.C:
 					// make a request to /inner/metrics
 					// forward the response to /alaz/metrics
@@ -183,10 +189,12 @@ func NewBackendDS(conf config.BackendConfig) *BackendDS {
 							return
 						}
 
-						ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+						ctx, cancel := context.WithTimeout(ds.ctx, 5*time.Second)
 						defer cancel()
 
-						resp, err := ds.c.Do(req.WithContext(ctx))
+						// use the default client, ds client reads response on success to look for failed events,
+						// therefore body here will be empty
+						resp, err := http.DefaultClient.Do(req.WithContext(ctx))
 
 						if err != nil {
 							log.Logger.Error().Msgf("error sending inner metrics request: %v", err)
@@ -204,7 +212,7 @@ func NewBackendDS(conf config.BackendConfig) *BackendDS {
 							return
 						}
 
-						req, err = http.NewRequest(http.MethodPost, fmt.Sprintf("%s:%s/alaz/metrics/scrape/?instance=%s&monitoring_id=%s", ds.host, ds.port, NodeID, MonitoringID), bytes.NewReader(body))
+						req, err = http.NewRequest(http.MethodPost, fmt.Sprintf("%s/alaz/metrics/scrape/?instance=%s&monitoring_id=%s", ds.host, NodeID, MonitoringID), bytes.NewReader(body))
 						if err != nil {
 							log.Logger.Error().Msgf("error creating metrics request: %v", err)
 							return
@@ -231,12 +239,19 @@ func NewBackendDS(conf config.BackendConfig) *BackendDS {
 							log.Logger.Error().Msgf("metrics response body: %s", string(rb))
 
 							return
+						} else {
+							log.Logger.Info().Msg("metrics sent successfully")
 						}
 					}()
 				}
 			}
 		}()
 	}
+
+	go func() {
+		<-ds.ctx.Done()
+		log.Logger.Info().Msg("backend datastore stopped")
+	}()
 
 	return ds
 }
@@ -245,7 +260,7 @@ func (b *BackendDS) DoRequest(req *http.Request) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(b.ctx, 30*time.Second)
 	defer cancel()
 
 	resp, err := b.c.Do(req.WithContext(ctx))
@@ -261,7 +276,7 @@ func (b *BackendDS) DoRequest(req *http.Request) error {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("not success: %d, %s", resp.StatusCode, string(body))
 	} else {
-		log.Logger.Warn().Str("reqHostPath", req.URL.Host+req.URL.Path).Msg("success on request")
+		log.Logger.Info().Str("reqHostPath", req.URL.Host+req.URL.Path).Msg("success on request")
 	}
 
 	return nil
@@ -284,13 +299,13 @@ func (b *BackendDS) sendToBackend(payload interface{}, endpoint string) {
 		return
 	}
 
-	httpReq, err := http.NewRequest(http.MethodPost, b.host+":"+b.port+endpoint, bytes.NewBuffer(payloadBytes))
+	httpReq, err := http.NewRequest(http.MethodPost, b.host+endpoint, bytes.NewBuffer(payloadBytes))
 	if err != nil {
 		log.Logger.Error().Msgf("error creating http request: %v", err)
 		return
 	}
 
-	log.Logger.Warn().Str("endpoint", endpoint).Any("payload", payload).Msg("sending batch to backend")
+	log.Logger.Debug().Str("endpoint", endpoint).Any("payload", payload).Msg("sending batch to backend")
 	err = b.DoRequest(httpReq)
 	if err != nil {
 		log.Logger.Error().Msgf("backend persist error at ep %s : %v", endpoint, err)
@@ -298,7 +313,7 @@ func (b *BackendDS) sendToBackend(payload interface{}, endpoint string) {
 }
 
 func (b *BackendDS) sendReqsInBatch() {
-	t := time.NewTicker(5 * time.Second)
+	t := time.NewTicker(10 * time.Second)
 	defer t.Stop()
 
 	send := func() {
@@ -309,7 +324,7 @@ func (b *BackendDS) sendReqsInBatch() {
 			select {
 			case req := <-b.reqChanBuffer:
 				batch = append(batch, req)
-			case <-time.After(1 * time.Second):
+			case <-time.After(200 * time.Millisecond):
 				loop = false
 			}
 		}
@@ -324,10 +339,11 @@ func (b *BackendDS) sendReqsInBatch() {
 
 	for {
 		select {
+		case <-b.ctx.Done():
+			log.Logger.Info().Msg("stopping sending reqs to backend")
+			return
 		case <-t.C:
 			send()
-			// case <-b.stopChan: // TODO
-			// 	return
 		}
 	}
 
@@ -370,13 +386,14 @@ func (b *BackendDS) sendEventsInBatch(ch chan interface{}, endpoint string, inte
 
 	for {
 		select {
+		case <-b.ctx.Done():
+			log.Logger.Info().Msg("stopping sending events to backend")
+			return
 		case <-t.C:
 			randomDuration := time.Duration(rand.Intn(50)) * time.Millisecond
 			time.Sleep(randomDuration)
 
 			b.send(ch, endpoint)
-			// case <-b.stopChan: // TODO
-			// 	return
 		}
 	}
 }
@@ -469,8 +486,7 @@ func newHandler(logger nodeExportLogger) *nodeExporterHandler {
 	}
 
 	if innerHandler, err := h.innerHandler(); err != nil {
-		// TODO: remove panic
-		panic(fmt.Sprintf("Couldn't create metrics handler: %s", err))
+		log.Logger.Error().Msgf("Couldn't create metrics handler: %s", err)
 	} else {
 		h.inner = innerHandler
 	}
@@ -482,7 +498,7 @@ type nodeExportLogger struct {
 }
 
 func (l nodeExportLogger) Log(keyvals ...interface{}) error {
-	l.logger.Info().Msg(fmt.Sprint(keyvals...))
+	l.logger.Debug().Msg(fmt.Sprint(keyvals...))
 	return nil
 }
 
@@ -515,12 +531,6 @@ func (h *nodeExporterHandler) innerHandler(filters ...string) (http.Handler, err
 	handler := promhttp.HandlerFor(
 		prometheus.Gatherers{r},
 		promhttp.HandlerOpts{},
-		// promhttp.HandlerOpts{
-		// 	ErrorLog:            stdlog.New(log.NewStdlibAdapter(level.Error(h.logger)), "", 0),
-		// 	ErrorHandling:       promhttp.ContinueOnError,
-		// 	MaxRequestsInFlight: h.maxRequests,
-		// 	Registry:            h.exporterMetricsRegistry,
-		// },
 	)
 
 	return handler, nil

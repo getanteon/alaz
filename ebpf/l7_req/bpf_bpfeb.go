@@ -87,6 +87,7 @@ type bpfSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfProgramSpecs struct {
+	SslWrite         *ebpf.ProgramSpec `ebpf:"ssl_write"`
 	SysEnterRead     *ebpf.ProgramSpec `ebpf:"sys_enter_read"`
 	SysEnterRecvfrom *ebpf.ProgramSpec `ebpf:"sys_enter_recvfrom"`
 	SysEnterSendto   *ebpf.ProgramSpec `ebpf:"sys_enter_sendto"`
@@ -151,6 +152,7 @@ func (m *bpfMaps) Close() error {
 //
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfPrograms struct {
+	SslWrite         *ebpf.Program `ebpf:"ssl_write"`
 	SysEnterRead     *ebpf.Program `ebpf:"sys_enter_read"`
 	SysEnterRecvfrom *ebpf.Program `ebpf:"sys_enter_recvfrom"`
 	SysEnterSendto   *ebpf.Program `ebpf:"sys_enter_sendto"`
@@ -163,6 +165,7 @@ type bpfPrograms struct {
 
 func (p *bpfPrograms) Close() error {
 	return _BpfClose(
+		p.SslWrite,
 		p.SysEnterRead,
 		p.SysEnterRecvfrom,
 		p.SysEnterSendto,

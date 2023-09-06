@@ -191,7 +191,7 @@ func (a *Aggregator) processDeployment(d k8s.K8sResourceMessage) {
 		go func() {
 			err := a.ds.PersistDeployment(dto, DELETE)
 			if err != nil {
-				log.Logger.Error().Err(err).Msgf("error on PersistDeployment call to %s, uid: %s", UPDATE, dto.UID)
+				log.Logger.Error().Err(err).Msgf("error on PersistDeployment call to %s, uid: %s", DELETE, dto.UID)
 			}
 		}()
 	}
@@ -201,7 +201,6 @@ func (a *Aggregator) processContainer(d k8s.K8sResourceMessage) {
 	c := d.Object.(*k8s.Container)
 
 	dto := datastore.Container{
-		UID:       c.UID,
 		Name:      c.Name,
 		Namespace: c.Namespace,
 		PodUID:    c.PodUID,
@@ -214,14 +213,14 @@ func (a *Aggregator) processContainer(d k8s.K8sResourceMessage) {
 		go func() {
 			err := a.ds.PersistContainer(dto, ADD)
 			if err != nil {
-				log.Logger.Error().Err(err).Msgf("error on PersistContainer call to %s, uid: %s", UPDATE, dto.UID)
+				log.Logger.Error().Err(err).Msgf("error on PersistContainer call to %s", ADD)
 			}
 		}()
 	case k8s.UPDATE:
 		go func() {
 			err := a.ds.PersistContainer(dto, UPDATE)
 			if err != nil {
-				log.Logger.Error().Err(err).Msgf("error on PersistContainer call to %s, uid: %s", UPDATE, dto.UID)
+				log.Logger.Error().Err(err).Msgf("error on PersistContainer call to %s", UPDATE)
 			}
 		}()
 		// No need for  delete container
