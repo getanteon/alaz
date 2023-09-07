@@ -1,15 +1,17 @@
 package main
 
 import (
-	"alaz/aggregator"
-	"alaz/ebpf"
-	"alaz/k8s"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"alaz/log"
+	"github.com/ddosify/alaz/aggregator"
+	"github.com/ddosify/alaz/ebpf"
+	"github.com/ddosify/alaz/k8s"
+
 	"context"
+
+	"github.com/ddosify/alaz/log"
 )
 
 func main() {
