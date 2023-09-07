@@ -1,13 +1,14 @@
 package ebpf
 
 import (
-	"alaz/ebpf/l7_req"
-	"alaz/ebpf/tcp_state"
-	"alaz/log"
 	"context"
 	"os"
 	"sync"
 	"time"
+
+	"github.com/ddosify/alaz/ebpf/l7_req"
+	"github.com/ddosify/alaz/ebpf/tcp_state"
+	"github.com/ddosify/alaz/log"
 )
 
 type BpfEvent interface {

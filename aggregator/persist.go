@@ -1,9 +1,9 @@
 package aggregator
 
 import (
-	"alaz/datastore"
-	"alaz/k8s"
-	"alaz/log"
+	"github.com/ddosify/alaz/datastore"
+	"github.com/ddosify/alaz/k8s"
+	"github.com/ddosify/alaz/log"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"

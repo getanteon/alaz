@@ -8,12 +8,6 @@ package aggregator
 // 5. docker (TODO)
 
 import (
-	"alaz/config"
-	"alaz/datastore"
-	"alaz/ebpf"
-	"alaz/ebpf/l7_req"
-	"alaz/ebpf/tcp_state"
-	"alaz/log"
 	"context"
 	"fmt"
 	"net"
@@ -23,7 +17,14 @@ import (
 	"sync"
 	"time"
 
-	"alaz/k8s"
+	"github.com/ddosify/alaz/config"
+	"github.com/ddosify/alaz/datastore"
+	"github.com/ddosify/alaz/ebpf"
+	"github.com/ddosify/alaz/ebpf/l7_req"
+	"github.com/ddosify/alaz/ebpf/tcp_state"
+	"github.com/ddosify/alaz/log"
+
+	"github.com/ddosify/alaz/k8s"
 
 	"k8s.io/apimachinery/pkg/types"
 )
