@@ -126,6 +126,16 @@ kubectl delete -f https://raw.githubusercontent.com/ddosify/alaz/master/resource
 helm delete alaz --namespace ddosify
 ```
 
+## Supported Protocols
+
+Alaz supports the following protocols:
+
+- HTTP
+- Postgres
+- RabbitMQ
+
+Other protocols will be supported soon.
+
 ## Limitations
 
 Alaz runs on Linux Kubernetes clusters. Windows or MacOS are not supported.
