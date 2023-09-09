@@ -200,6 +200,8 @@ func (e L7Event) Type() string {
 	return L7_EVENT
 }
 
+var L7BpfProgsAndMaps bpfObjects
+
 // returns when program is detached
 func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	ctx, _ := context.WithCancel(parentCtx)
@@ -209,13 +211,13 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	}
 
 	// Load pre-compiled programs and maps into the kernel.
-	objs := bpfObjects{}
-	if err := loadBpfObjects(&objs, nil); err != nil {
+	L7BpfProgsAndMaps = bpfObjects{}
+	if err := loadBpfObjects(&L7BpfProgsAndMaps, nil); err != nil {
 		log.Logger.Fatal().Err(err).Msg("loading objects")
 	}
-	defer objs.Close()
+	defer L7BpfProgsAndMaps.Close()
 
-	l, err := link.Tracepoint("syscalls", "sys_enter_read", objs.bpfPrograms.SysEnterRead, nil)
+	l, err := link.Tracepoint("syscalls", "sys_enter_read", L7BpfProgsAndMaps.bpfPrograms.SysEnterRead, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_enter_read tracepoint")
 	}
@@ -225,9 +227,9 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		l.Close()
 	}()
 
-	l1, err := link.Tracepoint("syscalls", "sys_enter_write", objs.bpfPrograms.SysEnterWrite, nil)
+	l1, err := link.Tracepoint("syscalls", "sys_enter_write", L7BpfProgsAndMaps.bpfPrograms.SysEnterWrite, nil)
 	if err != nil {
-		log.Logger.Warn().Str("verifier log", string(objs.bpfPrograms.SysEnterWrite.VerifierLog)).Msg("verifier log")
+		log.Logger.Warn().Str("verifier log", string(L7BpfProgsAndMaps.bpfPrograms.SysEnterWrite.VerifierLog)).Msg("verifier log")
 		log.Logger.Fatal().Err(err).Msg("link sys_enter_write tracepoint")
 	}
 	log.Logger.Info().Msg("sys_enter_write linked")
@@ -236,7 +238,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		l1.Close()
 	}()
 
-	l2, err := link.Tracepoint("syscalls", "sys_exit_read", objs.bpfPrograms.SysExitRead, nil)
+	l2, err := link.Tracepoint("syscalls", "sys_exit_read", L7BpfProgsAndMaps.bpfPrograms.SysExitRead, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_exit_read tracepoint")
 	}
@@ -246,7 +248,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		l2.Close()
 	}()
 
-	l3, err := link.Tracepoint("syscalls", "sys_enter_sendto", objs.bpfPrograms.SysEnterSendto, nil)
+	l3, err := link.Tracepoint("syscalls", "sys_enter_sendto", L7BpfProgsAndMaps.bpfPrograms.SysEnterSendto, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_enter_sendto tracepoint")
 	}
@@ -256,7 +258,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		l3.Close()
 	}()
 
-	l4, err := link.Tracepoint("syscalls", "sys_enter_recvfrom", objs.bpfPrograms.SysEnterRecvfrom, nil)
+	l4, err := link.Tracepoint("syscalls", "sys_enter_recvfrom", L7BpfProgsAndMaps.bpfPrograms.SysEnterRecvfrom, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_enter_recvfrom tracepoint")
 	}
@@ -266,7 +268,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		l4.Close()
 	}()
 
-	l5, err := link.Tracepoint("syscalls", "sys_exit_recvfrom", objs.bpfPrograms.SysExitRecvfrom, nil)
+	l5, err := link.Tracepoint("syscalls", "sys_exit_recvfrom", L7BpfProgsAndMaps.bpfPrograms.SysExitRecvfrom, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_exit_recvfrom tracepoint")
 	}
@@ -276,7 +278,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		l5.Close()
 	}()
 
-	l6, err := link.Tracepoint("syscalls", "sys_exit_sendto", objs.bpfPrograms.SysExitSendto, nil)
+	l6, err := link.Tracepoint("syscalls", "sys_exit_sendto", L7BpfProgsAndMaps.bpfPrograms.SysExitSendto, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_exit_sendto tracepoint")
 	}
@@ -286,7 +288,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		l6.Close()
 	}()
 
-	l7, err := link.Tracepoint("syscalls", "sys_exit_write", objs.bpfPrograms.SysExitWrite, nil)
+	l7, err := link.Tracepoint("syscalls", "sys_exit_write", L7BpfProgsAndMaps.bpfPrograms.SysExitWrite, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_exit_write tracepoint")
 	}
@@ -297,7 +299,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	}()
 
 	// initialize perf event readers
-	l7Events, err := perf.NewReader(objs.L7Events, 64*os.Getpagesize())
+	l7Events, err := perf.NewReader(L7BpfProgsAndMaps.L7Events, 64*os.Getpagesize())
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
 	}
@@ -343,6 +345,11 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 						method = PostgresMethodConversion(l7Event.Method).String()
 					default:
 						method = "Unknown"
+					}
+
+					if uint8ToBool(l7Event.IsTls) {
+						log.Logger.Debug().Uint16("fd", uint16(l7Event.Fd)).Uint32("pid", l7Event.Pid).
+							Str("payload", string(l7Event.Payload[:])).Str("method", method).Str("protocol", protocol).Uint32("status", l7Event.Status).Msg("l7tls event")
 					}
 
 					ch <- L7Event{

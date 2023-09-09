@@ -25,7 +25,8 @@ type bpfL7Event struct {
 	PayloadSize         uint32
 	PayloadReadComplete uint8
 	Failed              uint8
-	_                   [6]byte
+	IsTls               uint8
+	_                   [5]byte
 }
 
 type bpfL7Request struct {
@@ -41,9 +42,10 @@ type bpfL7Request struct {
 }
 
 type bpfSocketKey struct {
-	Fd  uint64
-	Pid uint32
-	_   [4]byte
+	Fd    uint64
+	Pid   uint32
+	IsTls uint8
+	_     [3]byte
 }
 
 // loadBpf returns the embedded CollectionSpec for bpf.
@@ -87,7 +89,9 @@ type bpfSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfProgramSpecs struct {
-	SslWrite         *ebpf.ProgramSpec `ebpf:"ssl_write"`
+	SslReadEnterV11  *ebpf.ProgramSpec `ebpf:"ssl_read_enter_v1_1"`
+	SslRetRead       *ebpf.ProgramSpec `ebpf:"ssl_ret_read"`
+	SslWriteV11      *ebpf.ProgramSpec `ebpf:"ssl_write_v1_1"`
 	SysEnterRead     *ebpf.ProgramSpec `ebpf:"sys_enter_read"`
 	SysEnterRecvfrom *ebpf.ProgramSpec `ebpf:"sys_enter_recvfrom"`
 	SysEnterSendto   *ebpf.ProgramSpec `ebpf:"sys_enter_sendto"`
@@ -152,7 +156,9 @@ func (m *bpfMaps) Close() error {
 //
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfPrograms struct {
-	SslWrite         *ebpf.Program `ebpf:"ssl_write"`
+	SslReadEnterV11  *ebpf.Program `ebpf:"ssl_read_enter_v1_1"`
+	SslRetRead       *ebpf.Program `ebpf:"ssl_ret_read"`
+	SslWriteV11      *ebpf.Program `ebpf:"ssl_write_v1_1"`
 	SysEnterRead     *ebpf.Program `ebpf:"sys_enter_read"`
 	SysEnterRecvfrom *ebpf.Program `ebpf:"sys_enter_recvfrom"`
 	SysEnterSendto   *ebpf.Program `ebpf:"sys_enter_sendto"`
@@ -165,7 +171,9 @@ type bpfPrograms struct {
 
 func (p *bpfPrograms) Close() error {
 	return _BpfClose(
-		p.SslWrite,
+		p.SslReadEnterV11,
+		p.SslRetRead,
+		p.SslWriteV11,
 		p.SysEnterRead,
 		p.SysEnterRecvfrom,
 		p.SysEnterSendto,

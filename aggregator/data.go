@@ -36,6 +36,8 @@ type Aggregator struct {
 	crChan   <-chan interface{}
 	ebpfChan <-chan interface{}
 
+	ec *ebpf.EbpfCollector
+
 	// store the service map
 	clusterInfo *ClusterInfo
 
@@ -97,7 +99,7 @@ var (
 var usePgDs bool = false
 var useBackendDs bool = true // default to true
 
-func NewAggregator(k8sChan <-chan interface{}, crChan <-chan interface{}, ebpfChan <-chan interface{}) *Aggregator {
+func NewAggregator(k8sChan <-chan interface{}, crChan <-chan interface{}, ec *ebpf.EbpfCollector) *Aggregator {
 	clusterInfo := &ClusterInfo{
 		PodIPToPodUid:         map[string]types.UID{},
 		ServiceIPToServiceUid: map[string]types.UID{},
@@ -146,7 +148,8 @@ func NewAggregator(k8sChan <-chan interface{}, crChan <-chan interface{}, ebpfCh
 	return &Aggregator{
 		k8sChan:       k8sChan,
 		crChan:        crChan,
-		ebpfChan:      ebpfChan,
+		ebpfChan:      ec.EbpfEvents(),
+		ec:            ec,
 		clusterInfo:   clusterInfo,
 		ds:            ds,
 		dsDestination: dsDestination,
@@ -269,9 +272,8 @@ func (a *Aggregator) processEbpf() {
 
 func (a *Aggregator) processTcpConnect(data interface{}) {
 	d := data.(tcp_state.TcpConnectEvent)
+	go a.ec.ListenForTlsReqs(d.Pid)
 	if d.Type_ == tcp_state.EVENT_TCP_ESTABLISHED {
-		// {pid,fd} -> SockInfo
-
 		// filter out localhost connections
 		if d.SAddr == "127.0.0.1" || d.DAddr == "127.0.0.1" {
 			return
@@ -366,16 +368,29 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 	}
 }
 
-func parseHttpPayload(request string) (method string, path string, httpVersion string) {
+func parseHttpPayload(request string) (method string, path string, httpVersion string, hostHeader string) {
 	// Find the first space character
-	requestFirstLine := strings.Split(request, "\n")[0]
-	parts := strings.Split(requestFirstLine, " ")
+	lines := strings.Split(request, "\n")
+	parts := strings.Split(lines[0], " ")
 	if len(parts) >= 3 {
 		method = parts[0]
 		path = parts[1]
 		httpVersion = parts[2]
 	}
-	return method, path, httpVersion
+
+	for _, line := range lines[1:] {
+		// find Host header
+		if strings.HasPrefix(line, "Host:") {
+			hostParts := strings.Split(line, " ")
+			if len(hostParts) >= 2 {
+				hostHeader = hostParts[1]
+				hostHeader = strings.TrimSuffix(hostHeader, "\r")
+				break
+			}
+		}
+	}
+
+	return method, path, httpVersion, hostHeader
 }
 
 func parseSqlCommand(request string) string {
@@ -415,6 +430,8 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 		a.clusterInfo.mu.Lock() // lock for writing
 		a.clusterInfo.PidToSocketMap[d.Pid] = sockMap
 		a.clusterInfo.mu.Unlock() // unlock for writing
+
+		go a.ec.ListenForTlsReqs(d.Pid)
 	}
 
 	sockMap.mu.RLock() // lock for reading
@@ -495,9 +512,10 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 		Method:     d.Method,
 	}
 
+	var reqHostHeader string
 	// parse http payload, extract path, query params, headers
 	if d.Protocol == l7_req.L7_PROTOCOL_HTTP {
-		_, reqDto.Path, _ = parseHttpPayload(string(d.Payload[0:d.PayloadSize]))
+		_, reqDto.Path, _, reqHostHeader = parseHttpPayload(string(d.Payload[0:d.PayloadSize]))
 		log.Logger.Debug().Str("path", reqDto.Path).Msg("path extracted from http payload")
 	}
 
@@ -544,13 +562,18 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 			reqDto.ToType = "pod"
 		} else {
 			// 3rd party url
-			remoteDnsHost, err := getHostnameFromIP(skInfo.Daddr)
-			if err == nil {
-				// dns lookup successful
-				reqDto.ToUID = remoteDnsHost
+			if reqHostHeader != "" {
+				reqDto.ToUID = reqHostHeader
 				reqDto.ToType = "outbound"
 			} else {
-				log.Logger.Error().Err(err).Str("Daddr", skInfo.Daddr).Msg("error getting hostname from ip")
+				remoteDnsHost, err := getHostnameFromIP(skInfo.Daddr)
+				if err == nil {
+					// dns lookup successful
+					reqDto.ToUID = remoteDnsHost
+					reqDto.ToType = "outbound"
+				} else {
+					log.Logger.Error().Err(err).Str("Daddr", skInfo.Daddr).Msg("error getting hostname from ip")
+				}
 			}
 		}
 	}

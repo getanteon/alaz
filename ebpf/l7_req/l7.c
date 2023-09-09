@@ -6,10 +6,12 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_tracing.h>
+#include <stddef.h>
 
 #include "http.c"
 #include "amqp.c"
 #include "postgres.c"
+#include "openssl.c"
 
 #define PROTOCOL_UNKNOWN    0
 #define PROTOCOL_HTTP	    1
@@ -24,8 +26,9 @@
 #define METHOD_DELIVER           2
 
 
-char __license[] SEC("license") = "Dual MIT/GPL";
+#define TLS_MASK 0x8000000000000000
 
+char __license[] SEC("license") = "Dual MIT/GPL";
 
 struct l7_event {
     __u64 fd;
@@ -40,6 +43,7 @@ struct l7_event {
     __u32 payload_size;
     __u8 payload_read_complete;
     __u8 failed;
+    __u8 is_tls;
 };
 
 struct l7_request {
@@ -55,6 +59,7 @@ struct l7_request {
 struct socket_key {
     __u64 fd;
     __u32 pid;
+    __u8 is_tls;
 };
 
 // Instead of allocating on bpf stack, we allocate on a per-CPU array map
@@ -124,7 +129,7 @@ struct {
 
 // Processing enter of write and sendto syscalls
 static __always_inline
-int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, char* buf, __u64 count){
+int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, char* buf, __u64 count){
     __u64 id = bpf_get_current_pid_tgid();
 
     int zero = 0;
@@ -146,6 +151,9 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, char* buf, __u64
     struct socket_key k = {};
     k.pid = id >> 32;
     k.fd = fd;
+    k.is_tls = is_tls;
+
+    
 
     if(buf){
         // We are tracking tcp connections (sockets) on tcp_state bpf program, sending them to userspace
@@ -191,18 +199,21 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, char* buf, __u64
         return 0;
     }
 
+    bpf_probe_read(&req->payload, sizeof(req->payload), (const void *)buf);
     if(count > MAX_PAYLOAD_SIZE){
         // will not be able to copy all of it
-        bpf_probe_read(&req->payload, sizeof(req->payload), (const void *)buf);
         req->payload_size = MAX_PAYLOAD_SIZE;
         req->payload_read_complete = 0;
     }else{
-        // copy only the first ctx->count bytes (all we have)
-        bpf_probe_read(&req->payload, count, (const void *)buf);
         req->payload_size = count;
         req->payload_read_complete = 1;
     }
     
+    if (is_tls){
+        char msg[] = "tls writing to active_l7_req fd: %ld, pid: %ld";
+        bpf_trace_printk(msg, sizeof(msg), fd, k.pid);
+    } 
+
     long res = bpf_map_update_elem(&active_l7_requests, &k, req, BPF_ANY);
     if(res < 0)
     {
@@ -216,12 +227,12 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, char* buf, __u64
 
 // Processing enter of read, recv, recvfrom syscalls
 static __always_inline
-int process_enter_of_syscalls_read_recvfrom(__u64 fd, char* buf, __u64 size) {
-    __u64 id = bpf_get_current_pid_tgid();
+int process_enter_of_syscalls_read_recvfrom(__u64 id, __u32 pid, __u64 fd, char* buf, __u64 size) {
+    // __u64 id = bpf_get_current_pid_tgid();
     
-    struct socket_key k = {};
-    k.pid = id >> 32;
-    k.fd = fd;
+    // struct socket_key k = {};
+    // k.pid = pid;
+    // k.fd = fd;
 
     // since a message consume in amqp does not have a prior write, we will not have a request in active_l7_requests
     // only in http, a prior write is needed, so we will have a request in active_l7_requests
@@ -299,6 +310,7 @@ int process_exit_of_syscalls_write_sendto(void* ctx, __s64 ret){
         // request payload
         e->payload_size = active_req->payload_size;
         e->payload_read_complete = active_req->payload_read_complete;
+        e->is_tls = 0;
         
         // copy req payload
         bpf_probe_read(e->payload, MAX_PAYLOAD_SIZE, active_req->payload);
@@ -316,10 +328,10 @@ int process_exit_of_syscalls_write_sendto(void* ctx, __s64 ret){
 }
 
 static __always_inline
-int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
+int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64 ret, __u8 is_tls) {
     if (ret < 0) { // read failed
         // -ERRNO
-        __u64 id = bpf_get_current_pid_tgid();
+        // __u64 id = bpf_get_current_pid_tgid();
 
         // check if this read was initiated by us
         struct read_args *read_info = bpf_map_lookup_elem(&active_reads, &id);
@@ -328,30 +340,38 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
         }
 
         struct socket_key k = {};
-        k.pid = id >> 32;
+        k.pid = pid;
         k.fd = read_info->fd;
-
+        k.is_tls = is_tls;
 
         // clean up
         bpf_map_delete_elem(&active_reads, &id);
+
+
+        if (is_tls){
+            char msg[] = "cleaning active_l7_req fd: %ld, pid: %ld";
+            bpf_trace_printk(msg, sizeof(msg), k.fd, k.pid);
+        }
         bpf_map_delete_elem(&active_l7_requests, &k);
 
         return 0;
     }
 
 
-    __u64 id = bpf_get_current_pid_tgid();
+    // __u64 id = bpf_get_current_pid_tgid();
     struct read_args *read_info = bpf_map_lookup_elem(&active_reads, &id);
     if (!read_info) {
+        if (is_tls){
+            char msg[] = "tls could not find read_info";
+            bpf_trace_printk(msg, sizeof(msg));
+        }
         return 0;
     }
-
-
     
     struct socket_key k = {};
-    k.pid = id >> 32;
+    k.pid = pid;
     k.fd = read_info->fd; 
-
+    k.is_tls = is_tls;
 
     // Instead of allocating on bpf stack, use cpu map
     int zero = 0;
@@ -360,6 +380,7 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
         bpf_map_delete_elem(&active_reads, &id);
         return 0;
     }
+    e->is_tls = is_tls;
 
     // For a amqp consume, there will be no write, so we will not have a request in active_l7_requests
     // Process amqp consume first, if it is not amqp consume, look for a request in active_l7_requests
@@ -388,6 +409,10 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
 
     struct l7_request *active_req = bpf_map_lookup_elem(&active_l7_requests, &k);
     if (!active_req) {
+        if (is_tls){
+            char msg[] = "tls could not find active_l7_req fd: %ld, pid: %ld";
+            bpf_trace_printk(msg, sizeof(msg), k.fd, k.pid);
+        }
         bpf_map_delete_elem(&active_reads, &id);
         return 0;
     }
@@ -486,14 +511,61 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
 // sys_exit_ receiving syscalls -- process_exit_of_syscalls_read_recvfrom
 
 
+static __always_inline 
+void ssl_uprobe_write_v_1_1(struct pt_regs *ctx, void* ssl, void* buffer, int num, size_t *count_ptr) {
+    struct ssl_st_v1_1 ssl_st;
+    bpf_probe_read_user(&ssl_st, sizeof(ssl_st), ssl);
+    
+    struct bio_st_v1_1 bio;                                                   
+    if (bpf_probe_read(&bio, sizeof(bio), (void*)ssl_st.wbio)) {         
+        char msg3[] = "could not read bio";
+        bpf_trace_printk(msg3, sizeof(msg3));
+        return;                                                       
+    };                                                              
+    __u32 fd = bio.num;
+
+    char msg[] = "tls bio->fd %ld";
+    bpf_trace_printk(msg, sizeof(msg),fd);
+    
+    char* buf_ptr = (char*) buffer;               
+    __u64 buf_size = num;
+
+    process_enter_of_syscalls_write_sendto(ctx, fd, 1, buf_ptr, buf_size);                   
+}
+
+static __always_inline 
+void ssl_uprobe_read_enter_v1_1(struct pt_regs *ctx, __u64 id,  __u32 pid, void* ssl, void* buffer, int num, size_t *count_ptr) {
+    struct ssl_st_v1_1 ssl_st;
+    bpf_probe_read_user(&ssl_st, sizeof(ssl_st), ssl);
+    
+    struct bio_st_v1_1 bio;                                                   
+    if (bpf_probe_read(&bio, sizeof(bio), (void*)ssl_st.rbio)) {         
+        char msg[] = "could not read rbio";
+        bpf_trace_printk(msg, sizeof(msg));
+        return;                                                       
+    };                                                              
+    __u32 fd = bio.num;
+
+    char msg[] = "ssl_uprobe_read_enter bio->fd %ld";
+    bpf_trace_printk(msg, sizeof(msg),fd);
+    
+    char* buf_ptr = (char*) buffer;               
+    __u64 buf_size = num;
+ 
+    char msg4[] = "tls read enter going to be processed";
+    bpf_trace_printk(msg4, sizeof(msg4));
+
+    process_enter_of_syscalls_read_recvfrom(id, pid, fd, buf_ptr, buf_size);            
+}
+
 SEC("tracepoint/syscalls/sys_enter_write")
 int sys_enter_write(struct trace_event_raw_sys_enter_write* ctx) {
-   return process_enter_of_syscalls_write_sendto(ctx, ctx->fd, ctx->buf, ctx->count);
+   return process_enter_of_syscalls_write_sendto(ctx, ctx->fd, 0, ctx->buf, ctx->count);
 }
 
 SEC("tracepoint/syscalls/sys_enter_sendto")
 int sys_enter_sendto(struct trace_event_raw_sys_enter_sendto* ctx) {
-   return process_enter_of_syscalls_write_sendto(ctx, ctx->fd, ctx->buff, ctx->len);
+   return process_enter_of_syscalls_write_sendto(ctx, ctx->fd, 0 ,ctx->buff, ctx->len);
 }
 
 SEC("tracepoint/syscalls/sys_exit_write")
@@ -508,21 +580,59 @@ int sys_exit_sendto(struct trace_event_raw_sys_exit_sendto* ctx) {
 
 SEC("tracepoint/syscalls/sys_enter_read")
 int sys_enter_read(struct trace_event_raw_sys_enter_read* ctx) {
-    return process_enter_of_syscalls_read_recvfrom(ctx->fd, ctx->buf, ctx->count);
+    __u64 id = bpf_get_current_pid_tgid();
+    __u32 pid = id >> 32;
+    return process_enter_of_syscalls_read_recvfrom(id, pid, ctx->fd, ctx->buf, ctx->count);
 }
 
 SEC("tracepoint/syscalls/sys_enter_recvfrom")
 int sys_enter_recvfrom(struct trace_event_raw_sys_enter_recvfrom* ctx) {
-    return process_enter_of_syscalls_read_recvfrom(ctx->fd, ctx->ubuf, ctx->size);
+    __u64 id = bpf_get_current_pid_tgid();
+    __u32 pid = id >> 32;
+    return process_enter_of_syscalls_read_recvfrom(id, pid, ctx->fd, ctx->ubuf, ctx->size);
 }
 
 SEC("tracepoint/syscalls/sys_exit_read")
 int sys_exit_read(struct trace_event_raw_sys_exit_read* ctx) {
-    return process_exit_of_syscalls_read_recvfrom(ctx, ctx->ret);
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 pid = pid_tgid >> 32;
+    return process_exit_of_syscalls_read_recvfrom(ctx, pid_tgid, pid, ctx->ret, 0);
 }
 
 SEC("tracepoint/syscalls/sys_exit_recvfrom")
 int sys_exit_recvfrom(struct trace_event_raw_sys_exit_recvfrom* ctx) {
-    return process_exit_of_syscalls_read_recvfrom(ctx, ctx->ret);
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 pid = pid_tgid >> 32;
+    return process_exit_of_syscalls_read_recvfrom(ctx, pid_tgid, pid, ctx->ret, 0);
+}
+
+SEC("uprobe/SSL_write_v1_1")
+void BPF_UPROBE(ssl_write_v1_1, void * ssl, void* buffer, int num) {
+	ssl_uprobe_write_v_1_1(ctx, ssl, buffer, num, 0);
+}
+
+SEC("uprobe/SSL_read_v1_1")
+void BPF_UPROBE(ssl_read_enter_v1_1, void* ssl, void* buffer, int num) {
+    char msg[] = "this is uprobe ssl_read_enter";
+    bpf_trace_printk(msg, sizeof(msg));
+     
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 pid = pid_tgid >> 32;
+    __u64 id = pid_tgid | TLS_MASK;
+    ssl_uprobe_read_enter_v1_1(ctx, id, pid, ssl, buffer, num, 0);
+}
+
+SEC("uretprobe/SSL_read")
+void BPF_URETPROBE(ssl_ret_read) {
+	__u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u64 pid = pid_tgid >> 32;
+    __u64 id = pid_tgid | TLS_MASK;
+
+    int returnValue = PT_REGS_RC(ctx);
+    
+    char msg[] = "this is uretprobe ssl_read ret: %ld";
+    bpf_trace_printk(msg, sizeof(msg), returnValue);
+
+    process_exit_of_syscalls_read_recvfrom(ctx, id, pid, returnValue, 1);
 }
 
