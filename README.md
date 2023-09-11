@@ -55,7 +55,7 @@ To use Alaz, you need to have a [Ddosify Cloud](https://app.ddosify.com/register
 # Replace <MONITORING_ID> with your monitoring ID from the Ddosify Cloud. Change XXXXX with your monitoring ID.
 MONITORING_ID=XXXXX
 curl -sSL https://raw.githubusercontent.com/ddosify/alaz/master/resources/alaz.yaml -o alaz.yaml
-sed -i "" "s/<MONITORING_ID>/$MONITORING_ID/g" alaz.yaml
+sed -i"" -e "s/<MONITORING_ID>/$MONITORING_ID/g" alaz.yaml
 kubectl create namespace ddosify
 kubectl apply -f alaz.yaml
 ```
@@ -88,11 +88,11 @@ There are two options for Kubernetes deployment:
 ```bash
 # Replace <MONITORING_ID> with your monitoring ID from the Ddosify Cloud. Change XXXXX with your monitoring ID.
 MONITORING_ID=XXXXX
-# Set BACKEND_HOST with your Ddosify Self Hosted Endpoint.
+# Set BACKEND_HOST with your Ddosify Self Hosted Endpoint. If your Ddosify Self Hosted endpoint is http://localhost:8014, then BACKEND_HOST=localhost:8014
 BACKEND_HOST=XXXXX
 curl -sSL https://raw.githubusercontent.com/ddosify/alaz/master/resources/alaz.yaml -o alaz.yaml
-sed -i "" "s/<MONITORING_ID>/$MONITORING_ID/g" alaz.yaml
-sed -i "" "s/https:\/\/api.ddosify.com:443/http:\/\/$BACKEND_HOST\/api/g" alaz.yaml
+sed -i"" -e "s/<MONITORING_ID>/$MONITORING_ID/g" alaz.yaml
+sed -i"" -e "s/https:\/\/api.ddosify.com:443/http:\/\/$BACKEND_HOST\/api/g" alaz.yaml
 kubectl create namespace ddosify
 kubectl apply -f alaz.yaml
 ```
