@@ -70,8 +70,8 @@ generate:
 ## Alaz Image
 
 ALAZ_IMAGE_NAME := alaz
-ALAZ_TAG := latest
-REGISTRY := ddosify
+ALAZ_TAG ?= latest
+REGISTRY ?= ddosify
 BUILDX_BUILDER := buildx-multi-arch
 ALAZ_DOCKERFILE := Dockerfile
 
