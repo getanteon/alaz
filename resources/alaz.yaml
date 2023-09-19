@@ -56,6 +56,8 @@ spec:
       hostPID: true
       containers:
       - env:
+        - name: EBPF_ENABLED
+          value: "true"
         - name: METRICS_BACKEND
           value: "true"
         - name: BACKEND_HOST
