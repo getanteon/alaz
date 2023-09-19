@@ -3,9 +3,12 @@ package main
 import (
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 
 	"github.com/ddosify/alaz/aggregator"
+	"github.com/ddosify/alaz/config"
+	"github.com/ddosify/alaz/datastore"
 	"github.com/ddosify/alaz/ebpf"
 	"github.com/ddosify/alaz/k8s"
 
@@ -37,13 +40,25 @@ func main() {
 		go k8sCollector.Init(kubeEvents)
 	}
 
+	ebpfEnabled, _ := strconv.ParseBool(os.Getenv("EBPF_ENABLED"))
+	metricsEnabled, _ := strconv.ParseBool(os.Getenv("METRICS_BACKEND"))
+
+	// datastore backend
+	dsBackend := datastore.NewBackendDS(ctx, config.BackendConfig{
+		Host:                  os.Getenv("BACKEND_HOST"),
+		Port:                  os.Getenv("BACKEND_PORT"),
+		MetricsExport:         metricsEnabled,
+		MetricsExportInterval: 10,
+	})
+	go dsBackend.SendHealthCheck(ebpfEnabled, metricsEnabled)
+
 	// deploy ebpf programs
 	var ec *ebpf.EbpfCollector
-	if os.Getenv("EBPF_ENABLED") != "false" {
+	if ebpfEnabled {
 		ec = ebpf.NewEbpfCollector(ctx)
 		go ec.Deploy()
 
-		a := aggregator.NewAggregator(ctx, kubeEvents, nil, ec.EbpfEvents())
+		a := aggregator.NewAggregator(kubeEvents, nil, ec.EbpfEvents(), dsBackend)
 		a.Run()
 	}
 

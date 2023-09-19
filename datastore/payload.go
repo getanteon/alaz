@@ -1,5 +1,16 @@
 package datastore
 
+type HealthCheckPayload struct {
+	Metadata struct {
+		MonitoringID   string `json:"monitoring_id"`
+		IdempotencyKey string `json:"idempotency_key"`
+	} `json:"metadata"`
+	Info struct {
+		EbpfEnabled    bool `json:"ebpf"`
+		MetricsEnabled bool `json:"metrics"`
+	} `json:"alaz_info"`
+}
+
 type EventPayload struct {
 	Metadata struct {
 		MonitoringID   string `json:"monitoring_id"`

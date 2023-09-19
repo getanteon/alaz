@@ -8,16 +8,12 @@ package aggregator
 // 5. docker (TODO)
 
 import (
-	"context"
 	"fmt"
 	"net"
-	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/ddosify/alaz/config"
 	"github.com/ddosify/alaz/datastore"
 	"github.com/ddosify/alaz/ebpf"
 	"github.com/ddosify/alaz/ebpf/l7_req"
@@ -92,27 +88,18 @@ var (
 var usePgDs bool = false
 var useBackendDs bool = true // default to true
 
-func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, crChan <-chan interface{}, ebpfChan <-chan interface{}) *Aggregator {
-	ctx, _ := context.WithCancel(parentCtx)
+func NewAggregator(k8sChan <-chan interface{}, crChan <-chan interface{}, ebpfChan <-chan interface{}, ds datastore.DataStore) *Aggregator {
 	clusterInfo := &ClusterInfo{
 		PodIPToPodUid:         map[string]types.UID{},
 		ServiceIPToServiceUid: map[string]types.UID{},
 		PidToSocketMap:        make(map[uint32]*SocketMap, 0),
 	}
 
-	metricsExport, _ := strconv.ParseBool(os.Getenv("METRICS_BACKEND"))
-	dsBackend := datastore.NewBackendDS(ctx, config.BackendConfig{
-		Host:                  os.Getenv("BACKEND_HOST"),
-		Port:                  os.Getenv("BACKEND_PORT"),
-		MetricsExport:         metricsExport,
-		MetricsExportInterval: 10,
-	})
-
 	return &Aggregator{
 		k8sChan:     k8sChan,
 		ebpfChan:    ebpfChan,
 		clusterInfo: clusterInfo,
-		ds:          dsBackend,
+		ds:          ds,
 	}
 }
 
