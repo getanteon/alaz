@@ -1,7 +1,6 @@
 package aggregator
 
 import (
-	"alaz/log"
 	"bufio"
 	"bytes"
 	"encoding/binary"
@@ -15,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ddosify/alaz/log"
 
 	"inet.af/netaddr"
 )

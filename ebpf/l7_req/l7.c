@@ -470,12 +470,6 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
     bpf_map_delete_elem(&active_reads, &id);
     bpf_map_delete_elem(&active_l7_requests, &k);
 
-    // TODO: remove this, only for debugging
-    if (e->protocol == PROTOCOL_HTTP && e->status == 0) {
-        char msgCtx[] = "http call with status code 0, fd: %ld, pid: %ld";
-        bpf_trace_printk(msgCtx, sizeof(msgCtx), e->fd,e->pid);
-    }
-
     long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
     if (r < 0) {
         char msg[] = "could not write to l7_events - %ld";

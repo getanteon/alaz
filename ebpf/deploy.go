@@ -1,10 +1,6 @@
 package ebpf
 
 import (
-	"alaz/ebpf/l7_req"
-	"alaz/ebpf/tcp_state"
-	"alaz/log"
-	"bufio"
 	"context"
 	"fmt"
 	"net/http"

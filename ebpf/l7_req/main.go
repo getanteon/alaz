@@ -5,7 +5,7 @@ import (
 	"os"
 	"unsafe"
 
-	"alaz/log"
+	"github.com/ddosify/alaz/log"
 
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/perf"

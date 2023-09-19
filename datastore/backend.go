@@ -1,8 +1,6 @@
 package datastore
 
 import (
-	"alaz/config"
-	"alaz/log"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -14,6 +12,9 @@ import (
 	"sort"
 	"strconv"
 	"time"
+
+	"github.com/ddosify/alaz/config"
+	"github.com/ddosify/alaz/log"
 
 	"github.com/alecthomas/kingpin/v2"
 	"github.com/go-kit/log/level"
@@ -71,14 +72,14 @@ type BackendDS struct {
 }
 
 const (
-	podEndpoint       = "/alaz/k8s/pod/"
-	svcEndpoint       = "/alaz/k8s/svc/"
-	rsEndpoint        = "/alaz/k8s/replicaset/"
-	depEndpoint       = "/alaz/k8s/deployment/"
-	epEndpoint        = "/alaz/k8s/endpoint/"
-	containerEndpoint = "/alaz/k8s/container/"
-	dsEndpoint        = "/alaz/k8s/daemonset/"
-	reqEndpoint       = "/alaz/"
+	podEndpoint       = "/github.com/ddosify/alaz/k8s/pod/"
+	svcEndpoint       = "/github.com/ddosify/alaz/k8s/svc/"
+	rsEndpoint        = "/github.com/ddosify/alaz/k8s/replicaset/"
+	depEndpoint       = "/github.com/ddosify/alaz/k8s/deployment/"
+	epEndpoint        = "/github.com/ddosify/alaz/k8s/endpoint/"
+	containerEndpoint = "/github.com/ddosify/alaz/k8s/container/"
+	dsEndpoint        = "/github.com/ddosify/alaz/k8s/daemonset/"
+	reqEndpoint       = "/github.com/ddosify/alaz/"
 )
 
 func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *BackendDS {
@@ -181,7 +182,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 					return
 				case <-t.C:
 					// make a request to /inner/metrics
-					// forward the response to /alaz/metrics
+					// forward the response to /github.com/ddosify/alaz/metrics
 					func() {
 						req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://localhost:%d/inner/metrics", innerMetricsPort), nil)
 						if err != nil {

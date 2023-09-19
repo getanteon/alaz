@@ -1,5 +1,8 @@
 FROM ubuntu:22.04
 
+ENV LIBBPF_VERSION 1.2.2
+ENV GOLANG_VERSION 1.20.5
+
 # Install Clang and LLVM Strip
 RUN apt-get update && apt-get install -y clang-14 llvm && \
     update-alternatives --install /usr/bin/clang clang /usr/bin/clang-14 100 && \
@@ -10,17 +13,17 @@ RUN apt-get update && apt-get install -y make
 RUN apt-get install -y gcc-multilib
 
 # Install libbpf dependencies
-RUN apt-get update && apt-get install -y bison build-essential cmake flex git libelf-dev libssl-dev libudev-dev pkg-config
+RUN apt-get update && apt-get install -y bison build-essential cmake flex git libelf-dev libssl-dev libudev-dev pkg-config wget
 
 # Install libbpf
-RUN git clone --depth 1 https://github.com/libbpf/libbpf && \
-    cd libbpf/src && \
+RUN wget --quiet https://github.com/libbpf/libbpf/archive/refs/tags/v${LIBBPF_VERSION}.tar.gz && \
+    tar -xzf v${LIBBPF_VERSION}.tar.gz && \
+    rm v${LIBBPF_VERSION}.tar.gz && \
+    cd libbpf-${LIBBPF_VERSION}/src && \
     make && make install
 
-# Install Go 1.20.5
-ENV GOLANG_VERSION 1.20.5
-RUN apt-get update && apt-get install -y wget && \
-    wget -q https://golang.org/dl/go${GOLANG_VERSION}.linux-amd64.tar.gz && \
+# Install Go
+RUN wget -q https://golang.org/dl/go${GOLANG_VERSION}.linux-amd64.tar.gz && \
     tar -C /usr/local -xzf go${GOLANG_VERSION}.linux-amd64.tar.gz && \
     rm go${GOLANG_VERSION}.linux-amd64.tar.gz
 

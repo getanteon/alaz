@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"alaz/log"
+	"github.com/ddosify/alaz/log"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/runtime"

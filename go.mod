@@ -1,4 +1,4 @@
-module alaz
+module github.com/ddosify/alaz
 
 go 1.18
 
@@ -8,7 +8,6 @@ require (
 	github.com/containerd/containerd v1.7.2
 	github.com/go-kit/log v0.2.1
 	github.com/hashicorp/go-retryablehttp v0.7.4
-	github.com/lib/pq v1.10.9
 	github.com/prometheus/client_golang v1.16.0
 	github.com/prometheus/common v0.44.0
 	github.com/prometheus/node_exporter v1.6.1
@@ -18,7 +17,6 @@ require (
 	k8s.io/api v0.27.2
 	k8s.io/apimachinery v0.27.2
 	k8s.io/client-go v0.27.2
-	k8s.io/cri-api v0.27.1
 
 )
 
@@ -41,7 +39,6 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dennwc/btrfs v0.0.0-20230312211831-a1f570bd01a1 // indirect
 	github.com/dennwc/ioctl v1.0.0 // indirect
-	github.com/docker/go-events v0.0.0-20190806004212-e31b211e4f1c // indirect
 	github.com/ema/qdisc v0.0.0-20230120214811-5b708f463de3 // indirect
 	github.com/emicklei/go-restful/v3 v3.10.2 // indirect
 	github.com/fatih/color v1.13.0 // indirect
@@ -114,7 +111,6 @@ require (
 	go4.org/unsafe/assume-no-moving-gc v0.0.0-20230525183740-e7c30c78aeb2 // indirect
 	golang.org/x/crypto v0.11.0 // indirect
 	golang.org/x/exp v0.0.0-20230522175609-2e198f4a06a1 // indirect
-	golang.org/x/mod v0.12.0 // indirect
 	golang.org/x/net v0.12.0 // indirect
 	golang.org/x/oauth2 v0.8.0 // indirect
 	golang.org/x/sync v0.3.0 // indirect
