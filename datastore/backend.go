@@ -287,10 +287,11 @@ func (b *BackendDS) DoRequest(req *http.Request) error {
 
 func convertReqsToPayload(batch []*ReqInfo) RequestsPayload {
 	return RequestsPayload{
-		Metadata: struct {
-			MonitoringID   string `json:"monitoring_id"`
-			IdempotencyKey string `json:"idempotency_key"`
-		}{MonitoringID: MonitoringID, IdempotencyKey: string(uuid.NewUUID())},
+		Metadata: Metadata{
+			MonitoringID:   MonitoringID,
+			IdempotencyKey: string(uuid.NewUUID()),
+			NodeID:         NodeID,
+		},
 		Requests: batch,
 	}
 }
@@ -370,12 +371,10 @@ func (b *BackendDS) send(ch <-chan interface{}, endpoint string) {
 	}
 
 	payload := EventPayload{
-		Metadata: struct {
-			MonitoringID   string "json:\"monitoring_id\""
-			IdempotencyKey string "json:\"idempotency_key\""
-		}{
+		Metadata: Metadata{
 			MonitoringID:   MonitoringID,
 			IdempotencyKey: string(uuid.NewUUID()),
+			NodeID:         NodeID,
 		},
 		Events: batch,
 	}
@@ -471,12 +470,10 @@ func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool) {
 	defer t.Stop()
 
 	payload := HealthCheckPayload{
-		Metadata: struct {
-			MonitoringID   string "json:\"monitoring_id\""
-			IdempotencyKey string "json:\"idempotency_key\""
-		}{
+		Metadata: Metadata{
 			MonitoringID:   MonitoringID,
 			IdempotencyKey: string(uuid.NewUUID()),
+			NodeID:         NodeID,
 		},
 		Info: struct {
 			EbpfEnabled    bool `json:"ebpf"`
