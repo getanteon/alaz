@@ -215,7 +215,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 							return
 						}
 
-						req, err = http.NewRequest(http.MethodPost, fmt.Sprintf("%s/github.com/ddosify/alaz/metrics/scrape/?instance=%s&monitoring_id=%s", ds.host, NodeID, MonitoringID), bytes.NewReader(body))
+						req, err = http.NewRequest(http.MethodPost, fmt.Sprintf("%s/alaz/metrics/scrape/?instance=%s&monitoring_id=%s", ds.host, NodeID, MonitoringID), bytes.NewReader(body))
 						if err != nil {
 							log.Logger.Error().Msgf("error creating metrics request: %v", err)
 							return
@@ -295,14 +295,14 @@ func convertReqsToPayload(batch []*ReqInfo) RequestsPayload {
 	}
 }
 
-func (b *BackendDS) sendToBackend(payload interface{}, endpoint string) {
+func (b *BackendDS) sendToBackend(method string, payload interface{}, endpoint string) {
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		log.Logger.Error().Msgf("error marshalling batch: %v", err)
 		return
 	}
 
-	httpReq, err := http.NewRequest(http.MethodPost, b.host+endpoint, bytes.NewBuffer(payloadBytes))
+	httpReq, err := http.NewRequest(method, b.host+endpoint, bytes.NewBuffer(payloadBytes))
 	if err != nil {
 		log.Logger.Error().Msgf("error creating http request: %v", err)
 		return
@@ -337,7 +337,7 @@ func (b *BackendDS) sendReqsInBatch() {
 		}
 
 		reqsPayload := convertReqsToPayload(batch)
-		b.sendToBackend(reqsPayload, reqEndpoint)
+		b.sendToBackend(http.MethodPost, reqsPayload, reqEndpoint)
 	}
 
 	for {
@@ -380,7 +380,7 @@ func (b *BackendDS) send(ch <-chan interface{}, endpoint string) {
 		Events: batch,
 	}
 
-	b.sendToBackend(payload, endpoint)
+	b.sendToBackend(http.MethodPost, payload, endpoint)
 }
 
 func (b *BackendDS) sendEventsInBatch(ch chan interface{}, endpoint string, interval time.Duration) {
@@ -493,7 +493,7 @@ func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool) {
 			log.Logger.Info().Msg("stopping sending health check")
 			return
 		case <-t.C:
-			b.sendToBackend(payload, healthCheckEndpoint)
+			b.sendToBackend(http.MethodPut, payload, healthCheckEndpoint)
 		}
 	}
 }
