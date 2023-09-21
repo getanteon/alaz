@@ -299,6 +299,7 @@ func convertReqsToPayload(batch []*ReqInfo) RequestsPayload {
 			MonitoringID:   MonitoringID,
 			IdempotencyKey: string(uuid.NewUUID()),
 			NodeID:         NodeID,
+			AlazVersion:    tag,
 		},
 		Requests: batch,
 	}
@@ -383,6 +384,7 @@ func (b *BackendDS) send(ch <-chan interface{}, endpoint string) {
 			MonitoringID:   MonitoringID,
 			IdempotencyKey: string(uuid.NewUUID()),
 			NodeID:         NodeID,
+			AlazVersion:    tag,
 		},
 		Events: batch,
 	}
@@ -482,6 +484,7 @@ func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool) {
 			MonitoringID:   MonitoringID,
 			IdempotencyKey: string(uuid.NewUUID()),
 			NodeID:         NodeID,
+			AlazVersion:    tag,
 		},
 		Info: struct {
 			EbpfEnabled    bool `json:"ebpf"`

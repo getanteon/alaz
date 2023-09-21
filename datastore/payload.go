@@ -4,6 +4,7 @@ type Metadata struct {
 	MonitoringID   string `json:"monitoring_id"`
 	IdempotencyKey string `json:"idempotency_key"`
 	NodeID         string `json:"node_id"`
+	AlazVersion    string `json:"alaz_version"`
 }
 
 type HealthCheckPayload struct {
