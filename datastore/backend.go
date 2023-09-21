@@ -32,6 +32,9 @@ import (
 var MonitoringID string
 var NodeID string
 
+// set from ldflags
+var tag string
+
 func init() {
 	MonitoringID = os.Getenv("MONITORING_ID")
 	if MonitoringID == "" {
@@ -42,6 +45,11 @@ func init() {
 	if NodeID == "" {
 		log.Logger.Fatal().Msg("NODE_NAME is not set")
 	}
+
+	if tag == "" {
+		log.Logger.Fatal().Msg("tag is not set")
+	}
+	log.Logger.Info().Str("tag", tag).Msg("alaz tag")
 }
 
 var resourceBatchSize int64 = 50
