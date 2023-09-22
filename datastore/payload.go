@@ -1,11 +1,23 @@
 package datastore
 
+type Metadata struct {
+	MonitoringID   string `json:"monitoring_id"`
+	IdempotencyKey string `json:"idempotency_key"`
+	NodeID         string `json:"node_id"`
+	AlazVersion    string `json:"alaz_version"`
+}
+
+type HealthCheckPayload struct {
+	Metadata Metadata `json:"metadata"`
+	Info     struct {
+		EbpfEnabled    bool `json:"ebpf"`
+		MetricsEnabled bool `json:"metrics"`
+	} `json:"alaz_info"`
+}
+
 type EventPayload struct {
-	Metadata struct {
-		MonitoringID   string `json:"monitoring_id"`
-		IdempotencyKey string `json:"idempotency_key"`
-	} `json:"metadata"`
-	Events []interface{} `json:"events"`
+	Metadata Metadata      `json:"metadata"`
+	Events   []interface{} `json:"events"`
 }
 
 type PodEvent struct {
@@ -98,10 +110,7 @@ type ContainerEvent struct {
 type ReqInfo [15]interface{}
 
 type RequestsPayload struct {
-	Metadata struct {
-		MonitoringID   string `json:"monitoring_id"`
-		IdempotencyKey string `json:"idempotency_key"`
-	} `json:"metadata"`
+	Metadata Metadata   `json:"metadata"`
 	Requests []*ReqInfo `json:"requests"`
 }
 

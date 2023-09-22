@@ -2,7 +2,8 @@ FROM golang:1.20-alpine as builder
 WORKDIR /app
 COPY . ./
 RUN apk update && apk add gcc musl-dev
-RUN CGO_ENABLED=0 GOOS=linux go build -o alaz
+ARG VERSION
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-X 'github.com/ddosify/alaz/datastore.tag=$VERSION'" -o alaz
 
 FROM alpine:3.18.3
 RUN apk --no-cache add ca-certificates

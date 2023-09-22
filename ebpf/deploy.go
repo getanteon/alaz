@@ -1,6 +1,7 @@
 package ebpf
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"net/http"
@@ -11,6 +12,9 @@ import (
 	"time"
 
 	"github.com/cilium/ebpf/link"
+	"github.com/ddosify/alaz/ebpf/l7_req"
+	"github.com/ddosify/alaz/ebpf/tcp_state"
+	"github.com/ddosify/alaz/log"
 )
 
 type BpfEvent interface {

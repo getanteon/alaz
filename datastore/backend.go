@@ -32,6 +32,9 @@ import (
 var MonitoringID string
 var NodeID string
 
+// set from ldflags
+var tag string
+
 func init() {
 	MonitoringID = os.Getenv("MONITORING_ID")
 	if MonitoringID == "" {
@@ -42,6 +45,11 @@ func init() {
 	if NodeID == "" {
 		log.Logger.Fatal().Msg("NODE_NAME is not set")
 	}
+
+	if tag == "" {
+		log.Logger.Fatal().Msg("tag is not set")
+	}
+	log.Logger.Info().Str("tag", tag).Msg("alaz tag")
 }
 
 var resourceBatchSize int64 = 50
@@ -72,14 +80,16 @@ type BackendDS struct {
 }
 
 const (
-	podEndpoint       = "/github.com/ddosify/alaz/k8s/pod/"
-	svcEndpoint       = "/github.com/ddosify/alaz/k8s/svc/"
-	rsEndpoint        = "/github.com/ddosify/alaz/k8s/replicaset/"
-	depEndpoint       = "/github.com/ddosify/alaz/k8s/deployment/"
-	epEndpoint        = "/github.com/ddosify/alaz/k8s/endpoint/"
-	containerEndpoint = "/github.com/ddosify/alaz/k8s/container/"
-	dsEndpoint        = "/github.com/ddosify/alaz/k8s/daemonset/"
-	reqEndpoint       = "/github.com/ddosify/alaz/"
+	podEndpoint       = "/alaz/k8s/pod/"
+	svcEndpoint       = "/alaz/k8s/svc/"
+	rsEndpoint        = "/alaz/k8s/replicaset/"
+	depEndpoint       = "/alaz/k8s/deployment/"
+	epEndpoint        = "/alaz/k8s/endpoint/"
+	containerEndpoint = "/alaz/k8s/container/"
+	dsEndpoint        = "/alaz/k8s/daemonset/"
+	reqEndpoint       = "/alaz/"
+
+	healthCheckEndpoint = "/alaz/healthcheck/"
 )
 
 func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *BackendDS {
@@ -285,22 +295,24 @@ func (b *BackendDS) DoRequest(req *http.Request) error {
 
 func convertReqsToPayload(batch []*ReqInfo) RequestsPayload {
 	return RequestsPayload{
-		Metadata: struct {
-			MonitoringID   string `json:"monitoring_id"`
-			IdempotencyKey string `json:"idempotency_key"`
-		}{MonitoringID: MonitoringID, IdempotencyKey: string(uuid.NewUUID())},
+		Metadata: Metadata{
+			MonitoringID:   MonitoringID,
+			IdempotencyKey: string(uuid.NewUUID()),
+			NodeID:         NodeID,
+			AlazVersion:    tag,
+		},
 		Requests: batch,
 	}
 }
 
-func (b *BackendDS) sendToBackend(payload interface{}, endpoint string) {
+func (b *BackendDS) sendToBackend(method string, payload interface{}, endpoint string) {
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		log.Logger.Error().Msgf("error marshalling batch: %v", err)
 		return
 	}
 
-	httpReq, err := http.NewRequest(http.MethodPost, b.host+endpoint, bytes.NewBuffer(payloadBytes))
+	httpReq, err := http.NewRequest(method, b.host+endpoint, bytes.NewBuffer(payloadBytes))
 	if err != nil {
 		log.Logger.Error().Msgf("error creating http request: %v", err)
 		return
@@ -335,7 +347,7 @@ func (b *BackendDS) sendReqsInBatch() {
 		}
 
 		reqsPayload := convertReqsToPayload(batch)
-		b.sendToBackend(reqsPayload, reqEndpoint)
+		b.sendToBackend(http.MethodPost, reqsPayload, reqEndpoint)
 	}
 
 	for {
@@ -368,17 +380,16 @@ func (b *BackendDS) send(ch <-chan interface{}, endpoint string) {
 	}
 
 	payload := EventPayload{
-		Metadata: struct {
-			MonitoringID   string "json:\"monitoring_id\""
-			IdempotencyKey string "json:\"idempotency_key\""
-		}{
+		Metadata: Metadata{
 			MonitoringID:   MonitoringID,
 			IdempotencyKey: string(uuid.NewUUID()),
+			NodeID:         NodeID,
+			AlazVersion:    tag,
 		},
 		Events: batch,
 	}
 
-	b.sendToBackend(payload, endpoint)
+	b.sendToBackend(http.MethodPost, payload, endpoint)
 }
 
 func (b *BackendDS) sendEventsInBatch(ch chan interface{}, endpoint string, interval time.Duration) {
@@ -462,6 +473,37 @@ func (b *BackendDS) PersistContainer(c Container, eventType string) error {
 	cEvent := convertContainerToContainerEvent(c, eventType)
 	b.containerEventChan <- &cEvent
 	return nil
+}
+
+func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool) {
+	t := time.NewTicker(10 * time.Second)
+	defer t.Stop()
+
+	payload := HealthCheckPayload{
+		Metadata: Metadata{
+			MonitoringID:   MonitoringID,
+			IdempotencyKey: string(uuid.NewUUID()),
+			NodeID:         NodeID,
+			AlazVersion:    tag,
+		},
+		Info: struct {
+			EbpfEnabled    bool `json:"ebpf"`
+			MetricsEnabled bool `json:"metrics"`
+		}{
+			EbpfEnabled:    ebpf,
+			MetricsEnabled: metrics,
+		},
+	}
+
+	for {
+		select {
+		case <-b.ctx.Done():
+			log.Logger.Info().Msg("stopping sending health check")
+			return
+		case <-t.C:
+			b.sendToBackend(http.MethodPut, payload, healthCheckEndpoint)
+		}
+	}
 }
 
 func (b *BackendDS) exportNodeMetrics() {

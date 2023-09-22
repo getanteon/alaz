@@ -10,13 +10,10 @@ package aggregator
 import (
 	"fmt"
 	"net"
-	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/ddosify/alaz/config"
 	"github.com/ddosify/alaz/datastore"
 	"github.com/ddosify/alaz/ebpf"
 	"github.com/ddosify/alaz/ebpf/l7_req"
@@ -93,28 +90,19 @@ var (
 var usePgDs bool = false
 var useBackendDs bool = true // default to true
 
-func NewAggregator(k8sChan <-chan interface{}, crChan <-chan interface{}, ec *ebpf.EbpfCollector) *Aggregator {
+func NewAggregator(k8sChan <-chan interface{}, ec *ebpf.EbpfCollector, ds datastore.DataStore) *Aggregator {
 	clusterInfo := &ClusterInfo{
 		PodIPToPodUid:         map[string]types.UID{},
 		ServiceIPToServiceUid: map[string]types.UID{},
 		PidToSocketMap:        make(map[uint32]*SocketMap, 0),
 	}
 
-	metricsExport, _ := strconv.ParseBool(os.Getenv("METRICS_BACKEND"))
-	dsBackend := datastore.NewBackendDS(context.Background(), config.BackendConfig{
-		Host:                  os.Getenv("BACKEND_HOST"),
-		Port:                  os.Getenv("BACKEND_PORT"),
-		MetricsExport:         metricsExport,
-		MetricsExportInterval: 10,
-	})
-
 	return &Aggregator{
 		k8sChan:     k8sChan,
-		crChan:      crChan,
 		ebpfChan:    ec.EbpfEvents(),
 		ec:          ec,
 		clusterInfo: clusterInfo,
-		ds:          dsBackend,
+		ds:          ds,
 	}
 }
 
