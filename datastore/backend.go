@@ -27,10 +27,15 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/common/version"
 	collector "github.com/prometheus/node_exporter/collector"
+
+	poolutil "go.ddosify.com/ddosify/core/util"
 )
 
 var MonitoringID string
 var NodeID string
+
+// set from ldflags
+var tag string
 
 func init() {
 	MonitoringID = os.Getenv("MONITORING_ID")
@@ -42,6 +47,11 @@ func init() {
 	if NodeID == "" {
 		log.Logger.Fatal().Msg("NODE_NAME is not set")
 	}
+
+	if tag == "" {
+		log.Logger.Fatal().Msg("tag is not set")
+	}
+	log.Logger.Info().Str("tag", tag).Msg("alaz tag")
 }
 
 var resourceBatchSize int64 = 50
@@ -56,6 +66,7 @@ type BackendDS struct {
 	batchSize int64
 
 	reqChanBuffer chan *ReqInfo
+	reqInfoPool   *poolutil.Pool[*ReqInfo]
 
 	podEventChan       chan interface{} // *PodEvent
 	svcEventChan       chan interface{} // *SvcEvent
@@ -72,14 +83,16 @@ type BackendDS struct {
 }
 
 const (
-	podEndpoint       = "/github.com/ddosify/alaz/k8s/pod/"
-	svcEndpoint       = "/github.com/ddosify/alaz/k8s/svc/"
-	rsEndpoint        = "/github.com/ddosify/alaz/k8s/replicaset/"
-	depEndpoint       = "/github.com/ddosify/alaz/k8s/deployment/"
-	epEndpoint        = "/github.com/ddosify/alaz/k8s/endpoint/"
-	containerEndpoint = "/github.com/ddosify/alaz/k8s/container/"
-	dsEndpoint        = "/github.com/ddosify/alaz/k8s/daemonset/"
-	reqEndpoint       = "/github.com/ddosify/alaz/"
+	podEndpoint       = "/alaz/k8s/pod/"
+	svcEndpoint       = "/alaz/k8s/svc/"
+	rsEndpoint        = "/alaz/k8s/replicaset/"
+	depEndpoint       = "/alaz/k8s/deployment/"
+	epEndpoint        = "/alaz/k8s/endpoint/"
+	containerEndpoint = "/alaz/k8s/container/"
+	dsEndpoint        = "/alaz/k8s/daemonset/"
+	reqEndpoint       = "/alaz/"
+
+	healthCheckEndpoint = "/alaz/healthcheck/"
 )
 
 func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *BackendDS {
@@ -150,6 +163,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 		port:               conf.Port,
 		c:                  client,
 		batchSize:          bs,
+		reqInfoPool:        newReqInfoPool(func() *ReqInfo { return &ReqInfo{} }, func(r *ReqInfo) { r = nil }),
 		reqChanBuffer:      make(chan *ReqInfo, 10000),
 		podEventChan:       make(chan interface{}, 100),
 		svcEventChan:       make(chan interface{}, 100),
@@ -213,7 +227,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 							return
 						}
 
-						req, err = http.NewRequest(http.MethodPost, fmt.Sprintf("%s/github.com/ddosify/alaz/metrics/scrape/?instance=%s&monitoring_id=%s", ds.host, NodeID, MonitoringID), bytes.NewReader(body))
+						req, err = http.NewRequest(http.MethodPost, fmt.Sprintf("%s/alaz/metrics/scrape/?instance=%s&monitoring_id=%s", ds.host, NodeID, MonitoringID), bytes.NewReader(body))
 						if err != nil {
 							log.Logger.Error().Msgf("error creating metrics request: %v", err)
 							return
@@ -251,6 +265,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 
 	go func() {
 		<-ds.ctx.Done()
+		ds.reqInfoPool.Done()
 		log.Logger.Info().Msg("backend datastore stopped")
 	}()
 
@@ -285,22 +300,24 @@ func (b *BackendDS) DoRequest(req *http.Request) error {
 
 func convertReqsToPayload(batch []*ReqInfo) RequestsPayload {
 	return RequestsPayload{
-		Metadata: struct {
-			MonitoringID   string `json:"monitoring_id"`
-			IdempotencyKey string `json:"idempotency_key"`
-		}{MonitoringID: MonitoringID, IdempotencyKey: string(uuid.NewUUID())},
+		Metadata: Metadata{
+			MonitoringID:   MonitoringID,
+			IdempotencyKey: string(uuid.NewUUID()),
+			NodeID:         NodeID,
+			AlazVersion:    tag,
+		},
 		Requests: batch,
 	}
 }
 
-func (b *BackendDS) sendToBackend(payload interface{}, endpoint string) {
+func (b *BackendDS) sendToBackend(method string, payload interface{}, endpoint string) {
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		log.Logger.Error().Msgf("error marshalling batch: %v", err)
 		return
 	}
 
-	httpReq, err := http.NewRequest(http.MethodPost, b.host+endpoint, bytes.NewBuffer(payloadBytes))
+	httpReq, err := http.NewRequest(method, b.host+endpoint, bytes.NewBuffer(payloadBytes))
 	if err != nil {
 		log.Logger.Error().Msgf("error creating http request: %v", err)
 		return
@@ -335,7 +352,12 @@ func (b *BackendDS) sendReqsInBatch() {
 		}
 
 		reqsPayload := convertReqsToPayload(batch)
-		b.sendToBackend(reqsPayload, reqEndpoint)
+		b.sendToBackend(http.MethodPost, reqsPayload, reqEndpoint)
+
+		// return reqInfoss to the pool
+		for _, req := range batch {
+			b.reqInfoPool.Put(req)
+		}
 	}
 
 	for {
@@ -368,17 +390,16 @@ func (b *BackendDS) send(ch <-chan interface{}, endpoint string) {
 	}
 
 	payload := EventPayload{
-		Metadata: struct {
-			MonitoringID   string "json:\"monitoring_id\""
-			IdempotencyKey string "json:\"idempotency_key\""
-		}{
+		Metadata: Metadata{
 			MonitoringID:   MonitoringID,
 			IdempotencyKey: string(uuid.NewUUID()),
+			NodeID:         NodeID,
+			AlazVersion:    tag,
 		},
 		Events: batch,
 	}
 
-	b.sendToBackend(payload, endpoint)
+	b.sendToBackend(http.MethodPost, payload, endpoint)
 }
 
 func (b *BackendDS) sendEventsInBatch(ch chan interface{}, endpoint string, interval time.Duration) {
@@ -399,8 +420,19 @@ func (b *BackendDS) sendEventsInBatch(ch chan interface{}, endpoint string, inte
 	}
 }
 
+func newReqInfoPool(factory func() *ReqInfo, close func(*ReqInfo)) *poolutil.Pool[*ReqInfo] {
+	return &poolutil.Pool[*ReqInfo]{
+		Items:   make(chan *ReqInfo, 5000),
+		Factory: factory,
+		Close:   close,
+	}
+}
+
 func (b *BackendDS) PersistRequest(request Request) error {
-	reqInfo := &ReqInfo{}
+	// get a reqInfo from the pool
+	reqInfo := b.reqInfoPool.Get()
+
+	// overwrite the reqInfo, all fields must be set in order to avoid comple
 	reqInfo[0] = request.StartTime
 	reqInfo[1] = request.Latency
 	reqInfo[2] = request.FromIP
@@ -462,6 +494,37 @@ func (b *BackendDS) PersistContainer(c Container, eventType string) error {
 	cEvent := convertContainerToContainerEvent(c, eventType)
 	b.containerEventChan <- &cEvent
 	return nil
+}
+
+func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool) {
+	t := time.NewTicker(10 * time.Second)
+	defer t.Stop()
+
+	payload := HealthCheckPayload{
+		Metadata: Metadata{
+			MonitoringID:   MonitoringID,
+			IdempotencyKey: string(uuid.NewUUID()),
+			NodeID:         NodeID,
+			AlazVersion:    tag,
+		},
+		Info: struct {
+			EbpfEnabled    bool `json:"ebpf"`
+			MetricsEnabled bool `json:"metrics"`
+		}{
+			EbpfEnabled:    ebpf,
+			MetricsEnabled: metrics,
+		},
+	}
+
+	for {
+		select {
+		case <-b.ctx.Done():
+			log.Logger.Info().Msg("stopping sending health check")
+			return
+		case <-t.C:
+			b.sendToBackend(http.MethodPut, payload, healthCheckEndpoint)
+		}
+	}
 }
 
 func (b *BackendDS) exportNodeMetrics() {

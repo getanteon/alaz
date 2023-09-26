@@ -56,7 +56,9 @@ spec:
       hostPID: true
       containers:
       - env:
-        - name: METRICS_BACKEND
+        - name: EBPF_ENABLED
+          value: "true"
+        - name: METRICS_ENABLED
           value: "true"
         - name: BACKEND_HOST
           value: https://api.ddosify.com:443
