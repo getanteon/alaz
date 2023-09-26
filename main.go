@@ -44,7 +44,7 @@ func main() {
 	}
 
 	ebpfEnabled, _ := strconv.ParseBool(os.Getenv("EBPF_ENABLED"))
-	metricsEnabled, _ := strconv.ParseBool(os.Getenv("METRICS_BACKEND"))
+	metricsEnabled, _ := strconv.ParseBool(os.Getenv("METRICS_ENABLED"))
 
 	// datastore backend
 	dsBackend := datastore.NewBackendDS(ctx, config.BackendConfig{
