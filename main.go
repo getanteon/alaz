@@ -15,6 +15,9 @@ import (
 	"context"
 
 	"github.com/ddosify/alaz/log"
+
+	"net/http"
+	_ "net/http/pprof"
 )
 
 func main() {
@@ -61,6 +64,8 @@ func main() {
 		a := aggregator.NewAggregator(kubeEvents, nil, ec.EbpfEvents(), dsBackend)
 		a.Run()
 	}
+
+	go http.ListenAndServe(":8181", nil)
 
 	<-k8sCollector.Done()
 	log.Logger.Info().Msg("k8sCollector done")

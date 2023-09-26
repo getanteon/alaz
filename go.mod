@@ -69,6 +69,7 @@ require (
 	github.com/onsi/ginkgo/v2 v2.9.5 // indirect
 	github.com/onsi/gomega v1.27.7 // indirect
 	github.com/opencontainers/selinux v1.11.0 // indirect
+	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/prometheus-community/go-runit v0.1.0 // indirect
 	github.com/prometheus/client_model v0.4.0 // indirect
 	github.com/prometheus/procfs v0.11.0 // indirect
@@ -77,6 +78,7 @@ require (
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/stretchr/testify v1.8.4 // indirect
 	github.com/xhit/go-str2duration/v2 v2.1.0 // indirect
+	go.ddosify.com/ddosify v1.0.5
 	go.uber.org/multierr v1.11.0 // indirect
 	go4.org/intern v0.0.0-20211027215823-ae77deb06f29 // indirect
 	go4.org/unsafe/assume-no-moving-gc v0.0.0-20230525183740-e7c30c78aeb2 // indirect
