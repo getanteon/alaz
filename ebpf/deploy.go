@@ -1,13 +1,12 @@
 package ebpf
 
 import (
-	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -72,8 +71,8 @@ func (e *EbpfCollector) Deploy() {
 			}
 			pid := uint32(number)
 
-			err = e.AddSSLLibPid("/proc", pid)
-			if err != nil {
+			errors := e.AddSSLLibPid("/proc", pid)
+			if errors != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -118,43 +117,86 @@ func (e *EbpfCollector) ListenForTlsReqs(pid uint32) {
 		log.Logger.Warn().Msgf("pid: %d already attached for tls", pid)
 		return
 	}
-	err := e.AddSSLLibPid("/proc", pid)
-	if err != nil {
-		log.Logger.Error().Err(err).Msgf("error attaching ssl lib for pid: %d", pid)
+	errors := e.AddSSLLibPid("/proc", pid)
+	if errors != nil && len(errors) > 0 {
+
+		for _, err := range errors {
+			log.Logger.Error().Err(err).Msgf("error attaching ssl lib for pid: %d", pid)
+		}
 		return
 	}
 	log.Logger.Info().Msgf("attached ssl lib for pid: %d", pid)
 	e.tlsPidMap[pid] = struct{}{}
 }
 
-func (t *EbpfCollector) AddSSLLibPid(procfs string, pid uint32) error {
-	sslLibrary, err := findSSLLibraryByPid(procfs, pid)
+func (t *EbpfCollector) AddSSLLibPid(procfs string, pid uint32) []error {
+	errors := make([]error, 0)
+	sslLibs, err := findSSLExecutablesByPid(procfs, pid)
 
 	if err != nil {
 		log.Logger.Warn().Err(err).Msg("error finding ssl lib")
 		return nil
-	} else {
-		log.Logger.Info().Str("path", sslLibrary).Uint32("pid", pid).Msg("found libssl shared object")
 	}
 
-	// TODO: add version check to attach different uprobes for different versions
-	// currently we only support openssl 1.1.1
-
-	err = t.AttachSSlUprobes(pid, sslLibrary)
-	if err != nil {
-		log.Logger.Error().Err(err).Msgf("error attaching ssl uprobes")
-		return err
+	if len(sslLibs) == 0 {
+		errors = append(errors, fmt.Errorf("no ssl lib found"))
+		return errors
 	}
 
-	return nil
+	for _, sslLib := range sslLibs {
+		err = t.AttachSSlUprobes(pid, sslLib.path, sslLib.version)
+		if err != nil {
+			log.Logger.Error().Err(err).Str("path", sslLib.path).Str("version", sslLib.version).Msgf("error attaching ssl uprobes")
+			errors = append(errors, err)
+		}
+	}
+
+	return errors
 }
 
-func (e *EbpfCollector) AttachSSlUprobes(pid uint32, executablePath string) error {
+func findSSLExecutablesByPid(procfs string, pid uint32) (map[string]sslLib, error) {
+	// look for memory mapping of the process
+	file, err := os.Open(fmt.Sprintf("%s/%d/maps", procfs, pid))
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	fileContent, err := io.ReadAll(file)
+	if err != nil {
+		return nil, err
+	}
+
+	libsMap, err := parseSSLlib(string(fileContent))
+	if err != nil {
+		return nil, err
+	}
+
+	for libPath, _ := range libsMap {
+		fullpath := fmt.Sprintf("%s/%d/root%s", procfs, pid, libPath)
+
+		// modify parsed path to match the full path
+		if _, err := os.Stat(fullpath); os.IsNotExist(err) {
+			delete(libsMap, libPath)
+		} else {
+			l := libsMap[libPath]
+			l.path = fullpath
+		}
+	}
+
+	// key : parsed path
+	// value : full path and version
+	return libsMap, nil
+}
+
+func (e *EbpfCollector) AttachSSlUprobes(pid uint32, executablePath string, version string) error {
 	ex, err := link.OpenExecutable(executablePath)
 	if err != nil {
 		log.Logger.Error().Err(err).Msgf("error opening executable %s", executablePath)
 		return err
 	}
+
+	// TODO: version check
 
 	sslWriteUprobe, err := ex.Uprobe("SSL_write", l7_req.L7BpfProgsAndMaps.SslWriteV11, nil)
 	if err != nil {
@@ -178,45 +220,6 @@ func (e *EbpfCollector) AttachSSlUprobes(pid uint32, executablePath string) erro
 	e.sslReadURetprobes[pid] = sslReadURetprobe
 
 	return nil
-}
-
-func findSSLLibraryByPid(procfs string, pid uint32) (string, error) {
-	libName := "libssl.so"
-	// look for memory mapping of the process
-	file, err := os.Open(fmt.Sprintf("%s/%d/maps", procfs, pid))
-
-	if err != nil {
-		return "", err
-	}
-
-	defer file.Close()
-	scanner := bufio.NewScanner(file)
-	scanner.Split(bufio.ScanLines)
-
-	for scanner.Scan() {
-		parts := strings.Fields(scanner.Text())
-
-		if len(parts) <= 5 {
-			continue
-		}
-
-		libPath := parts[5]
-
-		if libName != "" && !strings.Contains(libPath, libName) {
-			continue
-		}
-
-		fullpath := fmt.Sprintf("%s/%d/root%s", procfs, pid, libPath)
-
-		// check if the file exists
-		if _, err := os.Stat(fullpath); os.IsNotExist(err) {
-			continue
-		}
-
-		return fullpath, nil
-	}
-
-	return "", fmt.Errorf("openssl lib not found for pid: %d", pid)
 }
 
 func listenDebugMsgs() {
