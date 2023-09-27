@@ -148,8 +148,8 @@ In the future, we plan to support Docker containers.
 Alaz is an eBPF application that uses [CO-RE](https://github.com/libbpf/libbpf#bpf-co-re-compile-once--run-everywhere).
 Most of the latest linux distributions support CO-RE. In order to CO-RE to work, the kernel has to built with BTF(bpf type format) information.
 
-You can check your kernel version with ``` uname -r``` 
-command and whether btf is enabled by default or not at the  [btfhub](https://github.com/aquasecurity/btfhub/blob/main/docs/supported-distros.md).
+You can check your kernel version with `uname -r` 
+command and whether btf is enabled by default or not at the [btfhub](https://github.com/aquasecurity/btfhub/blob/main/docs/supported-distros.md).
 
 For the time being, we expect that btf information is readily available on your system. We'll support all kernels in the upcoming weeks leveraging [btfhub](https://github.com/aquasecurity/btfhub).
 
