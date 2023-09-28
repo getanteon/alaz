@@ -15,6 +15,9 @@ import (
 	"context"
 
 	"github.com/ddosify/alaz/log"
+
+	"net/http"
+	_ "net/http/pprof"
 )
 
 func main() {
@@ -41,7 +44,7 @@ func main() {
 	}
 
 	ebpfEnabled, _ := strconv.ParseBool(os.Getenv("EBPF_ENABLED"))
-	metricsEnabled, _ := strconv.ParseBool(os.Getenv("METRICS_BACKEND"))
+	metricsEnabled, _ := strconv.ParseBool(os.Getenv("METRICS_ENABLED"))
 
 	// datastore backend
 	dsBackend := datastore.NewBackendDS(ctx, config.BackendConfig{
@@ -61,6 +64,8 @@ func main() {
 		a := aggregator.NewAggregator(kubeEvents, ec, dsBackend)
 		a.Run()
 	}
+
+	go http.ListenAndServe(":8181", nil)
 
 	<-k8sCollector.Done()
 	log.Logger.Info().Msg("k8sCollector done")

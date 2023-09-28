@@ -27,6 +27,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/common/version"
 	collector "github.com/prometheus/node_exporter/collector"
+
+	poolutil "go.ddosify.com/ddosify/core/util"
 )
 
 var MonitoringID string
@@ -64,6 +66,7 @@ type BackendDS struct {
 	batchSize int64
 
 	reqChanBuffer chan *ReqInfo
+	reqInfoPool   *poolutil.Pool[*ReqInfo]
 
 	podEventChan       chan interface{} // *PodEvent
 	svcEventChan       chan interface{} // *SvcEvent
@@ -160,6 +163,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 		port:               conf.Port,
 		c:                  client,
 		batchSize:          bs,
+		reqInfoPool:        newReqInfoPool(func() *ReqInfo { return &ReqInfo{} }, func(r *ReqInfo) { r = nil }),
 		reqChanBuffer:      make(chan *ReqInfo, 10000),
 		podEventChan:       make(chan interface{}, 100),
 		svcEventChan:       make(chan interface{}, 100),
@@ -261,6 +265,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 
 	go func() {
 		<-ds.ctx.Done()
+		ds.reqInfoPool.Done()
 		log.Logger.Info().Msg("backend datastore stopped")
 	}()
 
@@ -348,6 +353,11 @@ func (b *BackendDS) sendReqsInBatch() {
 
 		reqsPayload := convertReqsToPayload(batch)
 		b.sendToBackend(http.MethodPost, reqsPayload, reqEndpoint)
+
+		// return reqInfoss to the pool
+		for _, req := range batch {
+			b.reqInfoPool.Put(req)
+		}
 	}
 
 	for {
@@ -410,8 +420,19 @@ func (b *BackendDS) sendEventsInBatch(ch chan interface{}, endpoint string, inte
 	}
 }
 
+func newReqInfoPool(factory func() *ReqInfo, close func(*ReqInfo)) *poolutil.Pool[*ReqInfo] {
+	return &poolutil.Pool[*ReqInfo]{
+		Items:   make(chan *ReqInfo, 5000),
+		Factory: factory,
+		Close:   close,
+	}
+}
+
 func (b *BackendDS) PersistRequest(request Request) error {
-	reqInfo := &ReqInfo{}
+	// get a reqInfo from the pool
+	reqInfo := b.reqInfoPool.Get()
+
+	// overwrite the reqInfo, all fields must be set in order to avoid comple
 	reqInfo[0] = request.StartTime
 	reqInfo[1] = request.Latency
 	reqInfo[2] = request.FromIP

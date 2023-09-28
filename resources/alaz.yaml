@@ -58,7 +58,7 @@ spec:
       - env:
         - name: EBPF_ENABLED
           value: "true"
-        - name: METRICS_BACKEND
+        - name: METRICS_ENABLED
           value: "true"
         - name: BACKEND_HOST
           value: https://api.ddosify.com:443
@@ -76,7 +76,7 @@ spec:
         - --no-collector.hwmon
         - --collector.filesystem.ignored-mount-points=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/pods/.+)($|/)
         - --collector.netclass.ignored-devices=^(veth.*)$
-        image: ddosify/alaz:v0.1.3
+        image: ddosify/alaz:v0.1.4
         imagePullPolicy: IfNotPresent
         name: alaz-pod
         ports:

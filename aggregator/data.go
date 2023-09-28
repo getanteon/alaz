@@ -22,6 +22,7 @@ import (
 
 	"github.com/ddosify/alaz/k8s"
 
+	"github.com/patrickmn/go-cache"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -85,10 +86,18 @@ var (
 	retryInterval = 400 * time.Millisecond
 	retryLimit    = 5
 	// 400 + 800 + 1600 + 3200 + 6400 = 12400 ms
+
+	defaultExpiration = 5 * time.Minute
+	purgeTime         = 10 * time.Minute
 )
 
 var usePgDs bool = false
 var useBackendDs bool = true // default to true
+var reverseDnsCache *cache.Cache
+
+func init() {
+	reverseDnsCache = cache.New(defaultExpiration, purgeTime)
+}
 
 func NewAggregator(k8sChan <-chan interface{}, ec *ebpf.EbpfCollector, ds datastore.DataStore) *Aggregator {
 	clusterInfo := &ClusterInfo{
@@ -304,12 +313,10 @@ func parseHttpPayload(request string) (method string, path string, httpVersion s
 	return method, path, httpVersion, hostHeader
 }
 
-func parseSqlCommand(request string) string {
-	log.Logger.Debug().Str("request", request).Msg("parsing sql command")
+func parseSqlCommand(r []uint8) string {
+	log.Logger.Debug().Uints8("request", r).Msg("parsing sql command")
 
 	// Q, 4 bytes of length, sql command
-
-	r := []byte(request)
 
 	// skip Q, (simple query)
 	r = r[1:]
@@ -434,7 +441,7 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 		// parse sql command from payload
 		// path = sql command
 		// method = sql message type
-		reqDto.Path = parseSqlCommand(string(d.Payload[0:d.PayloadSize]))
+		reqDto.Path = parseSqlCommand(d.Payload[0:d.PayloadSize])
 		log.Logger.Debug().Str("path", reqDto.Path).Msg("path extracted from postgres payload")
 	}
 
@@ -483,7 +490,7 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 					reqDto.ToUID = remoteDnsHost
 					reqDto.ToType = "outbound"
 				} else {
-					log.Logger.Error().Err(err).Str("Daddr", skInfo.Daddr).Msg("error getting hostname from ip")
+					log.Logger.Warn().Err(err).Str("Daddr", skInfo.Daddr).Msg("error getting hostname from ip")
 				}
 			}
 		}
@@ -512,16 +519,22 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 
 // reverse dns lookup
 func getHostnameFromIP(ipAddr string) (string, error) {
-	addrs, err := net.LookupAddr(ipAddr)
-	if err != nil {
-		return "", err
-	}
+	// return from cache, if exists
+	// consumes too much memory otherwise
+	if host, ok := reverseDnsCache.Get(ipAddr); ok {
+		return host.(string), nil
+	} else {
+		addrs, err := net.LookupAddr(ipAddr)
+		if err != nil {
+			return "", err
+		}
 
-	// The reverse DNS lookup can return multiple names for the same IP.
-	// In this example, we return the first name found.
-	if len(addrs) > 0 {
-		return addrs[0], nil
+		// The reverse DNS lookup can return multiple names for the same IP.
+		// In this example, we return the first name found.
+		if len(addrs) > 0 {
+			reverseDnsCache.Set(ipAddr, addrs[0], 0)
+			return addrs[0], nil
+		}
+		return "", fmt.Errorf("no hostname found for IP address: %s", ipAddr)
 	}
-
-	return "", fmt.Errorf("no hostname found for IP address: %s", ipAddr)
 }
