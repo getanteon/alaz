@@ -504,13 +504,107 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
 // sys_enter_ receiving syscalls -- process_enter_of_syscalls_read_recvfrom
 // sys_exit_ receiving syscalls -- process_exit_of_syscalls_read_recvfrom
 
-
 static __always_inline 
-void ssl_uprobe_write_v_1_1(struct pt_regs *ctx, void* ssl, void* buffer, int num, size_t *count_ptr) {
-    struct ssl_st_v1_1 ssl_st;
+void ssl_uprobe_write_v_1_0_2(struct pt_regs *ctx, void* ssl, void* buffer, int num, size_t *count_ptr) {
+    struct ssl_st_v1_0_2 ssl_st;
     bpf_probe_read_user(&ssl_st, sizeof(ssl_st), ssl);
     
-    struct bio_st_v1_1 bio;                                                   
+    struct bio_st_v1_0_2 bio;                                                   
+    if (bpf_probe_read(&bio, sizeof(bio), (void*)ssl_st.wbio)) {         
+        char msg3[] = "could not read bio";
+        bpf_trace_printk(msg3, sizeof(msg3));
+        return;                                                       
+    };                                                              
+    __u32 fd = bio.num;
+
+    char msg[] = "ssl_uprobe_write_v_1_0_2 tls bio->fd %ld";
+    bpf_trace_printk(msg, sizeof(msg),fd);
+    
+    char* buf_ptr = (char*) buffer;               
+    __u64 buf_size = num;
+
+    process_enter_of_syscalls_write_sendto(ctx, fd, 1, buf_ptr, buf_size);                   
+}
+
+static __always_inline 
+void ssl_uprobe_read_enter_v1_0_2(struct pt_regs *ctx, __u64 id,  __u32 pid, void* ssl, void* buffer, int num, size_t *count_ptr) {
+    struct ssl_st_v1_0_2 ssl_st;
+    bpf_probe_read_user(&ssl_st, sizeof(ssl_st), ssl);
+    
+    struct bio_st_v1_0_2 bio;                                                   
+    if (bpf_probe_read(&bio, sizeof(bio), (void*)ssl_st.rbio)) {         
+        char msg[] = "could not read rbio";
+        bpf_trace_printk(msg, sizeof(msg));
+        return;                                                       
+    };                                                              
+    __u32 fd = bio.num;
+
+    char msg[] = "ssl_uprobe_read_enter_v1_0_2 bio->fd %ld";
+    bpf_trace_printk(msg, sizeof(msg),fd);
+    
+    char* buf_ptr = (char*) buffer;               
+    __u64 buf_size = num;
+ 
+    char msg4[] = "tls read enter going to be processed";
+    bpf_trace_printk(msg4, sizeof(msg4));
+
+    process_enter_of_syscalls_read_recvfrom(id, pid, fd, buf_ptr, buf_size);            
+}
+
+static __always_inline 
+void ssl_uprobe_write_v_1_1_1(struct pt_regs *ctx, void* ssl, void* buffer, int num, size_t *count_ptr) {
+    struct ssl_st_v1_1_1 ssl_st;
+    bpf_probe_read_user(&ssl_st, sizeof(ssl_st), ssl);
+    
+    struct bio_st_v1_1_1 bio;                                                   
+    if (bpf_probe_read(&bio, sizeof(bio), (void*)ssl_st.wbio)) {         
+        char msg3[] = "could not read bio";
+        bpf_trace_printk(msg3, sizeof(msg3));
+        return;                                                       
+    };                                                              
+    __u32 fd = bio.num;
+
+    char msg[] = "ssl_uprobe_write_v_1_1 tls bio->fd %ld";
+    bpf_trace_printk(msg, sizeof(msg),fd);
+    
+    char* buf_ptr = (char*) buffer;               
+    __u64 buf_size = num;
+
+    process_enter_of_syscalls_write_sendto(ctx, fd, 1, buf_ptr, buf_size);                   
+}
+
+static __always_inline 
+void ssl_uprobe_read_enter_v1_1_1(struct pt_regs *ctx, __u64 id,  __u32 pid, void* ssl, void* buffer, int num, size_t *count_ptr) {
+    struct ssl_st_v1_1_1 ssl_st;
+    bpf_probe_read_user(&ssl_st, sizeof(ssl_st), ssl);
+    
+    struct bio_st_v1_1_1 bio;                                                   
+    if (bpf_probe_read(&bio, sizeof(bio), (void*)ssl_st.rbio)) {         
+        char msg[] = "could not read rbio";
+        bpf_trace_printk(msg, sizeof(msg));
+        return;                                                       
+    };                                                              
+    __u32 fd = bio.num;
+
+    char msg[] = "ssl_uprobe_read_enter_v1_1 bio->fd %ld";
+    bpf_trace_printk(msg, sizeof(msg),fd);
+    
+    char* buf_ptr = (char*) buffer;               
+    __u64 buf_size = num;
+ 
+    char msg4[] = "tls read enter going to be processed";
+    bpf_trace_printk(msg4, sizeof(msg4));
+
+    process_enter_of_syscalls_read_recvfrom(id, pid, fd, buf_ptr, buf_size);            
+}
+
+
+static __always_inline 
+void ssl_uprobe_write_v_3(struct pt_regs *ctx, void* ssl, void* buffer, int num, size_t *count_ptr) {
+    struct ssl_st_v3_0_0 ssl_st;
+    bpf_probe_read_user(&ssl_st, sizeof(ssl_st), ssl);
+    
+    struct bio_st_v3_0 bio;                                                   
     if (bpf_probe_read(&bio, sizeof(bio), (void*)ssl_st.wbio)) {         
         char msg3[] = "could not read bio";
         bpf_trace_printk(msg3, sizeof(msg3));
@@ -528,11 +622,11 @@ void ssl_uprobe_write_v_1_1(struct pt_regs *ctx, void* ssl, void* buffer, int nu
 }
 
 static __always_inline 
-void ssl_uprobe_read_enter_v1_1(struct pt_regs *ctx, __u64 id,  __u32 pid, void* ssl, void* buffer, int num, size_t *count_ptr) {
-    struct ssl_st_v1_1 ssl_st;
+void ssl_uprobe_read_enter_v3(struct pt_regs *ctx, __u64 id,  __u32 pid, void* ssl, void* buffer, int num, size_t *count_ptr) {
+    struct ssl_st_v3_0_0 ssl_st;
     bpf_probe_read_user(&ssl_st, sizeof(ssl_st), ssl);
     
-    struct bio_st_v1_1 bio;                                                   
+    struct bio_st_v3_0 bio;                                                   
     if (bpf_probe_read(&bio, sizeof(bio), (void*)ssl_st.rbio)) {         
         char msg[] = "could not read rbio";
         bpf_trace_printk(msg, sizeof(msg));
@@ -600,20 +694,20 @@ int sys_exit_recvfrom(struct trace_event_raw_sys_exit_recvfrom* ctx) {
     return process_exit_of_syscalls_read_recvfrom(ctx, pid_tgid, pid, ctx->ret, 0);
 }
 
-SEC("uprobe/SSL_write_v1_1")
-void BPF_UPROBE(ssl_write_v1_1, void * ssl, void* buffer, int num) {
-	ssl_uprobe_write_v_1_1(ctx, ssl, buffer, num, 0);
+SEC("uprobe/SSL_write_v1_1_1")
+void BPF_UPROBE(ssl_write_v1_1_1, void * ssl, void* buffer, int num) {
+	ssl_uprobe_write_v_1_1_1(ctx, ssl, buffer, num, 0);
 }
 
-SEC("uprobe/SSL_read_v1_1")
-void BPF_UPROBE(ssl_read_enter_v1_1, void* ssl, void* buffer, int num) {
-    char msg[] = "this is uprobe ssl_read_enter";
+SEC("uprobe/SSL_read_v1_1_1")
+void BPF_UPROBE(ssl_read_enter_v1_1_1, void* ssl, void* buffer, int num) {
+    char msg[] = "this is uprobe ssl_read_enter_v1_1_1";
     bpf_trace_printk(msg, sizeof(msg));
      
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 pid = pid_tgid >> 32;
     __u64 id = pid_tgid | TLS_MASK;
-    ssl_uprobe_read_enter_v1_1(ctx, id, pid, ssl, buffer, num, 0);
+    ssl_uprobe_read_enter_v1_1_1(ctx, id, pid, ssl, buffer, num, 0);
 }
 
 SEC("uretprobe/SSL_read")
@@ -630,3 +724,34 @@ void BPF_URETPROBE(ssl_ret_read) {
     process_exit_of_syscalls_read_recvfrom(ctx, id, pid, returnValue, 1);
 }
 
+SEC("uprobe/SSL_write_v3")
+void BPF_UPROBE(ssl_write_v3, void * ssl, void* buffer, int num) {
+	ssl_uprobe_write_v_3(ctx, ssl, buffer, num, 0);
+}
+
+SEC("uprobe/SSL_read_v3")
+void BPF_UPROBE(ssl_read_enter_v3, void* ssl, void* buffer, int num) {
+    char msg[] = "this is uprobe ssl_read_enter_v3";
+    bpf_trace_printk(msg, sizeof(msg));
+     
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 pid = pid_tgid >> 32;
+    __u64 id = pid_tgid | TLS_MASK;
+    ssl_uprobe_read_enter_v3(ctx, id, pid, ssl, buffer, num, 0);
+}
+
+SEC("uprobe/SSL_write_v1_0_2")
+void BPF_UPROBE(ssl_write_v1_0_2, void * ssl, void* buffer, int num) {
+	ssl_uprobe_write_v_1_0_2(ctx, ssl, buffer, num, 0);
+}
+
+SEC("uprobe/SSL_read_v1_0_2")
+void BPF_UPROBE(ssl_read_enter_v1_0_2, void* ssl, void* buffer, int num) {
+    char msg[] = "this is uprobe ssl_read_enter_v1_0_2";
+    bpf_trace_printk(msg, sizeof(msg));
+     
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 pid = pid_tgid >> 32;
+    __u64 id = pid_tgid | TLS_MASK;
+    ssl_uprobe_read_enter_v1_0_2(ctx, id, pid, ssl, buffer, num, 0);
+}

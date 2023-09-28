@@ -89,9 +89,13 @@ type bpfSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfProgramSpecs struct {
-	SslReadEnterV11  *ebpf.ProgramSpec `ebpf:"ssl_read_enter_v1_1"`
+	SslReadEnterV102 *ebpf.ProgramSpec `ebpf:"ssl_read_enter_v1_0_2"`
+	SslReadEnterV111 *ebpf.ProgramSpec `ebpf:"ssl_read_enter_v1_1_1"`
+	SslReadEnterV3   *ebpf.ProgramSpec `ebpf:"ssl_read_enter_v3"`
 	SslRetRead       *ebpf.ProgramSpec `ebpf:"ssl_ret_read"`
-	SslWriteV11      *ebpf.ProgramSpec `ebpf:"ssl_write_v1_1"`
+	SslWriteV102     *ebpf.ProgramSpec `ebpf:"ssl_write_v1_0_2"`
+	SslWriteV111     *ebpf.ProgramSpec `ebpf:"ssl_write_v1_1_1"`
+	SslWriteV3       *ebpf.ProgramSpec `ebpf:"ssl_write_v3"`
 	SysEnterRead     *ebpf.ProgramSpec `ebpf:"sys_enter_read"`
 	SysEnterRecvfrom *ebpf.ProgramSpec `ebpf:"sys_enter_recvfrom"`
 	SysEnterSendto   *ebpf.ProgramSpec `ebpf:"sys_enter_sendto"`
@@ -156,9 +160,13 @@ func (m *bpfMaps) Close() error {
 //
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfPrograms struct {
-	SslReadEnterV11  *ebpf.Program `ebpf:"ssl_read_enter_v1_1"`
+	SslReadEnterV102 *ebpf.Program `ebpf:"ssl_read_enter_v1_0_2"`
+	SslReadEnterV111 *ebpf.Program `ebpf:"ssl_read_enter_v1_1_1"`
+	SslReadEnterV3   *ebpf.Program `ebpf:"ssl_read_enter_v3"`
 	SslRetRead       *ebpf.Program `ebpf:"ssl_ret_read"`
-	SslWriteV11      *ebpf.Program `ebpf:"ssl_write_v1_1"`
+	SslWriteV102     *ebpf.Program `ebpf:"ssl_write_v1_0_2"`
+	SslWriteV111     *ebpf.Program `ebpf:"ssl_write_v1_1_1"`
+	SslWriteV3       *ebpf.Program `ebpf:"ssl_write_v3"`
 	SysEnterRead     *ebpf.Program `ebpf:"sys_enter_read"`
 	SysEnterRecvfrom *ebpf.Program `ebpf:"sys_enter_recvfrom"`
 	SysEnterSendto   *ebpf.Program `ebpf:"sys_enter_sendto"`
@@ -171,9 +179,13 @@ type bpfPrograms struct {
 
 func (p *bpfPrograms) Close() error {
 	return _BpfClose(
-		p.SslReadEnterV11,
+		p.SslReadEnterV102,
+		p.SslReadEnterV111,
+		p.SslReadEnterV3,
 		p.SslRetRead,
-		p.SslWriteV11,
+		p.SslWriteV102,
+		p.SslWriteV111,
+		p.SslWriteV3,
 		p.SysEnterRead,
 		p.SysEnterRecvfrom,
 		p.SysEnterSendto,

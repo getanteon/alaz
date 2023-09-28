@@ -202,21 +202,24 @@ func (e L7Event) Type() string {
 
 var L7BpfProgsAndMaps bpfObjects
 
-// returns when program is detached
-func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
-	ctx, _ := context.WithCancel(parentCtx)
+func LoadBpfObjects() {
 	// Allow the current process to lock memory for eBPF resources.
 	if err := rlimit.RemoveMemlock(); err != nil {
 		log.Logger.Fatal().Err(err).Msg("failed to remove memlock limit")
 	}
-
 	// Load pre-compiled programs and maps into the kernel.
 	L7BpfProgsAndMaps = bpfObjects{}
 	if err := loadBpfObjects(&L7BpfProgsAndMaps, nil); err != nil {
 		log.Logger.Fatal().Err(err).Msg("loading objects")
 	}
+}
+
+// returns when program is detached
+func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
+	ctx, _ := context.WithCancel(parentCtx)
 	defer L7BpfProgsAndMaps.Close()
 
+	// link programs
 	l, err := link.Tracepoint("syscalls", "sys_enter_read", L7BpfProgsAndMaps.bpfPrograms.SysEnterRead, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_enter_read tracepoint")

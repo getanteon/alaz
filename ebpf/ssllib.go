@@ -18,8 +18,8 @@ type sslLib struct {
 	version string
 }
 
-func parseSSLlib(text string) (map[string]sslLib, error) {
-	res := make(map[string]sslLib)
+func parseSSLlib(text string) (map[string]*sslLib, error) {
+	res := make(map[string]*sslLib)
 	matches := re.FindAllStringSubmatch(text, -1)
 
 	if matches == nil {
@@ -36,11 +36,9 @@ func parseSSLlib(text string) (map[string]sslLib, error) {
 			}
 		}
 
+		// paramsMap
 		// k : AdjacentVersion or SuffixVersion
 		// v : 1.0.2 or 3 ...
-		for k, v := range paramsMap {
-			fmt.Printf("%s: %s\n", k, v)
-		}
 
 		var version string
 		if paramsMap["AdjacentVersion"] != "" {
@@ -48,11 +46,16 @@ func parseSSLlib(text string) (map[string]sslLib, error) {
 		} else if paramsMap["SuffixVersion"] != "" {
 			version = paramsMap["SuffixVersion"]
 		} else {
-			version = ""
+			continue
+		}
+
+		// add "v." prefix
+		if version != "" {
+			version = "v" + version
 		}
 
 		path := getPath(match)
-		res[path] = sslLib{
+		res[path] = &sslLib{
 			path:    path,
 			version: version,
 		}
