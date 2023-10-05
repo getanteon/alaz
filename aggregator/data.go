@@ -192,7 +192,7 @@ func (a *Aggregator) processEbpf() {
 
 func (a *Aggregator) processTcpConnect(data interface{}) {
 	d := data.(tcp_state.TcpConnectEvent)
-	go a.ec.ListenForTlsReqs(d.Pid)
+	go a.ec.ListenForEncryptedReqs(d.Pid)
 	if d.Type_ == tcp_state.EVENT_TCP_ESTABLISHED {
 		// filter out localhost connections
 		if d.SAddr == "127.0.0.1" || d.DAddr == "127.0.0.1" {
@@ -349,7 +349,7 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 		a.clusterInfo.PidToSocketMap[d.Pid] = sockMap
 		a.clusterInfo.mu.Unlock() // unlock for writing
 
-		go a.ec.ListenForTlsReqs(d.Pid)
+		go a.ec.ListenForEncryptedReqs(d.Pid)
 	}
 
 	sockMap.mu.RLock() // lock for reading

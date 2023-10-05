@@ -2,11 +2,11 @@ package ebpf
 
 import (
 	"context"
+	"debug/elf"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"strconv"
 	"sync"
 	"time"
 
@@ -16,6 +16,11 @@ import (
 	"github.com/ddosify/alaz/log"
 
 	"golang.org/x/mod/semver"
+)
+
+const (
+	goTlsWriteSymbol = "crypto/tls.(*Conn).Write"
+	goTlsReadSymbol  = "crypto/tls.(*Conn).Read"
 )
 
 type BpfEvent interface {
@@ -33,6 +38,9 @@ type EbpfCollector struct {
 	sslReadEnterUprobes map[uint32]link.Link
 	sslReadURetprobes   map[uint32]link.Link
 
+	goTlsWriteUprobes map[uint32]link.Link
+	goTlsReadUprobes  map[uint32]link.Link
+
 	tlsPidMap map[uint32]struct{}
 }
 
@@ -47,6 +55,8 @@ func NewEbpfCollector(parentCtx context.Context) *EbpfCollector {
 		sslWriteUprobes:     make(map[uint32]link.Link),
 		sslReadEnterUprobes: make(map[uint32]link.Link),
 		sslReadURetprobes:   make(map[uint32]link.Link),
+		goTlsWriteUprobes:   make(map[uint32]link.Link),
+		goTlsReadUprobes:    make(map[uint32]link.Link),
 	}
 }
 
@@ -66,22 +76,22 @@ func (e *EbpfCollector) Deploy() {
 				http.Error(w, "Missing query parameter 'number'", http.StatusBadRequest)
 				return
 			}
-			number, err := strconv.ParseUint(queryParam, 10, 32)
-			if err != nil {
-				http.Error(w, "Invalid query parameter 'number'", http.StatusBadRequest)
-				return
-			}
-			pid := uint32(number)
+			// number, err := strconv.ParseUint(queryParam, 10, 32)
+			// if err != nil {
+			// 	http.Error(w, "Invalid query parameter 'number'", http.StatusBadRequest)
+			// 	return
+			// }
+			// pid := uint32(number)
 
-			errors := e.AddSSLLibPid("/proc", pid)
-			if errors != nil {
-				for _, err := range errors {
-					log.Logger.Error().Err(err).Uint32("pid", pid).
-						Msgf("error attaching ssl lib for pid: %d", pid)
-				}
-				http.Error(w, errors[0].Error(), http.StatusInternalServerError)
-				return
-			}
+			// errors := e.AddSSLLibPid("/proc", pid)
+			// if errors != nil {
+			// 	for _, err := range errors {
+			// 		log.Logger.Error().Err(err).Uint32("pid", pid).
+			// 			Msgf("error attaching ssl lib for pid: %d", pid)
+			// 	}
+			// 	http.Error(w, errors[0].Error(), http.StatusInternalServerError)
+			// 	return
+			// }
 		},
 	)
 
@@ -122,24 +132,135 @@ func (e *EbpfCollector) close() {
 	for pid := range e.sslReadURetprobes {
 		e.sslReadURetprobes[pid].Close()
 	}
+	for pid := range e.goTlsWriteUprobes {
+		e.goTlsWriteUprobes[pid].Close()
+	}
+	for pid := range e.goTlsReadUprobes {
+		e.goTlsReadUprobes[pid].Close()
+	}
 }
 
-func (e *EbpfCollector) ListenForTlsReqs(pid uint32) {
+func (e *EbpfCollector) ListenForEncryptedReqs(pid uint32) {
 	if _, ok := e.tlsPidMap[pid]; ok {
 		log.Logger.Debug().Msgf("pid: %d already attached for tls", pid)
 		return
 	}
-	errors := e.AddSSLLibPid("/proc", pid)
+
+	// attach to libssl uprobes if process is using libssl
+	errors := e.AttachSslUprobesOnProcess("/proc", pid)
 	if errors != nil && len(errors) > 0 {
 		for _, err := range errors {
 			log.Logger.Error().Err(err).Uint32("pid", pid).
 				Msgf("error attaching ssl lib for pid: %d", pid)
 		}
 	}
+
+	// if process is go, attach to go tls
+	go_errs := e.AttachGoTlsUprobesOnProcess("/proc", pid)
+	if go_errs != nil && len(go_errs) > 0 {
+		for _, err := range go_errs {
+			log.Logger.Error().Err(err).Uint32("pid", pid).
+				Msgf("error attaching go tls for pid: %d", pid)
+		}
+	}
+
 	e.tlsPidMap[pid] = struct{}{}
 }
 
-func (t *EbpfCollector) AddSSLLibPid(procfs string, pid uint32) []error {
+func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) []error {
+	path := fmt.Sprintf("%s/%d/exe", procfs, pid)
+
+	// open in elf format in order to get the symbols
+	ef, err := elf.Open(path)
+	if err != nil {
+		log.Logger.Debug().Err(err).Uint32("pid", pid).Msg("error opening executable")
+		return []error{err}
+	}
+
+	// nm command can be used to get the symbols as well
+	symbols, err := ef.Symbols()
+	if err != nil {
+		log.Logger.Debug().Err(err).Uint32("pid", pid).Msg("error reading symbols")
+		return []error{err}
+	}
+
+	// .text section contains the instructions
+	// in order to read the .text section of the executable
+	// readelf or objdump can be used
+	textSection := ef.Section(".text")
+	if textSection == nil {
+		log.Logger.Debug().Uint32("pid", pid).Msg("no .text section found")
+		return nil
+	}
+	// textSectionData, err := textSection.Data()
+	// if err != nil {
+	// 	log.Logger.Debug().Err(err).Uint32("pid", pid).Msg("error reading .text section")
+	// 	return nil
+	// }
+	// textSectionLen := uint64(len(textSectionData) - 1)
+
+	ex, err := link.OpenExecutable(path)
+	if err != nil {
+		log.Logger.Debug().Err(err).Str("reason", "gotls").Uint32("pid", pid).Msg("error opening executable")
+		return []error{err}
+	}
+
+	for _, s := range symbols {
+		if s.Name != goTlsWriteSymbol && s.Name != goTlsReadSymbol {
+			continue
+		}
+
+		// TODO: set to s.Value ?
+		var address uint64
+
+		for _, p := range ef.Progs {
+			// find the program that contains the symbol address
+			// update the address to be the offset from the start of the program
+
+			// check if prog is loadable and executable
+			if p.Type != elf.PT_LOAD || (p.Flags&elf.PF_X) == 0 {
+				continue
+			}
+
+			// ----- start of ELF file -------------
+			// |
+			// |
+			// |  		(offset space)
+			// |
+			// |
+			// |
+			// ------ prog virtual address ----------
+			// |
+			// |
+			// |
+			// ------- symbol address ---------------
+			// |
+			// |
+			// |
+			// ----- prog virtual address + memsz ---
+
+			// symbol resides in this program
+			if p.Vaddr <= s.Value && s.Value < (p.Vaddr+p.Memsz) {
+				address = s.Value - p.Vaddr + p.Off
+				break
+			}
+		}
+
+		switch s.Name {
+		case goTlsWriteSymbol:
+			l, err := ex.Uprobe(s.Name, nil, &link.UprobeOptions{Address: address})
+			if err != nil {
+				log.Logger.Debug().Err(err).Str("reason", "gotls").Uint32("pid", pid).Msg("error attaching uprobe")
+				return nil
+			}
+			e.goTlsWriteUprobes[pid] = l
+		}
+	}
+
+	return nil
+}
+
+func (t *EbpfCollector) AttachSslUprobesOnProcess(procfs string, pid uint32) []error {
 	errors := make([]error, 0)
 	sslLibs, err := findSSLExecutablesByPid(procfs, pid)
 

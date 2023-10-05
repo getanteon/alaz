@@ -755,3 +755,59 @@ void BPF_UPROBE(ssl_read_enter_v1_0_2, void* ssl, void* buffer, int num) {
     __u64 id = pid_tgid | TLS_MASK;
     ssl_uprobe_read_enter_v1_0_2(ctx, id, pid, ssl, buffer, num, 0);
 }
+
+struct go_interface {
+    __s64 type;
+    void* ptr;
+};
+
+
+
+// SEC("uprobe/go_tls_conn_write_enter")
+// int go_tls_conn_write_enter(struct pt_regs *ctx) {
+//     __u32 fd;
+//     struct go_interface conn;
+
+//     if (bpf_probe_read_user(&conn, sizeof(conn), (void*)GO_PARAM1(ctx))) {
+//         return 1;
+//     };
+//     void* fd_ptr;
+//     if (bpf_probe_read_user(&fd_ptr, sizeof(fd_ptr), conn.ptr)) {
+//         return 1;
+//     }
+//     if (bpf_probe_read_user(fd, sizeof(*fd), fd_ptr + 0x10)) {
+//         return 1;
+//     }
+
+//     char *buf_ptr = (char*)GO_PARAM2(ctx);
+//     __u64 buf_size = GO_PARAM3(ctx);
+//     return trace_enter_write(ctx, fd, 1, buf_ptr, buf_size, 0);
+// }
+
+
+// func (c *Conn) Write(b []byte) (int, error)
+
+#define GO_PARAM1(x) ((x)->ax)
+#define GO_PARAM2(x) ((x)->bx)
+#define GO_PARAM3(x) ((x)->cx)
+
+SEC("uprobe/go_tls_conn_write_enter")
+void BPF_UPROBE(go_tls_conn_write_enter) {
+    __u32 fd;
+    struct go_interface conn;
+
+    if (bpf_probe_read_user(&conn, sizeof(conn), (void*)GO_PARAM1(ctx))) {
+        return 1;
+    };
+    void* fd_ptr;
+    if (bpf_probe_read_user(&fd_ptr, sizeof(fd_ptr), conn.ptr)) {
+        return 1;
+    }
+    if (bpf_probe_read_user(fd, sizeof(*fd), fd_ptr + 0x10)) {
+        return 1;
+    }
+
+    char *buf_ptr = (char*)GO_PARAM2(ctx);
+    __u64 buf_size = GO_PARAM3(ctx);
+    return trace_enter_write(ctx, fd, 1, buf_ptr, buf_size, 0);
+}
