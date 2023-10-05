@@ -2,11 +2,13 @@
 #include "../headers/common.h"
 #include "../headers/l7_req.h"
 
+// order is important
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_tracing.h>
 #include <stddef.h>
+#include "../headers/pt_regs.h"
 
 #include "http.c"
 #include "amqp.c"

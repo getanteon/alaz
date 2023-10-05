@@ -512,7 +512,7 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 	}
 
 	if d.Protocol == l7_req.L7_PROTOCOL_HTTP && d.Tls {
-		d.Protocol = "HTTPS"
+		reqDto.Protocol = "HTTPS"
 	}
 
 	go func() {
