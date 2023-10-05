@@ -97,6 +97,7 @@ type Request struct {
 	ToUID      string
 	ToPort     uint16
 	Protocol   string
+	Tls        bool
 	Completed  bool
 	StatusCode uint32
 	FailReason string

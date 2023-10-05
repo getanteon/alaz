@@ -448,6 +448,7 @@ func (b *BackendDS) PersistRequest(request Request) error {
 	reqInfo[12] = request.FailReason // TODO ??
 	reqInfo[13] = request.Method
 	reqInfo[14] = request.Path
+	reqInfo[15] = request.Tls
 
 	b.reqChanBuffer <- reqInfo
 
