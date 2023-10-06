@@ -113,3 +113,12 @@ type BackendResponse struct {
 		Error    string      `json:"error"`
 	} `json:"errors"`
 }
+
+type ReqBackendReponse struct {
+	Msg    string `json:"msg"`
+	Errors []struct {
+		EventNum int         `json:"request_num"`
+		Event    interface{} `json:"request"`
+		Error    string      `json:"errors"`
+	} `json:"errors"`
+}
