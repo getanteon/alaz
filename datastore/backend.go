@@ -163,7 +163,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 		port:               conf.Port,
 		c:                  client,
 		batchSize:          bs,
-		reqInfoPool:        newReqInfoPool(func() *ReqInfo { return &ReqInfo{} }, func(r *ReqInfo) { r = nil }),
+		reqInfoPool:        newReqInfoPool(func() *ReqInfo { return &ReqInfo{} }, func(r *ReqInfo) {}),
 		reqChanBuffer:      make(chan *ReqInfo, 10000),
 		podEventChan:       make(chan interface{}, 100),
 		svcEventChan:       make(chan interface{}, 100),
