@@ -31,6 +31,8 @@ type Aggregator struct {
 	k8sChan  <-chan interface{}
 	ebpfChan <-chan interface{}
 
+	ec *ebpf.EbpfCollector
+
 	// store the service map
 	clusterInfo *ClusterInfo
 
@@ -97,7 +99,7 @@ func init() {
 	reverseDnsCache = cache.New(defaultExpiration, purgeTime)
 }
 
-func NewAggregator(k8sChan <-chan interface{}, crChan <-chan interface{}, ebpfChan <-chan interface{}, ds datastore.DataStore) *Aggregator {
+func NewAggregator(k8sChan <-chan interface{}, ec *ebpf.EbpfCollector, ds datastore.DataStore) *Aggregator {
 	clusterInfo := &ClusterInfo{
 		PodIPToPodUid:         map[string]types.UID{},
 		ServiceIPToServiceUid: map[string]types.UID{},
@@ -106,7 +108,8 @@ func NewAggregator(k8sChan <-chan interface{}, crChan <-chan interface{}, ebpfCh
 
 	return &Aggregator{
 		k8sChan:     k8sChan,
-		ebpfChan:    ebpfChan,
+		ebpfChan:    ec.EbpfEvents(),
+		ec:          ec,
 		clusterInfo: clusterInfo,
 		ds:          ds,
 	}
@@ -175,6 +178,7 @@ func (a *Aggregator) processEbpf() {
 				Status:              d.Status,
 				Duration:            d.Duration,
 				Protocol:            d.Protocol,
+				Tls:                 d.Tls,
 				Method:              d.Method,
 				Payload:             payload,
 				PayloadSize:         d.PayloadSize,
@@ -189,9 +193,8 @@ func (a *Aggregator) processEbpf() {
 
 func (a *Aggregator) processTcpConnect(data interface{}) {
 	d := data.(tcp_state.TcpConnectEvent)
+	go a.ec.ListenForTlsReqs(d.Pid)
 	if d.Type_ == tcp_state.EVENT_TCP_ESTABLISHED {
-		// {pid,fd} -> SockInfo
-
 		// filter out localhost connections
 		if d.SAddr == "127.0.0.1" || d.DAddr == "127.0.0.1" {
 			return
@@ -346,6 +349,8 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 		a.clusterInfo.mu.Lock() // lock for writing
 		a.clusterInfo.PidToSocketMap[d.Pid] = sockMap
 		a.clusterInfo.mu.Unlock() // unlock for writing
+
+		go a.ec.ListenForTlsReqs(d.Pid)
 	}
 
 	sockMap.mu.RLock() // lock for reading
@@ -420,6 +425,7 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 		FromIP:     skInfo.Saddr,
 		ToIP:       skInfo.Daddr,
 		Protocol:   d.Protocol,
+		Tls:        d.Tls,
 		Completed:  true,
 		StatusCode: d.Status,
 		FailReason: "",
@@ -503,6 +509,10 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 		reqDto.FromPort, reqDto.ToPort = reqDto.ToPort, reqDto.FromPort
 		reqDto.FromUID, reqDto.ToUID = reqDto.ToUID, reqDto.FromUID
 		reqDto.FromType, reqDto.ToType = reqDto.ToType, reqDto.FromType
+	}
+
+	if d.Protocol == l7_req.L7_PROTOCOL_HTTP && d.Tls {
+		reqDto.Protocol = "HTTPS"
 	}
 
 	go func() {

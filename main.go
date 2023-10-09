@@ -61,7 +61,7 @@ func main() {
 		ec = ebpf.NewEbpfCollector(ctx)
 		go ec.Deploy()
 
-		a := aggregator.NewAggregator(kubeEvents, nil, ec.EbpfEvents(), dsBackend)
+		a := aggregator.NewAggregator(kubeEvents, ec, dsBackend)
 		a.Run()
 	}
 

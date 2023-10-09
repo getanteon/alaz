@@ -11,6 +11,7 @@ require (
 	github.com/prometheus/common v0.44.0
 	github.com/prometheus/node_exporter v1.6.1
 	github.com/rs/zerolog v1.29.1
+	golang.org/x/mod v0.12.0
 	inet.af/netaddr v0.0.0-20230525184311-b8eac61e914a
 	k8s.io/api v0.27.2
 	k8s.io/apimachinery v0.27.2
@@ -29,7 +30,6 @@ require (
 	github.com/dennwc/ioctl v1.0.0 // indirect
 	github.com/ema/qdisc v0.0.0-20230120214811-5b708f463de3 // indirect
 	github.com/emicklei/go-restful/v3 v3.10.2 // indirect
-	github.com/fatih/color v1.13.0 // indirect
 	github.com/go-logfmt/logfmt v0.5.1 // indirect
 	github.com/go-logr/logr v1.2.4 // indirect
 	github.com/go-openapi/jsonpointer v0.19.6 // indirect
