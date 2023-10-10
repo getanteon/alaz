@@ -210,45 +210,54 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 			continue
 		}
 
-		// TODO: set to s.Value ?
-		var address uint64
+		// address := s.Value
+		// for _, p := range ef.Progs {
+		// 	// find the program that contains the symbol address
+		// 	// update the address to be the offset from the start of the program
 
-		for _, p := range ef.Progs {
-			// find the program that contains the symbol address
-			// update the address to be the offset from the start of the program
+		// 	// check if prog is loadable and executable
+		// 	if p.Type != elf.PT_LOAD || (p.Flags&elf.PF_X) == 0 {
+		// 		continue
+		// 	}
 
-			// check if prog is loadable and executable
-			if p.Type != elf.PT_LOAD || (p.Flags&elf.PF_X) == 0 {
-				continue
-			}
+		// 	// ----- start of ELF file -------------
+		// 	// |
+		// 	// |
+		// 	// |  		(offset space)
+		// 	// |
+		// 	// |
+		// 	// |
+		// 	// ------ prog virtual address ----------
+		// 	// |
+		// 	// |
+		// 	// |
+		// 	// ------- symbol address ---------------
+		// 	// |
+		// 	// |
+		// 	// |
+		// 	// ----- prog virtual address + memsz ---
 
-			// ----- start of ELF file -------------
-			// |
-			// |
-			// |  		(offset space)
-			// |
-			// |
-			// |
-			// ------ prog virtual address ----------
-			// |
-			// |
-			// |
-			// ------- symbol address ---------------
-			// |
-			// |
-			// |
-			// ----- prog virtual address + memsz ---
+		// 	// symbol resides in this program
 
-			// symbol resides in this program
-			if p.Vaddr <= s.Value && s.Value < (p.Vaddr+p.Memsz) {
-				address = s.Value - p.Vaddr + p.Off
-				break
-			}
-		}
+		// 	// p.Off : Offset of the segment in the file image
+
+		// 	// All relocatable addresses within the ELF object file
+		// 	// have offsets relative to the top of the .text section.
+
+		// 	// p.Vaddr : Virtual address of the segment in memory
+		// 	// s.Value : Virtual address of the symbol in memory
+		// 	// p.Memsz : Size in bytes of the segment in memory
+
+		// 	if !(p.Vaddr <= s.Value && s.Value < (p.Vaddr+p.Memsz)) {
+		// 		// address = s.Value - p.Vaddr + p.Off
+		// 		break
+		// 	}
+		// }
 
 		switch s.Name {
 		case goTlsWriteSymbol:
-			l, err := ex.Uprobe(s.Name, nil, &link.UprobeOptions{Address: address})
+			// &link.UprobeOptions{Address: address}
+			l, err := ex.Uprobe(s.Name, l7_req.L7BpfProgsAndMaps.GoTlsConnWriteEnter, nil)
 			if err != nil {
 				log.Logger.Debug().Err(err).Str("reason", "gotls").Uint32("pid", pid).Msg("error attaching uprobe")
 				return nil

@@ -792,7 +792,7 @@ struct go_interface {
 #define GO_PARAM3(x) ((x)->cx)
 
 SEC("uprobe/go_tls_conn_write_enter")
-void BPF_UPROBE(go_tls_conn_write_enter) {
+int BPF_UPROBE(go_tls_conn_write_enter) {
     __u32 fd;
     struct go_interface conn;
 
@@ -803,11 +803,15 @@ void BPF_UPROBE(go_tls_conn_write_enter) {
     if (bpf_probe_read_user(&fd_ptr, sizeof(fd_ptr), conn.ptr)) {
         return 1;
     }
-    if (bpf_probe_read_user(fd, sizeof(*fd), fd_ptr + 0x10)) {
+    if (bpf_probe_read_user(&fd, sizeof(fd), fd_ptr + 0x10)) {
         return 1;
     }
 
     char *buf_ptr = (char*)GO_PARAM2(ctx);
     __u64 buf_size = GO_PARAM3(ctx);
-    return trace_enter_write(ctx, fd, 1, buf_ptr, buf_size, 0);
+
+    char msg[] = "go_tls_conn_write_enter fd: %ld";
+    bpf_trace_printk(msg, sizeof(msg), fd);
+
+    return process_enter_of_syscalls_write_sendto(ctx, fd, 1, buf_ptr, buf_size);
 }

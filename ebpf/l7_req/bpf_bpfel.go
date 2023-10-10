@@ -89,21 +89,22 @@ type bpfSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfProgramSpecs struct {
-	SslReadEnterV102 *ebpf.ProgramSpec `ebpf:"ssl_read_enter_v1_0_2"`
-	SslReadEnterV111 *ebpf.ProgramSpec `ebpf:"ssl_read_enter_v1_1_1"`
-	SslReadEnterV3   *ebpf.ProgramSpec `ebpf:"ssl_read_enter_v3"`
-	SslRetRead       *ebpf.ProgramSpec `ebpf:"ssl_ret_read"`
-	SslWriteV102     *ebpf.ProgramSpec `ebpf:"ssl_write_v1_0_2"`
-	SslWriteV111     *ebpf.ProgramSpec `ebpf:"ssl_write_v1_1_1"`
-	SslWriteV3       *ebpf.ProgramSpec `ebpf:"ssl_write_v3"`
-	SysEnterRead     *ebpf.ProgramSpec `ebpf:"sys_enter_read"`
-	SysEnterRecvfrom *ebpf.ProgramSpec `ebpf:"sys_enter_recvfrom"`
-	SysEnterSendto   *ebpf.ProgramSpec `ebpf:"sys_enter_sendto"`
-	SysEnterWrite    *ebpf.ProgramSpec `ebpf:"sys_enter_write"`
-	SysExitRead      *ebpf.ProgramSpec `ebpf:"sys_exit_read"`
-	SysExitRecvfrom  *ebpf.ProgramSpec `ebpf:"sys_exit_recvfrom"`
-	SysExitSendto    *ebpf.ProgramSpec `ebpf:"sys_exit_sendto"`
-	SysExitWrite     *ebpf.ProgramSpec `ebpf:"sys_exit_write"`
+	GoTlsConnWriteEnter *ebpf.ProgramSpec `ebpf:"go_tls_conn_write_enter"`
+	SslReadEnterV102    *ebpf.ProgramSpec `ebpf:"ssl_read_enter_v1_0_2"`
+	SslReadEnterV111    *ebpf.ProgramSpec `ebpf:"ssl_read_enter_v1_1_1"`
+	SslReadEnterV3      *ebpf.ProgramSpec `ebpf:"ssl_read_enter_v3"`
+	SslRetRead          *ebpf.ProgramSpec `ebpf:"ssl_ret_read"`
+	SslWriteV102        *ebpf.ProgramSpec `ebpf:"ssl_write_v1_0_2"`
+	SslWriteV111        *ebpf.ProgramSpec `ebpf:"ssl_write_v1_1_1"`
+	SslWriteV3          *ebpf.ProgramSpec `ebpf:"ssl_write_v3"`
+	SysEnterRead        *ebpf.ProgramSpec `ebpf:"sys_enter_read"`
+	SysEnterRecvfrom    *ebpf.ProgramSpec `ebpf:"sys_enter_recvfrom"`
+	SysEnterSendto      *ebpf.ProgramSpec `ebpf:"sys_enter_sendto"`
+	SysEnterWrite       *ebpf.ProgramSpec `ebpf:"sys_enter_write"`
+	SysExitRead         *ebpf.ProgramSpec `ebpf:"sys_exit_read"`
+	SysExitRecvfrom     *ebpf.ProgramSpec `ebpf:"sys_exit_recvfrom"`
+	SysExitSendto       *ebpf.ProgramSpec `ebpf:"sys_exit_sendto"`
+	SysExitWrite        *ebpf.ProgramSpec `ebpf:"sys_exit_write"`
 }
 
 // bpfMapSpecs contains maps before they are loaded into the kernel.
@@ -160,25 +161,27 @@ func (m *bpfMaps) Close() error {
 //
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfPrograms struct {
-	SslReadEnterV102 *ebpf.Program `ebpf:"ssl_read_enter_v1_0_2"`
-	SslReadEnterV111 *ebpf.Program `ebpf:"ssl_read_enter_v1_1_1"`
-	SslReadEnterV3   *ebpf.Program `ebpf:"ssl_read_enter_v3"`
-	SslRetRead       *ebpf.Program `ebpf:"ssl_ret_read"`
-	SslWriteV102     *ebpf.Program `ebpf:"ssl_write_v1_0_2"`
-	SslWriteV111     *ebpf.Program `ebpf:"ssl_write_v1_1_1"`
-	SslWriteV3       *ebpf.Program `ebpf:"ssl_write_v3"`
-	SysEnterRead     *ebpf.Program `ebpf:"sys_enter_read"`
-	SysEnterRecvfrom *ebpf.Program `ebpf:"sys_enter_recvfrom"`
-	SysEnterSendto   *ebpf.Program `ebpf:"sys_enter_sendto"`
-	SysEnterWrite    *ebpf.Program `ebpf:"sys_enter_write"`
-	SysExitRead      *ebpf.Program `ebpf:"sys_exit_read"`
-	SysExitRecvfrom  *ebpf.Program `ebpf:"sys_exit_recvfrom"`
-	SysExitSendto    *ebpf.Program `ebpf:"sys_exit_sendto"`
-	SysExitWrite     *ebpf.Program `ebpf:"sys_exit_write"`
+	GoTlsConnWriteEnter *ebpf.Program `ebpf:"go_tls_conn_write_enter"`
+	SslReadEnterV102    *ebpf.Program `ebpf:"ssl_read_enter_v1_0_2"`
+	SslReadEnterV111    *ebpf.Program `ebpf:"ssl_read_enter_v1_1_1"`
+	SslReadEnterV3      *ebpf.Program `ebpf:"ssl_read_enter_v3"`
+	SslRetRead          *ebpf.Program `ebpf:"ssl_ret_read"`
+	SslWriteV102        *ebpf.Program `ebpf:"ssl_write_v1_0_2"`
+	SslWriteV111        *ebpf.Program `ebpf:"ssl_write_v1_1_1"`
+	SslWriteV3          *ebpf.Program `ebpf:"ssl_write_v3"`
+	SysEnterRead        *ebpf.Program `ebpf:"sys_enter_read"`
+	SysEnterRecvfrom    *ebpf.Program `ebpf:"sys_enter_recvfrom"`
+	SysEnterSendto      *ebpf.Program `ebpf:"sys_enter_sendto"`
+	SysEnterWrite       *ebpf.Program `ebpf:"sys_enter_write"`
+	SysExitRead         *ebpf.Program `ebpf:"sys_exit_read"`
+	SysExitRecvfrom     *ebpf.Program `ebpf:"sys_exit_recvfrom"`
+	SysExitSendto       *ebpf.Program `ebpf:"sys_exit_sendto"`
+	SysExitWrite        *ebpf.Program `ebpf:"sys_exit_write"`
 }
 
 func (p *bpfPrograms) Close() error {
 	return _BpfClose(
+		p.GoTlsConnWriteEnter,
 		p.SslReadEnterV102,
 		p.SslReadEnterV111,
 		p.SslReadEnterV3,
