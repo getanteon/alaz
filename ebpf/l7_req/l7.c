@@ -210,11 +210,6 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
         req->payload_size = count;
         req->payload_read_complete = 1;
     }
-    
-    if (is_tls){
-        char msg[] = "tls writing to active_l7_req fd: %ld, pid: %ld";
-        bpf_trace_printk(msg, sizeof(msg), fd, k.pid);
-    } 
 
     long res = bpf_map_update_elem(&active_l7_requests, &k, req, BPF_ANY);
     if(res < 0)
@@ -349,12 +344,14 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
         // clean up
         bpf_map_delete_elem(&active_reads, &id);
 
-
-        if (is_tls){
-            char msg[] = "cleaning active_l7_req fd: %ld, pid: %ld";
-            bpf_trace_printk(msg, sizeof(msg), k.fd, k.pid);
-        }
-        bpf_map_delete_elem(&active_l7_requests, &k);
+        // bpf_map_delete_elem(&active_l7_requests, &k);
+        // TODO: Before we were cleaning the record active_l7_requests in case of a failed read
+        // in order to avoid filling up the map with requests that will never be sent to userspace in case of consecutive failed read attempts(request failure actually, could not read the response).
+        // But if the first read fails and we delete the record from active_l7_requests, 
+        // we will not be able to send the l7 event in case of a retried first read call succeeds.
+        
+        // TODO: On roadmap, when we want to parse the whole response, we have to send all chunks to userspace in order to parse the whole response.
+        // Right now, we only cover the case that we read the first 16 bytes of first successful read call of response, trying to parse the status code
 
         return 0;
     }
