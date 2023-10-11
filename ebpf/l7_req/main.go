@@ -186,6 +186,7 @@ type L7Event struct {
 	Status              uint32
 	Duration            uint64
 	Protocol            string // L7_PROTOCOL_HTTP
+	Tls                 bool   // Whether request was encrypted
 	Method              string
 	Payload             [512]uint8
 	PayloadSize         uint32 // How much of the payload was copied
@@ -361,6 +362,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 						Status:              l7Event.Status,
 						Duration:            l7Event.Duration,
 						Protocol:            protocol,
+						Tls:                 uint8ToBool(l7Event.IsTls),
 						Method:              method,
 						Payload:             l7Event.Payload,
 						PayloadSize:         l7Event.PayloadSize,

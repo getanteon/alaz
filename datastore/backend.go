@@ -128,14 +128,30 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 				if err != nil {
 					log.Logger.Debug().Msgf("error reading response body: %v", err)
 				}
-				var resp BackendResponse
-				err = json.Unmarshal(rb, &resp)
-				if err != nil {
-					log.Logger.Debug().Msgf("error unmarshalling response body: %v", err)
-				}
-				if len(resp.Errors) > 0 {
-					for _, e := range resp.Errors {
-						log.Logger.Debug().Str("errorMsg", e.Error).Any("event", e.Event).Msgf("backend persist error")
+
+				// if req endpoint
+				log.Logger.Debug().Str("path", resp.Request.URL.Path).Msg("marshalling backend error")
+				if resp.Request.URL.Path == reqEndpoint {
+					var resp ReqBackendReponse
+					err = json.Unmarshal(rb, &resp)
+					if err != nil {
+						log.Logger.Debug().Msgf("error unmarshalling response body: %v", err)
+					}
+					if len(resp.Errors) > 0 {
+						for _, e := range resp.Errors {
+							log.Logger.Error().Str("errorMsg", e.Error).Any("event", e.Event).Msgf("backend persist error")
+						}
+					}
+				} else {
+					var resp BackendResponse
+					err = json.Unmarshal(rb, &resp)
+					if err != nil {
+						log.Logger.Debug().Msgf("error unmarshalling response body: %v", err)
+					}
+					if len(resp.Errors) > 0 {
+						for _, e := range resp.Errors {
+							log.Logger.Error().Str("errorMsg", e.Error).Any("event", e.Event).Msgf("backend persist error")
+						}
 					}
 				}
 			}
@@ -163,7 +179,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 		port:               conf.Port,
 		c:                  client,
 		batchSize:          bs,
-		reqInfoPool:        newReqInfoPool(func() *ReqInfo { return &ReqInfo{} }, func(r *ReqInfo) { r = nil }),
+		reqInfoPool:        newReqInfoPool(func() *ReqInfo { return &ReqInfo{} }, func(r *ReqInfo) {}),
 		reqChanBuffer:      make(chan *ReqInfo, 10000),
 		podEventChan:       make(chan interface{}, 100),
 		svcEventChan:       make(chan interface{}, 100),
@@ -448,6 +464,7 @@ func (b *BackendDS) PersistRequest(request Request) error {
 	reqInfo[12] = request.FailReason // TODO ??
 	reqInfo[13] = request.Method
 	reqInfo[14] = request.Path
+	reqInfo[15] = request.Tls
 
 	b.reqChanBuffer <- reqInfo
 

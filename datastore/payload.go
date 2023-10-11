@@ -103,11 +103,12 @@ type ContainerEvent struct {
 // 8) Destination ID
 // 9) Destination Port
 // 10) Protocol
-// 11) Response Code
-// 12) ??
+// 11) Response Status Code
+// 12) Fail Reason // TODO: not used yet
 // 13) Method
 // 14) Path
-type ReqInfo [15]interface{}
+// 15) Encrypted (bool)
+type ReqInfo [16]interface{}
 
 type RequestsPayload struct {
 	Metadata Metadata   `json:"metadata"`

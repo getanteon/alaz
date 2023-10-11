@@ -178,6 +178,7 @@ func (a *Aggregator) processEbpf() {
 				Status:              d.Status,
 				Duration:            d.Duration,
 				Protocol:            d.Protocol,
+				Tls:                 d.Tls,
 				Method:              d.Method,
 				Payload:             payload,
 				PayloadSize:         d.PayloadSize,
@@ -424,6 +425,7 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 		FromIP:     skInfo.Saddr,
 		ToIP:       skInfo.Daddr,
 		Protocol:   d.Protocol,
+		Tls:        d.Tls,
 		Completed:  true,
 		StatusCode: d.Status,
 		FailReason: "",
@@ -507,6 +509,10 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 		reqDto.FromPort, reqDto.ToPort = reqDto.ToPort, reqDto.FromPort
 		reqDto.FromUID, reqDto.ToUID = reqDto.ToUID, reqDto.FromUID
 		reqDto.FromType, reqDto.ToType = reqDto.ToType, reqDto.FromType
+	}
+
+	if d.Protocol == l7_req.L7_PROTOCOL_HTTP && d.Tls {
+		reqDto.Protocol = "HTTPS"
 	}
 
 	go func() {
