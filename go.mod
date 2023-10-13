@@ -11,6 +11,7 @@ require (
 	github.com/prometheus/common v0.44.0
 	github.com/prometheus/node_exporter v1.6.1
 	github.com/rs/zerolog v1.29.1
+	golang.org/x/arch v0.5.0
 	golang.org/x/mod v0.12.0
 	inet.af/netaddr v0.0.0-20230525184311-b8eac61e914a
 	k8s.io/api v0.27.2

@@ -15,6 +15,8 @@ import (
 	"github.com/ddosify/alaz/ebpf/tcp_state"
 	"github.com/ddosify/alaz/log"
 
+	"golang.org/x/arch/arm64/arm64asm"
+	"golang.org/x/arch/x86/x86asm"
 	"golang.org/x/mod/semver"
 )
 
@@ -41,6 +43,8 @@ type EbpfCollector struct {
 	goTlsWriteUprobes map[uint32]link.Link
 	goTlsReadUprobes  map[uint32]link.Link
 
+	goTlsReadUretprobes map[uint32][]link.Link // uprobes for ret instructions
+
 	tlsPidMap map[uint32]struct{}
 }
 
@@ -57,6 +61,7 @@ func NewEbpfCollector(parentCtx context.Context) *EbpfCollector {
 		sslReadURetprobes:   make(map[uint32]link.Link),
 		goTlsWriteUprobes:   make(map[uint32]link.Link),
 		goTlsReadUprobes:    make(map[uint32]link.Link),
+		goTlsReadUretprobes: make(map[uint32][]link.Link),
 	}
 }
 
@@ -138,6 +143,11 @@ func (e *EbpfCollector) close() {
 	for pid := range e.goTlsReadUprobes {
 		e.goTlsReadUprobes[pid].Close()
 	}
+	for pid := range e.goTlsReadUretprobes {
+		for _, l := range e.goTlsReadUretprobes[pid] {
+			l.Close()
+		}
+	}
 }
 
 func (e *EbpfCollector) ListenForEncryptedReqs(pid uint32) {
@@ -192,11 +202,11 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 		log.Logger.Debug().Uint32("pid", pid).Msg("no .text section found")
 		return nil
 	}
-	// textSectionData, err := textSection.Data()
-	// if err != nil {
-	// 	log.Logger.Debug().Err(err).Uint32("pid", pid).Msg("error reading .text section")
-	// 	return nil
-	// }
+	textSectionData, err := textSection.Data()
+	if err != nil {
+		log.Logger.Debug().Err(err).Uint32("pid", pid).Msg("error reading .text section")
+		return nil
+	}
 	// textSectionLen := uint64(len(textSectionData) - 1)
 
 	ex, err := link.OpenExecutable(path)
@@ -210,50 +220,6 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 			continue
 		}
 
-		// address := s.Value
-		// for _, p := range ef.Progs {
-		// 	// find the program that contains the symbol address
-		// 	// update the address to be the offset from the start of the program
-
-		// 	// check if prog is loadable and executable
-		// 	if p.Type != elf.PT_LOAD || (p.Flags&elf.PF_X) == 0 {
-		// 		continue
-		// 	}
-
-		// 	// ----- start of ELF file -------------
-		// 	// |
-		// 	// |
-		// 	// |  		(offset space)
-		// 	// |
-		// 	// |
-		// 	// |
-		// 	// ------ prog virtual address ----------
-		// 	// |
-		// 	// |
-		// 	// |
-		// 	// ------- symbol address ---------------
-		// 	// |
-		// 	// |
-		// 	// |
-		// 	// ----- prog virtual address + memsz ---
-
-		// 	// symbol resides in this program
-
-		// 	// p.Off : Offset of the segment in the file image
-
-		// 	// All relocatable addresses within the ELF object file
-		// 	// have offsets relative to the top of the .text section.
-
-		// 	// p.Vaddr : Virtual address of the segment in memory
-		// 	// s.Value : Virtual address of the symbol in memory
-		// 	// p.Memsz : Size in bytes of the segment in memory
-
-		// 	if !(p.Vaddr <= s.Value && s.Value < (p.Vaddr+p.Memsz)) {
-		// 		// address = s.Value - p.Vaddr + p.Off
-		// 		break
-		// 	}
-		// }
-
 		switch s.Name {
 		case goTlsWriteSymbol:
 			// &link.UprobeOptions{Address: address}
@@ -263,6 +229,58 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 				return nil
 			}
 			e.goTlsWriteUprobes[pid] = l
+		case goTlsReadSymbol:
+			l, err := ex.Uprobe(s.Name, l7_req.L7BpfProgsAndMaps.GoTlsConnReadEnter, nil)
+			if err != nil {
+				log.Logger.Debug().Err(err).Str("reason", "gotls").Uint32("pid", pid).Msg("error attaching uprobe")
+				return nil
+			}
+			e.goTlsReadUprobes[pid] = l
+
+			// when uretprobe is attached to a function, kernel overrides the return address on stack
+			// with the address of the uretprobe
+			// this messes up with go runtime and causes a crash
+			// so we attach all ret instructions in the function as uprobes
+
+			// find read functions address with cilium lib
+
+			address := s.Value
+			// find the address that will be used to attach uprobes
+			for _, prog := range ef.Progs {
+				// Skip uninteresting segments.
+				if prog.Type != elf.PT_LOAD || (prog.Flags&elf.PF_X) == 0 {
+					continue
+				}
+
+				if prog.Vaddr <= s.Value && s.Value < (prog.Vaddr+prog.Memsz) {
+					// If the symbol value is contained in the segment, calculate
+					// the symbol offset.
+					//
+					// fn symbol offset = fn symbol VA - .text VA + .text offset
+					//
+					// stackoverflow.com/a/40249502
+
+					// fmt.Printf("gotlsx got from symbol %s s.Value %d prog.Vaddr: %d prog.Off %d\n", s.Name, s.Value, prog.Vaddr, prog.Off)
+
+					address = s.Value - prog.Vaddr + prog.Off
+					break
+				}
+			}
+
+			sStart := s.Value - textSection.Addr
+			sEnd := sStart + s.Size
+
+			sBytes := textSectionData[sStart:sEnd]
+			// TODO: check if empty
+			returnOffsets := getReturnOffsets(ef.Machine, sBytes) // find all ret instructions in the function according to the architecture
+			e.goTlsReadUretprobes[pid] = make([]link.Link, 0)
+			for _, offset := range returnOffsets {
+				l, err := ex.Uprobe(s.Name, l7_req.L7BpfProgsAndMaps.GoTlsConnReadExit, &link.UprobeOptions{Address: address, Offset: uint64(offset)})
+				if err != nil {
+					return nil
+				}
+				e.goTlsReadUretprobes[pid] = append(e.goTlsReadUretprobes[pid], l)
+			}
 		}
 	}
 
@@ -428,4 +446,27 @@ func listenDebugMsgs() {
 		}
 		log.Logger.Info().Msgf("%s\n", buf[:n])
 	}
+}
+
+func getReturnOffsets(machine elf.Machine, instructions []byte) []int {
+	var res []int
+	switch machine {
+	case elf.EM_X86_64:
+		for i := 0; i < len(instructions); {
+			ins, err := x86asm.Decode(instructions[i:], 64)
+			if err == nil && ins.Op == x86asm.RET {
+				res = append(res, i)
+			}
+			i += ins.Len
+		}
+	case elf.EM_AARCH64:
+		for i := 0; i < len(instructions); {
+			ins, err := arm64asm.Decode(instructions[i:])
+			if err == nil && ins.Op == arm64asm.RET {
+				res = append(res, i)
+			}
+			i += 4
+		}
+	}
+	return res
 }

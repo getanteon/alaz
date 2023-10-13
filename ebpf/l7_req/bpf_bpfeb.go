@@ -12,6 +12,19 @@ import (
 	"github.com/cilium/ebpf"
 )
 
+type bpfGoReadKey struct {
+	Pid  uint32
+	_    [4]byte
+	Goid uint64
+}
+
+type bpfGoReqKey struct {
+	Pid  uint32
+	_    [4]byte
+	Goid uint64
+	Fd   uint64
+}
+
 type bpfL7Event struct {
 	Fd                  uint64
 	WriteTimeNs         uint64
@@ -89,6 +102,8 @@ type bpfSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfProgramSpecs struct {
+	GoTlsConnReadEnter  *ebpf.ProgramSpec `ebpf:"go_tls_conn_read_enter"`
+	GoTlsConnReadExit   *ebpf.ProgramSpec `ebpf:"go_tls_conn_read_exit"`
 	GoTlsConnWriteEnter *ebpf.ProgramSpec `ebpf:"go_tls_conn_write_enter"`
 	SslReadEnterV102    *ebpf.ProgramSpec `ebpf:"ssl_read_enter_v1_0_2"`
 	SslReadEnterV111    *ebpf.ProgramSpec `ebpf:"ssl_read_enter_v1_1_1"`
@@ -111,12 +126,15 @@ type bpfProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfMapSpecs struct {
-	ActiveL7Requests *ebpf.MapSpec `ebpf:"active_l7_requests"`
-	ActiveReads      *ebpf.MapSpec `ebpf:"active_reads"`
-	ActiveWrites     *ebpf.MapSpec `ebpf:"active_writes"`
-	L7EventHeap      *ebpf.MapSpec `ebpf:"l7_event_heap"`
-	L7Events         *ebpf.MapSpec `ebpf:"l7_events"`
-	L7RequestHeap    *ebpf.MapSpec `ebpf:"l7_request_heap"`
+	ActiveL7Requests   *ebpf.MapSpec `ebpf:"active_l7_requests"`
+	ActiveReads        *ebpf.MapSpec `ebpf:"active_reads"`
+	ActiveWrites       *ebpf.MapSpec `ebpf:"active_writes"`
+	GoActiveL7Requests *ebpf.MapSpec `ebpf:"go_active_l7_requests"`
+	GoActiveReads      *ebpf.MapSpec `ebpf:"go_active_reads"`
+	GoL7RequestHeap    *ebpf.MapSpec `ebpf:"go_l7_request_heap"`
+	L7EventHeap        *ebpf.MapSpec `ebpf:"l7_event_heap"`
+	L7Events           *ebpf.MapSpec `ebpf:"l7_events"`
+	L7RequestHeap      *ebpf.MapSpec `ebpf:"l7_request_heap"`
 }
 
 // bpfObjects contains all objects after they have been loaded into the kernel.
@@ -138,12 +156,15 @@ func (o *bpfObjects) Close() error {
 //
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfMaps struct {
-	ActiveL7Requests *ebpf.Map `ebpf:"active_l7_requests"`
-	ActiveReads      *ebpf.Map `ebpf:"active_reads"`
-	ActiveWrites     *ebpf.Map `ebpf:"active_writes"`
-	L7EventHeap      *ebpf.Map `ebpf:"l7_event_heap"`
-	L7Events         *ebpf.Map `ebpf:"l7_events"`
-	L7RequestHeap    *ebpf.Map `ebpf:"l7_request_heap"`
+	ActiveL7Requests   *ebpf.Map `ebpf:"active_l7_requests"`
+	ActiveReads        *ebpf.Map `ebpf:"active_reads"`
+	ActiveWrites       *ebpf.Map `ebpf:"active_writes"`
+	GoActiveL7Requests *ebpf.Map `ebpf:"go_active_l7_requests"`
+	GoActiveReads      *ebpf.Map `ebpf:"go_active_reads"`
+	GoL7RequestHeap    *ebpf.Map `ebpf:"go_l7_request_heap"`
+	L7EventHeap        *ebpf.Map `ebpf:"l7_event_heap"`
+	L7Events           *ebpf.Map `ebpf:"l7_events"`
+	L7RequestHeap      *ebpf.Map `ebpf:"l7_request_heap"`
 }
 
 func (m *bpfMaps) Close() error {
@@ -151,6 +172,9 @@ func (m *bpfMaps) Close() error {
 		m.ActiveL7Requests,
 		m.ActiveReads,
 		m.ActiveWrites,
+		m.GoActiveL7Requests,
+		m.GoActiveReads,
+		m.GoL7RequestHeap,
 		m.L7EventHeap,
 		m.L7Events,
 		m.L7RequestHeap,
@@ -161,6 +185,8 @@ func (m *bpfMaps) Close() error {
 //
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfPrograms struct {
+	GoTlsConnReadEnter  *ebpf.Program `ebpf:"go_tls_conn_read_enter"`
+	GoTlsConnReadExit   *ebpf.Program `ebpf:"go_tls_conn_read_exit"`
 	GoTlsConnWriteEnter *ebpf.Program `ebpf:"go_tls_conn_write_enter"`
 	SslReadEnterV102    *ebpf.Program `ebpf:"ssl_read_enter_v1_0_2"`
 	SslReadEnterV111    *ebpf.Program `ebpf:"ssl_read_enter_v1_1_1"`
@@ -181,6 +207,8 @@ type bpfPrograms struct {
 
 func (p *bpfPrograms) Close() error {
 	return _BpfClose(
+		p.GoTlsConnReadEnter,
+		p.GoTlsConnReadExit,
 		p.GoTlsConnWriteEnter,
 		p.SslReadEnterV102,
 		p.SslReadEnterV111,

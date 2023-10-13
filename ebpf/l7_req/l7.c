@@ -64,6 +64,18 @@ struct socket_key {
     __u8 is_tls;
 };
 
+struct go_req_key {
+    __u32 pid;
+    __u64 goid; // goroutine id
+    __u64 fd;
+};
+
+struct go_read_key {
+    __u32 pid;
+    __u64 goid; // goroutine id
+    // __u64 fd; can't have fd at exit of read, because it is not available
+};
+
 // Instead of allocating on bpf stack, we allocate on a per-CPU array map
 struct {
      __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
@@ -85,6 +97,34 @@ struct {
     __type(key, struct socket_key);
     __type(value, struct l7_request);
 } active_l7_requests SEC(".maps");
+
+struct {
+     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+     __type(key, __u32);
+     __type(value, struct l7_request);
+     __uint(max_entries, 1);
+} go_l7_request_heap SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __uint(max_entries, 32768);
+    __type(key, struct go_req_key);
+    __type(value, struct l7_request);
+} go_active_l7_requests SEC(".maps");
+
+struct go_read_args {
+    __u64 fd;
+    char* buf;
+    __u64 size;
+    __u64 read_start_ns;  
+};
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, struct go_read_key);
+    __uint(value_size, sizeof(struct go_read_args));
+    __uint(max_entries, 10240);
+} go_active_reads SEC(".maps");
 
 // send l7 events to userspace
 struct {
@@ -387,10 +427,10 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
     // For a amqp consume, there will be no write, so we will not have a request in active_l7_requests
     // Process amqp consume first, if it is not amqp consume, look for a request in active_l7_requests
 
-    if (is_rabbitmq_consume(read_info->buf, read_info->size)) {
+    if (is_rabbitmq_consume(read_info->buf, ret)) {
         e->protocol = PROTOCOL_AMQP;
         e->method = METHOD_DELIVER;
-        e->duration = bpf_ktime_get_ns()- read_info->read_start_ns;
+    e->duration = bpf_ktime_get_ns()- read_info->read_start_ns;
         e->write_time_ns = read_info->read_start_ns; // TODO: it is not write time, but start of read time
         e->payload_size = 0;
         e->payload_read_complete = 0;
@@ -439,7 +479,7 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
     e->failed = 0; // success
 
     e->status = 0;
-    if(read_info->buf && read_info->size > PAYLOAD_PREFIX_SIZE){
+    if(read_info->buf && ret > PAYLOAD_PREFIX_SIZE){
         if(e->protocol==PROTOCOL_HTTP){ // if http, try to parse status code
             // read first 16 bytes of read buffer
             char buf_prefix[PAYLOAD_PREFIX_SIZE];
@@ -789,15 +829,78 @@ struct go_interface {
 
 // func (c *Conn) Write(b []byte) (int, error)
 
+#if defined(__TARGET_ARCH_x86)
 #define GO_PARAM1(x) ((x)->ax)
 #define GO_PARAM2(x) ((x)->bx)
 #define GO_PARAM3(x) ((x)->cx)
+#define GOROUTINE(x) ((x)->r14)
+#elif defined(__TARGET_ARCH_arm64)
+#define GO_PARAM1(x) (((PT_REGS_ARM64 *)(x))->regs[0])
+#define GO_PARAM2(x) (((PT_REGS_ARM64 *)(x))->regs[1])
+#define GO_PARAM3(x) (((PT_REGS_ARM64 *)(x))->regs[2])
+#define GOROUTINE(x) (((PT_REGS_ARM64 *)(x))->regs[28])
+#endif
 
+
+static __always_inline
+int process_enter_of_go_conn_write(__u64 goid, __u32 pid, __u32 fd, char *buf_ptr, __u64 count) {
+    // parse and write to go_active_l7_req map
+    struct go_req_key k = {};
+    k.goid = goid;
+    k.pid = pid;
+    k.fd = fd;
+
+    int zero = 0;
+    struct l7_request *req = bpf_map_lookup_elem(&go_l7_request_heap, &zero);
+    req->method = METHOD_UNKNOWN;
+    req->protocol = PROTOCOL_UNKNOWN;
+    req->payload_size = 0;
+    req->payload_read_complete = 0;
+    req->write_time_ns = bpf_ktime_get_ns();
+    req->request_type = 0;
+
+    if(buf_ptr){
+        // try to parse only http1.1 for now.
+        int method = parse_http_method(buf_ptr);
+        if (method != -1){
+            req->protocol = PROTOCOL_HTTP;
+            req-> method = method;
+        }
+    }
+
+    // copy req payload
+    bpf_probe_read(&req->payload, MAX_PAYLOAD_SIZE, buf_ptr);
+     if(count > MAX_PAYLOAD_SIZE){
+        // will not be able to copy all of it
+        req->payload_size = MAX_PAYLOAD_SIZE;
+        req->payload_read_complete = 0;
+    }else{
+        req->payload_size = count;
+        req->payload_read_complete = 1;
+    }
+
+
+    long res = bpf_map_update_elem(&go_active_l7_requests, &k, req, BPF_ANY);
+    if(res < 0)
+    {
+		char msg[] = "go_active_l7_requests - %ld";
+		bpf_trace_printk(msg, sizeof(msg), res);
+    }
+
+    return 0;
+}
+
+// (c *Conn) Write(b []byte) (int, error)
 SEC("uprobe/go_tls_conn_write_enter")
 int BPF_UPROBE(go_tls_conn_write_enter) {
+    __u64 goid = GOROUTINE(ctx);
+    __u32 pid = bpf_get_current_pid_tgid() >> 32;
+    
     __u32 fd;
     struct go_interface conn;
-
+    // Registers contain the function arguments
+    
+    // X0(arm64) register contains the pointer to the first function argument, c *Conn
     if (bpf_probe_read_user(&conn, sizeof(conn), (void*)GO_PARAM1(ctx))) {
         return 1;
     };
@@ -809,11 +912,152 @@ int BPF_UPROBE(go_tls_conn_write_enter) {
         return 1;
     }
 
+    // X1(arm64) register contains the byte ptr, pointing to first byte of the slice
     char *buf_ptr = (char*)GO_PARAM2(ctx);
+    // X2(arm64) register contains the length of the slice
     __u64 buf_size = GO_PARAM3(ctx);
 
     char msg[] = "go_tls_conn_write_enter fd: %ld";
     bpf_trace_printk(msg, sizeof(msg), fd);
 
-    return process_enter_of_syscalls_write_sendto(ctx, fd, 1, buf_ptr, buf_size);
+
+    return process_enter_of_go_conn_write(goid, pid, fd, buf_ptr, buf_size);
 }
+
+// func (c *Conn) Read(b []byte) (int, error)
+SEC("uprobe/go_tls_conn_read_enter")
+int BPF_UPROBE(go_tls_conn_read_enter) {
+    __u32 fd;
+    struct go_interface conn;
+
+    // X0(arm64) register contains the pointer to the first function argument, c *Conn
+    if (bpf_probe_read_user(&conn, sizeof(conn), (void*)GO_PARAM1(ctx))) {
+        return 1;
+    };
+    void* fd_ptr;
+    if (bpf_probe_read_user(&fd_ptr, sizeof(fd_ptr), conn.ptr)) {
+        return 1;
+    }
+    if (bpf_probe_read_user(&fd, sizeof(fd), fd_ptr + 0x10)) {
+        return 1;
+    }
+
+    // X1(arm64) register contains the byte ptr, pointing to first byte of the slice
+    char *buf_ptr = (char*)GO_PARAM2(ctx);
+    // // X2(arm64) register contains the length of the slice
+    __u64 buf_size = GO_PARAM3(ctx);
+
+    char msg[] = "go_tls_conn_read_enter fd: %ld";
+    bpf_trace_printk(msg, sizeof(msg), fd);
+
+
+    struct go_read_args args = {};
+    args.fd = fd;
+    args.buf = buf_ptr;
+    args.size = buf_size;
+    args.read_start_ns = bpf_ktime_get_ns();
+
+    struct go_read_key k = {};
+    k.goid = GOROUTINE(ctx);
+    k.pid = bpf_get_current_pid_tgid() >> 32;
+
+    long res = bpf_map_update_elem(&go_active_reads, &k, &args, BPF_ANY);
+    if(res < 0)
+    {
+        char msg[] = "Error writing to go_active_reads - %ld";
+        bpf_trace_printk(msg, sizeof(msg), res);
+    }
+    return 0;
+}
+
+// attached to all RET instructions since uretprobe crashes go applications
+SEC("uprobe/go_tls_conn_read_exit")
+int BPF_UPROBE(go_tls_conn_read_exit) {
+    // can't access to register we've access on read_enter here,
+    // registers are changed.
+    long int ret = GO_PARAM1(ctx);
+
+    struct go_read_key k = {};
+    k.goid = GOROUTINE(ctx);
+    k.pid = bpf_get_current_pid_tgid() >> 32;
+
+    struct go_read_args *read_args = bpf_map_lookup_elem(&go_active_reads, &k);
+    if (!read_args) {
+        // TODO: cleanup go write ?
+        return 0;
+    }
+
+    struct go_req_key req_k = {};
+    req_k.goid = k.goid;
+    req_k.pid = k.pid;
+    req_k.fd = read_args->fd;
+
+    struct l7_request *req = bpf_map_lookup_elem(&go_active_l7_requests, &req_k);
+    if (!req) {
+        bpf_map_delete_elem(&go_active_reads, &k);
+        return 0;
+    }
+
+    int zero = 0;
+    struct l7_event *e = bpf_map_lookup_elem(&l7_event_heap, &zero);
+
+    e->duration = bpf_ktime_get_ns() - req->write_time_ns;
+    e->write_time_ns = req->write_time_ns;
+    e->payload_size = req->payload_size;
+    e->payload_read_complete = req->payload_read_complete;
+    e->failed = 0; // success
+    
+    e->fd = read_args->fd;
+    e->pid = k.pid;
+    e->is_tls = 1;
+    e->method = req->method;
+    e->protocol = req->protocol;
+    e->duration = bpf_ktime_get_ns() - req->write_time_ns;
+    e->write_time_ns = req->write_time_ns;
+    
+    // request payload
+    e->payload_size = req->payload_size;
+    e->payload_read_complete = req->payload_read_complete;
+    
+    // copy req payload
+    bpf_probe_read(e->payload, MAX_PAYLOAD_SIZE, req->payload);
+    
+    e->failed = 0; // success
+    e->status = 0;
+    // parse response payload
+    if(read_args->buf && ret > PAYLOAD_PREFIX_SIZE){
+        if(e->protocol == PROTOCOL_HTTP){ // if http, try to parse status code
+            // read first 16 bytes of read buffer
+            char buf_prefix[PAYLOAD_PREFIX_SIZE];
+            long r = bpf_probe_read(&buf_prefix, sizeof(buf_prefix), (void *)(read_args->buf)) ;
+            
+            if (r < 0) {
+                char msg[] = "could not read into buf_prefix - %ld";
+                bpf_trace_printk(msg, sizeof(msg), r);
+                bpf_map_delete_elem(&go_active_reads, &k);
+                // bpf_map_delete_elem(&go_active_l7_requests, &req_k); // TODO: check ?
+                return 0;
+            }
+
+            int status = parse_http_status(buf_prefix);
+            if (status != -1){
+                e->status = status;
+            }
+        }else{
+            char msg[] = "go_tls_conn_read_exit - protocol is not http1.1";
+            bpf_trace_printk(msg, sizeof(msg));
+        }
+    }
+
+    bpf_map_delete_elem(&go_active_reads, &k);
+    bpf_map_delete_elem(&go_active_l7_requests, &req_k);
+
+    long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
+    if (r < 0) {
+        char msg[] = "could not write gotls event to l7_events - %ld";
+        bpf_trace_printk(msg, sizeof(msg), r);
+    }
+
+    return 0;
+}
+
