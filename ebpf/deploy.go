@@ -280,9 +280,10 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 			for _, offset := range returnOffsets {
 				l, err := ex.Uprobe(s.Name, l7_req.L7BpfProgsAndMaps.GoTlsConnReadExit, &link.UprobeOptions{Address: address, Offset: uint64(offset)})
 				if err != nil {
-					return nil
+					return nil // TODO: return error
 				}
 				e.goTlsReadUretprobes[pid] = append(e.goTlsReadUretprobes[pid], l)
+				log.Logger.Debug().Str("reason", "gotls").Uint32("pid", pid).Msgf("attached uretprobe to %s at offset %d", s.Name, offset)
 			}
 		}
 	}

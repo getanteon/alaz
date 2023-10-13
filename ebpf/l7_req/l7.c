@@ -847,9 +847,10 @@ static __always_inline
 int process_enter_of_go_conn_write(__u64 goid, __u32 pid, __u32 fd, char *buf_ptr, __u64 count) {
     // parse and write to go_active_l7_req map
     struct go_req_key k = {};
-    k.goid = goid;
+    // k.goid = goid;
     k.pid = pid;
     k.fd = fd;
+
 
     int zero = 0;
     struct l7_request *req = bpf_map_lookup_elem(&go_l7_request_heap, &zero);
@@ -883,6 +884,9 @@ int process_enter_of_go_conn_write(__u64 goid, __u32 pid, __u32 fd, char *buf_pt
         req->payload_read_complete = 1;
     }
 
+
+    char msg[] = "go_conn_write_enter writing req: %ld, %ld, %ld";
+    bpf_trace_printk(msg, sizeof(msg), k.fd, k.pid, k.goid);
 
     long res = bpf_map_update_elem(&go_active_l7_requests, &k, req, BPF_ANY);
     if(res < 0)
@@ -1001,15 +1005,22 @@ int BPF_UPROBE(go_tls_conn_read_exit) {
         return 0;
     }
 
+    // writeloop and readloop different goroutines
+
     struct go_req_key req_k = {};
-    req_k.goid = k.goid;
+    // req_k.goid = k.goid;
     req_k.pid = k.pid;
     req_k.fd = read_args->fd;
 
+    char msg5[] = "go_tls_conn_read_exit get req: %ld, %ld, %ld";
+    bpf_trace_printk(msg5, sizeof(msg5), req_k.fd, req_k.pid, req_k.goid);
+
+
     struct l7_request *req = bpf_map_lookup_elem(&go_active_l7_requests, &req_k);
     if (!req) {
-        bpf_map_delete_elem(&go_active_reads, &k);
+        // bpf_map_delete_elem(&go_active_reads, &k); 
         char msg[] = "go_tls_conn_read_exit req is null";
+        // TODO: retry somehow ?
         bpf_trace_printk(msg, sizeof(msg));
         return 0;
     }
