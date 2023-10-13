@@ -156,6 +156,9 @@ func (e *EbpfCollector) ListenForEncryptedReqs(pid uint32) {
 		return
 	}
 
+	// TODO: lock for pid
+	// two goroutines representing same pid can race to attach uprobes
+
 	// attach to libssl uprobes if process is using libssl
 	errors := e.AttachSslUprobesOnProcess("/proc", pid)
 	if errors != nil && len(errors) > 0 {

@@ -130,7 +130,6 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 				}
 
 				// if req endpoint
-				log.Logger.Debug().Str("path", resp.Request.URL.Path).Msg("marshalling backend error")
 				if resp.Request.URL.Path == reqEndpoint {
 					var resp ReqBackendReponse
 					err = json.Unmarshal(rb, &resp)

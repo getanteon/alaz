@@ -834,11 +834,12 @@ struct go_interface {
 #define GO_PARAM2(x) ((x)->bx)
 #define GO_PARAM3(x) ((x)->cx)
 #define GOROUTINE(x) ((x)->r14)
-#elif defined(__TARGET_ARCH_arm64)
-#define GO_PARAM1(x) (((PT_REGS_ARM64 *)(x))->regs[0])
-#define GO_PARAM2(x) (((PT_REGS_ARM64 *)(x))->regs[1])
-#define GO_PARAM3(x) (((PT_REGS_ARM64 *)(x))->regs[2])
-#define GOROUTINE(x) (((PT_REGS_ARM64 *)(x))->regs[28])
+#elif defined(__TARGET_ARCH_arm64) 
+/* arm64 provides struct user_pt_regs instead of struct pt_regs to userspace */
+#define GO_PARAM1(x) (((struct user_pt_regs *)(x))->regs[0])
+#define GO_PARAM2(x) (((struct user_pt_regs *)(x))->regs[1])
+#define GO_PARAM3(x) (((struct user_pt_regs *)(x))->regs[2])
+#define GOROUTINE(x) (((struct user_pt_regs *)(x))->regs[28])
 #endif
 
 
@@ -852,6 +853,9 @@ int process_enter_of_go_conn_write(__u64 goid, __u32 pid, __u32 fd, char *buf_pt
 
     int zero = 0;
     struct l7_request *req = bpf_map_lookup_elem(&go_l7_request_heap, &zero);
+    if (!req) {
+        return 0;
+    }
     req->method = METHOD_UNKNOWN;
     req->protocol = PROTOCOL_UNKNOWN;
     req->payload_size = 0;
@@ -870,7 +874,7 @@ int process_enter_of_go_conn_write(__u64 goid, __u32 pid, __u32 fd, char *buf_pt
 
     // copy req payload
     bpf_probe_read(&req->payload, MAX_PAYLOAD_SIZE, buf_ptr);
-     if(count > MAX_PAYLOAD_SIZE){
+    if(count > MAX_PAYLOAD_SIZE){
         // will not be able to copy all of it
         req->payload_size = MAX_PAYLOAD_SIZE;
         req->payload_read_complete = 0;
@@ -902,11 +906,15 @@ int BPF_UPROBE(go_tls_conn_write_enter) {
     
     // X0(arm64) register contains the pointer to the first function argument, c *Conn
     if (bpf_probe_read_user(&conn, sizeof(conn), (void*)GO_PARAM1(ctx))) {
-        return 1;
+        return 0;
     };
     void* fd_ptr;
     if (bpf_probe_read_user(&fd_ptr, sizeof(fd_ptr), conn.ptr)) {
-        return 1;
+        return 0;
+    }
+    
+    if(!fd_ptr) {
+        return 0;
     }
     if (bpf_probe_read_user(&fd, sizeof(fd), fd_ptr + 0x10)) {
         return 1;
@@ -975,6 +983,10 @@ SEC("uprobe/go_tls_conn_read_exit")
 int BPF_UPROBE(go_tls_conn_read_exit) {
     // can't access to register we've access on read_enter here,
     // registers are changed.
+
+    char msg[] = "go_tls_conn_read_exit go_uretprobe";
+    bpf_trace_printk(msg, sizeof(msg));
+
     long int ret = GO_PARAM1(ctx);
 
     struct go_read_key k = {};
@@ -984,6 +996,8 @@ int BPF_UPROBE(go_tls_conn_read_exit) {
     struct go_read_args *read_args = bpf_map_lookup_elem(&go_active_reads, &k);
     if (!read_args) {
         // TODO: cleanup go write ?
+        char msg[] = "go_tls_conn_read_exit read_args is null";
+        bpf_trace_printk(msg, sizeof(msg));
         return 0;
     }
 
@@ -995,11 +1009,17 @@ int BPF_UPROBE(go_tls_conn_read_exit) {
     struct l7_request *req = bpf_map_lookup_elem(&go_active_l7_requests, &req_k);
     if (!req) {
         bpf_map_delete_elem(&go_active_reads, &k);
+        char msg[] = "go_tls_conn_read_exit req is null";
+        bpf_trace_printk(msg, sizeof(msg));
         return 0;
     }
 
     int zero = 0;
     struct l7_event *e = bpf_map_lookup_elem(&l7_event_heap, &zero);
+    if (!e) {
+        bpf_map_delete_elem(&go_active_reads, &k);
+        return 0;
+    }
 
     e->duration = bpf_ktime_get_ns() - req->write_time_ns;
     e->write_time_ns = req->write_time_ns;
@@ -1012,7 +1032,6 @@ int BPF_UPROBE(go_tls_conn_read_exit) {
     e->is_tls = 1;
     e->method = req->method;
     e->protocol = req->protocol;
-    e->duration = bpf_ktime_get_ns() - req->write_time_ns;
     e->write_time_ns = req->write_time_ns;
     
     // request payload
@@ -1032,7 +1051,7 @@ int BPF_UPROBE(go_tls_conn_read_exit) {
             long r = bpf_probe_read(&buf_prefix, sizeof(buf_prefix), (void *)(read_args->buf)) ;
             
             if (r < 0) {
-                char msg[] = "could not read into buf_prefix - %ld";
+                char msg[] = "go_tls_conn_read_exit could not read into buf_prefix - %ld";
                 bpf_trace_printk(msg, sizeof(msg), r);
                 bpf_map_delete_elem(&go_active_reads, &k);
                 // bpf_map_delete_elem(&go_active_l7_requests, &req_k); // TODO: check ?
