@@ -495,6 +495,18 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
             int status = parse_http_status(buf_prefix);
             if (status != -1){
                 e->status = status;
+            }else{
+                // status code will be send as 0 if not returned
+                // In case of write happens but read_exit probe doesn't get called for a request (sigkill of process?)
+                // a read from the same socket (same pid-fd pair) after some time, can match with the previous write
+                // if the latter is http1.1, requests can mismatch (if expression above will satisfy)
+                // or(not http1.1) the status code will be 0 if continued processing.
+                // So we'll clean up the request here if it's not a protocol we support before hand.
+                // mismatches can still occur, but it's better than nothing.
+                // TODO: find a solution for the mismatch problem
+
+                bpf_map_delete_elem(&active_reads, &id);
+                return 0;
             }
         }else if (e->protocol == PROTOCOL_POSTGRES){
             e->status = parse_postgres_server_resp(read_info->buf, ret);
@@ -804,31 +816,6 @@ struct go_interface {
 };
 
 
-
-// SEC("uprobe/go_tls_conn_write_enter")
-// int go_tls_conn_write_enter(struct pt_regs *ctx) {
-//     __u32 fd;
-//     struct go_interface conn;
-
-//     if (bpf_probe_read_user(&conn, sizeof(conn), (void*)GO_PARAM1(ctx))) {
-//         return 1;
-//     };
-//     void* fd_ptr;
-//     if (bpf_probe_read_user(&fd_ptr, sizeof(fd_ptr), conn.ptr)) {
-//         return 1;
-//     }
-//     if (bpf_probe_read_user(fd, sizeof(*fd), fd_ptr + 0x10)) {
-//         return 1;
-//     }
-
-//     char *buf_ptr = (char*)GO_PARAM2(ctx);
-//     __u64 buf_size = GO_PARAM3(ctx);
-//     return trace_enter_write(ctx, fd, 1, buf_ptr, buf_size, 0);
-// }
-
-
-// func (c *Conn) Write(b []byte) (int, error)
-
 #if defined(__TARGET_ARCH_x86)
 #define GO_PARAM1(x) ((x)->ax)
 #define GO_PARAM2(x) ((x)->bx)
@@ -865,11 +852,15 @@ int process_enter_of_go_conn_write(__u64 goid, __u32 pid, __u32 fd, char *buf_pt
     req->request_type = 0;
 
     if(buf_ptr){
-        // try to parse only http1.1 for now.
+        // try to parse only http1.1 for gotls reqs for now.
         int method = parse_http_method(buf_ptr);
         if (method != -1){
             req->protocol = PROTOCOL_HTTP;
             req-> method = method;
+        }else{
+            req->protocol = PROTOCOL_UNKNOWN;
+            req->method = METHOD_UNKNOWN;
+            return 0; 
         }
     }
 
@@ -999,9 +990,10 @@ int BPF_UPROBE(go_tls_conn_read_exit) {
 
     struct go_read_args *read_args = bpf_map_lookup_elem(&go_active_reads, &k);
     if (!read_args) {
-        // TODO: cleanup go write ?
-        char msg[] = "go_tls_conn_read_exit read_args is null";
-        bpf_trace_printk(msg, sizeof(msg));
+        return 0;
+    }
+    if(ret < 0){
+        bpf_map_delete_elem(&go_active_reads, &k);
         return 0;
     }
 
@@ -1018,10 +1010,6 @@ int BPF_UPROBE(go_tls_conn_read_exit) {
 
     struct l7_request *req = bpf_map_lookup_elem(&go_active_l7_requests, &req_k);
     if (!req) {
-        // bpf_map_delete_elem(&go_active_reads, &k); 
-        char msg[] = "go_tls_conn_read_exit req is null";
-        // TODO: retry somehow ?
-        bpf_trace_printk(msg, sizeof(msg));
         return 0;
     }
 
@@ -1072,11 +1060,28 @@ int BPF_UPROBE(go_tls_conn_read_exit) {
             int status = parse_http_status(buf_prefix);
             if (status != -1){
                 e->status = status;
+            }else{
+                // In case of write happens but read_exit probe doesn't get called for a request (sigkill of process?)
+                // a read from the same socket (same pid-fd pair) after some time, can match with the previous write
+                // if the latter is http1.1, requests can mismatch (if expression above will satisfy)
+                // or(not http1.1) the status code will be 0 if continued processing.
+                // So we'll clean up the request here if it's not a protocol we support before hand.
+                // mismatches can still occur, but it's better than nothing.
+                // TODO: find a solution for the mismatch problem
+
+                bpf_map_delete_elem(&go_active_reads, &k);
+                bpf_map_delete_elem(&go_active_l7_requests, &req_k);
+                return 0;
             }
         }else{
-            char msg[] = "go_tls_conn_read_exit - protocol is not http1.1";
-            bpf_trace_printk(msg, sizeof(msg));
+            bpf_map_delete_elem(&go_active_reads, &k);
+            return 0;
         }
+    }else{
+        char msgCtx[] = "go_tls_conn_read_exit read buffer is null or too small";
+        bpf_trace_printk(msgCtx, sizeof(msgCtx));
+        bpf_map_delete_elem(&go_active_reads, &k);
+        return 0;
     }
 
     bpf_map_delete_elem(&go_active_reads, &k);

@@ -180,12 +180,11 @@ func (e *EbpfCollector) close() {
 }
 
 func (e *EbpfCollector) ListenForEncryptedReqs(pid uint32) {
+	e.pidLocks.Lock(pid)
 	if _, ok := e.tlsPidMap[pid]; ok {
 		log.Logger.Debug().Msgf("pid: %d already attached for tls", pid)
 		return
 	}
-
-	e.pidLocks.Lock(pid)
 	defer e.pidLocks.Release(pid)
 
 	// attach to libssl uprobes if process is using libssl
@@ -197,6 +196,7 @@ func (e *EbpfCollector) ListenForEncryptedReqs(pid uint32) {
 		}
 	}
 
+	// TODO: check if process is go, and error checking, logging
 	// if process is go, attach to go tls
 	go_errs := e.AttachGoTlsUprobesOnProcess("/proc", pid)
 	if go_errs != nil && len(go_errs) > 0 {
