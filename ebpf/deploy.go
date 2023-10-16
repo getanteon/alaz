@@ -20,6 +20,33 @@ import (
 	"golang.org/x/mod/semver"
 )
 
+type PidLocks struct {
+	locks map[uint32]*sync.Mutex
+}
+
+func NewPidLocks() *PidLocks {
+	return &PidLocks{
+		locks: make(map[uint32]*sync.Mutex),
+	}
+}
+
+func (p *PidLocks) Lock(pid uint32) {
+	lock, ok := p.locks[pid]
+	if !ok {
+		lock = &sync.Mutex{}
+		p.locks[pid] = lock
+	}
+	lock.Lock()
+}
+
+func (p *PidLocks) Release(pid uint32) {
+	lock, ok := p.locks[pid]
+	if !ok {
+		return
+	}
+	lock.Unlock()
+}
+
 const (
 	goTlsWriteSymbol = "crypto/tls.(*Conn).Write"
 	goTlsReadSymbol  = "crypto/tls.(*Conn).Read"
@@ -46,6 +73,7 @@ type EbpfCollector struct {
 	goTlsReadUretprobes map[uint32][]link.Link // uprobes for ret instructions
 
 	tlsPidMap map[uint32]struct{}
+	pidLocks  *PidLocks
 }
 
 func NewEbpfCollector(parentCtx context.Context) *EbpfCollector {
@@ -62,6 +90,7 @@ func NewEbpfCollector(parentCtx context.Context) *EbpfCollector {
 		goTlsWriteUprobes:   make(map[uint32]link.Link),
 		goTlsReadUprobes:    make(map[uint32]link.Link),
 		goTlsReadUretprobes: make(map[uint32][]link.Link),
+		pidLocks:            NewPidLocks(),
 	}
 }
 
@@ -156,8 +185,8 @@ func (e *EbpfCollector) ListenForEncryptedReqs(pid uint32) {
 		return
 	}
 
-	// TODO: lock for pid
-	// two goroutines representing same pid can race to attach uprobes
+	e.pidLocks.Lock(pid)
+	defer e.pidLocks.Release(pid)
 
 	// attach to libssl uprobes if process is using libssl
 	errors := e.AttachSslUprobesOnProcess("/proc", pid)
