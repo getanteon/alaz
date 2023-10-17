@@ -2,11 +2,11 @@ package ebpf
 
 import (
 	"context"
+	"debug/elf"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"strconv"
 	"sync"
 	"time"
 
@@ -15,7 +15,41 @@ import (
 	"github.com/ddosify/alaz/ebpf/tcp_state"
 	"github.com/ddosify/alaz/log"
 
+	"golang.org/x/arch/arm64/arm64asm"
+	"golang.org/x/arch/x86/x86asm"
 	"golang.org/x/mod/semver"
+)
+
+type PidLocks struct {
+	locks map[uint32]*sync.Mutex
+}
+
+func NewPidLocks() *PidLocks {
+	return &PidLocks{
+		locks: make(map[uint32]*sync.Mutex),
+	}
+}
+
+func (p *PidLocks) Lock(pid uint32) {
+	lock, ok := p.locks[pid]
+	if !ok {
+		lock = &sync.Mutex{}
+		p.locks[pid] = lock
+	}
+	lock.Lock()
+}
+
+func (p *PidLocks) Release(pid uint32) {
+	lock, ok := p.locks[pid]
+	if !ok {
+		return
+	}
+	lock.Unlock()
+}
+
+const (
+	goTlsWriteSymbol = "crypto/tls.(*Conn).Write"
+	goTlsReadSymbol  = "crypto/tls.(*Conn).Read"
 )
 
 type BpfEvent interface {
@@ -33,7 +67,13 @@ type EbpfCollector struct {
 	sslReadEnterUprobes map[uint32]link.Link
 	sslReadURetprobes   map[uint32]link.Link
 
+	goTlsWriteUprobes map[uint32]link.Link
+	goTlsReadUprobes  map[uint32]link.Link
+
+	goTlsReadUretprobes map[uint32][]link.Link // uprobes for ret instructions
+
 	tlsPidMap map[uint32]struct{}
+	pidLocks  *PidLocks
 }
 
 func NewEbpfCollector(parentCtx context.Context) *EbpfCollector {
@@ -47,6 +87,10 @@ func NewEbpfCollector(parentCtx context.Context) *EbpfCollector {
 		sslWriteUprobes:     make(map[uint32]link.Link),
 		sslReadEnterUprobes: make(map[uint32]link.Link),
 		sslReadURetprobes:   make(map[uint32]link.Link),
+		goTlsWriteUprobes:   make(map[uint32]link.Link),
+		goTlsReadUprobes:    make(map[uint32]link.Link),
+		goTlsReadUretprobes: make(map[uint32][]link.Link),
+		pidLocks:            NewPidLocks(),
 	}
 }
 
@@ -66,22 +110,22 @@ func (e *EbpfCollector) Deploy() {
 				http.Error(w, "Missing query parameter 'number'", http.StatusBadRequest)
 				return
 			}
-			number, err := strconv.ParseUint(queryParam, 10, 32)
-			if err != nil {
-				http.Error(w, "Invalid query parameter 'number'", http.StatusBadRequest)
-				return
-			}
-			pid := uint32(number)
+			// number, err := strconv.ParseUint(queryParam, 10, 32)
+			// if err != nil {
+			// 	http.Error(w, "Invalid query parameter 'number'", http.StatusBadRequest)
+			// 	return
+			// }
+			// pid := uint32(number)
 
-			errors := e.AddSSLLibPid("/proc", pid)
-			if errors != nil {
-				for _, err := range errors {
-					log.Logger.Error().Err(err).Uint32("pid", pid).
-						Msgf("error attaching ssl lib for pid: %d", pid)
-				}
-				http.Error(w, errors[0].Error(), http.StatusInternalServerError)
-				return
-			}
+			// errors := e.AddSSLLibPid("/proc", pid)
+			// if errors != nil {
+			// 	for _, err := range errors {
+			// 		log.Logger.Error().Err(err).Uint32("pid", pid).
+			// 			Msgf("error attaching ssl lib for pid: %d", pid)
+			// 	}
+			// 	http.Error(w, errors[0].Error(), http.StatusInternalServerError)
+			// 	return
+			// }
 		},
 	)
 
@@ -122,24 +166,186 @@ func (e *EbpfCollector) close() {
 	for pid := range e.sslReadURetprobes {
 		e.sslReadURetprobes[pid].Close()
 	}
+	for pid := range e.goTlsWriteUprobes {
+		e.goTlsWriteUprobes[pid].Close()
+	}
+	for pid := range e.goTlsReadUprobes {
+		e.goTlsReadUprobes[pid].Close()
+	}
+	for pid := range e.goTlsReadUretprobes {
+		for _, l := range e.goTlsReadUretprobes[pid] {
+			l.Close()
+		}
+	}
 }
 
-func (e *EbpfCollector) ListenForTlsReqs(pid uint32) {
+func (e *EbpfCollector) ListenForEncryptedReqs(pid uint32) {
+	e.pidLocks.Lock(pid)
 	if _, ok := e.tlsPidMap[pid]; ok {
 		log.Logger.Debug().Msgf("pid: %d already attached for tls", pid)
 		return
 	}
-	errors := e.AddSSLLibPid("/proc", pid)
+	defer e.pidLocks.Release(pid)
+
+	// attach to libssl uprobes if process is using libssl
+	errors := e.AttachSslUprobesOnProcess("/proc", pid)
 	if errors != nil && len(errors) > 0 {
 		for _, err := range errors {
 			log.Logger.Error().Err(err).Uint32("pid", pid).
 				Msgf("error attaching ssl lib for pid: %d", pid)
 		}
 	}
+
+	// TODO: check if process is go
+	// if process is go, attach to go tls
+	go_errs := e.AttachGoTlsUprobesOnProcess("/proc", pid)
+	if go_errs != nil && len(go_errs) > 0 {
+		for _, err := range go_errs {
+			log.Logger.Error().Err(err).Uint32("pid", pid).
+				Msgf("error attaching go tls for pid: %d", pid)
+		}
+	}
+
 	e.tlsPidMap[pid] = struct{}{}
 }
 
-func (t *EbpfCollector) AddSSLLibPid(procfs string, pid uint32) []error {
+func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) []error {
+	path := fmt.Sprintf("%s/%d/exe", procfs, pid)
+	errors := make([]error, 0)
+
+	defer func() {
+		if len(errors) > 0 {
+			// close any uprobes that were attached
+			wr := e.goTlsWriteUprobes[pid]
+			if wr != nil {
+				wr.Close()
+			}
+			rd := e.goTlsReadUprobes[pid]
+			if rd != nil {
+				rd.Close()
+			}
+
+			// close any uretprobes that were attached
+			for _, l := range e.goTlsReadUretprobes[pid] {
+				l.Close()
+			}
+		}
+	}()
+
+	// open in elf format in order to get the symbols
+	ef, err := elf.Open(path)
+	if err != nil {
+		log.Logger.Debug().Err(err).Uint32("pid", pid).Msg("error opening executable")
+		errors = append(errors, err)
+		return errors
+	}
+
+	// nm command can be used to get the symbols as well
+	symbols, err := ef.Symbols()
+	if err != nil {
+		log.Logger.Debug().Err(err).Uint32("pid", pid).Msg("error reading symbols")
+		errors = append(errors, err)
+		return errors
+	}
+
+	// .text section contains the instructions
+	// in order to read the .text section of the executable
+	// readelf or objdump can be used
+	textSection := ef.Section(".text")
+	if textSection == nil {
+		log.Logger.Debug().Uint32("pid", pid).Msg("no .text section found")
+		errors = append(errors, fmt.Errorf("no .text section found"))
+		return errors
+	}
+
+	textSectionData, err := textSection.Data()
+	if err != nil {
+		log.Logger.Debug().Err(err).Uint32("pid", pid).Msg("error reading .text section")
+		errors = append(errors, err)
+		return errors
+	}
+
+	ex, err := link.OpenExecutable(path)
+	if err != nil {
+		log.Logger.Debug().Err(err).Str("reason", "gotls").Uint32("pid", pid).Msg("error opening executable")
+		errors = append(errors, err)
+		return errors
+	}
+
+	for _, s := range symbols {
+		if s.Name != goTlsWriteSymbol && s.Name != goTlsReadSymbol {
+			continue
+		}
+
+		switch s.Name {
+		case goTlsWriteSymbol:
+			l, err := ex.Uprobe(s.Name, l7_req.L7BpfProgsAndMaps.GoTlsConnWriteEnter, nil)
+			if err != nil {
+				log.Logger.Debug().Err(err).Str("reason", "gotls").Uint32("pid", pid).Msg("error attaching uprobe")
+				errors = append(errors, err)
+				return errors
+			}
+			e.goTlsWriteUprobes[pid] = l
+		case goTlsReadSymbol:
+			l, err := ex.Uprobe(s.Name, l7_req.L7BpfProgsAndMaps.GoTlsConnReadEnter, nil)
+			if err != nil {
+				log.Logger.Debug().Err(err).Str("reason", "gotls").Uint32("pid", pid).Msg("error attaching uprobe")
+				errors = append(errors, err)
+				return errors
+			}
+			e.goTlsReadUprobes[pid] = l
+
+			// when uretprobe is attached to a function, kernel overrides the return address on stack
+			// with the address of the uretprobe
+			// this messes up with go runtime and causes a crash
+			// so we attach all ret instructions in the function as uprobes
+
+			// find read functions address with cilium lib
+
+			address := s.Value
+			// find the address that will be used to attach uprobes
+			for _, prog := range ef.Progs {
+				// Skip uninteresting segments.
+				if prog.Type != elf.PT_LOAD || (prog.Flags&elf.PF_X) == 0 {
+					continue
+				}
+
+				if prog.Vaddr <= s.Value && s.Value < (prog.Vaddr+prog.Memsz) {
+					// If the symbol value is contained in the segment, calculate
+					// the symbol offset.
+					//
+					// fn symbol offset = fn symbol VA - .text VA + .text offset
+					//
+					// stackoverflow.com/a/40249502
+
+					address = s.Value - prog.Vaddr + prog.Off
+					break
+				}
+			}
+
+			sStart := s.Value - textSection.Addr
+			sEnd := sStart + s.Size
+
+			sBytes := textSectionData[sStart:sEnd]
+			returnOffsets := getReturnOffsets(ef.Machine, sBytes) // find all ret instructions in the function according to the architecture
+			e.goTlsReadUretprobes[pid] = make([]link.Link, 0)
+			for _, offset := range returnOffsets {
+				l, err := ex.Uprobe(s.Name, l7_req.L7BpfProgsAndMaps.GoTlsConnReadExit, &link.UprobeOptions{Address: address, Offset: uint64(offset)})
+				if err != nil {
+					log.Logger.Debug().Err(err).Str("reason", "gotls").Uint32("pid", pid).Msg("error attaching uretprobe")
+					errors = append(errors, err)
+					return errors
+				}
+				e.goTlsReadUretprobes[pid] = append(e.goTlsReadUretprobes[pid], l)
+				log.Logger.Debug().Str("reason", "gotls").Uint32("pid", pid).Msgf("attached uretprobe to %s at offset %d", s.Name, offset)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (t *EbpfCollector) AttachSslUprobesOnProcess(procfs string, pid uint32) []error {
 	errors := make([]error, 0)
 	sslLibs, err := findSSLExecutablesByPid(procfs, pid)
 
@@ -298,4 +504,27 @@ func listenDebugMsgs() {
 		}
 		log.Logger.Info().Msgf("%s\n", buf[:n])
 	}
+}
+
+func getReturnOffsets(machine elf.Machine, instructions []byte) []int {
+	var res []int
+	switch machine {
+	case elf.EM_X86_64:
+		for i := 0; i < len(instructions); {
+			ins, err := x86asm.Decode(instructions[i:], 64)
+			if err == nil && ins.Op == x86asm.RET {
+				res = append(res, i)
+			}
+			i += ins.Len
+		}
+	case elf.EM_AARCH64:
+		for i := 0; i < len(instructions); {
+			ins, err := arm64asm.Decode(instructions[i:])
+			if err == nil && ins.Op == arm64asm.RET {
+				res = append(res, i)
+			}
+			i += 4
+		}
+	}
+	return res
 }
