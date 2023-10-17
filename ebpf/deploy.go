@@ -196,7 +196,7 @@ func (e *EbpfCollector) ListenForEncryptedReqs(pid uint32) {
 		}
 	}
 
-	// TODO: check if process is go, and error checking, logging
+	// TODO: check if process is go
 	// if process is go, attach to go tls
 	go_errs := e.AttachGoTlsUprobesOnProcess("/proc", pid)
 	if go_errs != nil && len(go_errs) > 0 {
@@ -211,19 +211,41 @@ func (e *EbpfCollector) ListenForEncryptedReqs(pid uint32) {
 
 func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) []error {
 	path := fmt.Sprintf("%s/%d/exe", procfs, pid)
+	errors := make([]error, 0)
+
+	defer func() {
+		if len(errors) > 0 {
+			// close any uprobes that were attached
+			wr := e.goTlsWriteUprobes[pid]
+			if wr != nil {
+				wr.Close()
+			}
+			rd := e.goTlsReadUprobes[pid]
+			if rd != nil {
+				rd.Close()
+			}
+
+			// close any uretprobes that were attached
+			for _, l := range e.goTlsReadUretprobes[pid] {
+				l.Close()
+			}
+		}
+	}()
 
 	// open in elf format in order to get the symbols
 	ef, err := elf.Open(path)
 	if err != nil {
 		log.Logger.Debug().Err(err).Uint32("pid", pid).Msg("error opening executable")
-		return []error{err}
+		errors = append(errors, err)
+		return errors
 	}
 
 	// nm command can be used to get the symbols as well
 	symbols, err := ef.Symbols()
 	if err != nil {
 		log.Logger.Debug().Err(err).Uint32("pid", pid).Msg("error reading symbols")
-		return []error{err}
+		errors = append(errors, err)
+		return errors
 	}
 
 	// .text section contains the instructions
@@ -232,19 +254,22 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 	textSection := ef.Section(".text")
 	if textSection == nil {
 		log.Logger.Debug().Uint32("pid", pid).Msg("no .text section found")
-		return nil
+		errors = append(errors, fmt.Errorf("no .text section found"))
+		return errors
 	}
+
 	textSectionData, err := textSection.Data()
 	if err != nil {
 		log.Logger.Debug().Err(err).Uint32("pid", pid).Msg("error reading .text section")
-		return nil
+		errors = append(errors, err)
+		return errors
 	}
-	// textSectionLen := uint64(len(textSectionData) - 1)
 
 	ex, err := link.OpenExecutable(path)
 	if err != nil {
 		log.Logger.Debug().Err(err).Str("reason", "gotls").Uint32("pid", pid).Msg("error opening executable")
-		return []error{err}
+		errors = append(errors, err)
+		return errors
 	}
 
 	for _, s := range symbols {
@@ -254,18 +279,19 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 
 		switch s.Name {
 		case goTlsWriteSymbol:
-			// &link.UprobeOptions{Address: address}
 			l, err := ex.Uprobe(s.Name, l7_req.L7BpfProgsAndMaps.GoTlsConnWriteEnter, nil)
 			if err != nil {
 				log.Logger.Debug().Err(err).Str("reason", "gotls").Uint32("pid", pid).Msg("error attaching uprobe")
-				return nil
+				errors = append(errors, err)
+				return errors
 			}
 			e.goTlsWriteUprobes[pid] = l
 		case goTlsReadSymbol:
 			l, err := ex.Uprobe(s.Name, l7_req.L7BpfProgsAndMaps.GoTlsConnReadEnter, nil)
 			if err != nil {
 				log.Logger.Debug().Err(err).Str("reason", "gotls").Uint32("pid", pid).Msg("error attaching uprobe")
-				return nil
+				errors = append(errors, err)
+				return errors
 			}
 			e.goTlsReadUprobes[pid] = l
 
@@ -292,8 +318,6 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 					//
 					// stackoverflow.com/a/40249502
 
-					// fmt.Printf("gotlsx got from symbol %s s.Value %d prog.Vaddr: %d prog.Off %d\n", s.Name, s.Value, prog.Vaddr, prog.Off)
-
 					address = s.Value - prog.Vaddr + prog.Off
 					break
 				}
@@ -303,13 +327,14 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 			sEnd := sStart + s.Size
 
 			sBytes := textSectionData[sStart:sEnd]
-			// TODO: check if empty
 			returnOffsets := getReturnOffsets(ef.Machine, sBytes) // find all ret instructions in the function according to the architecture
 			e.goTlsReadUretprobes[pid] = make([]link.Link, 0)
 			for _, offset := range returnOffsets {
 				l, err := ex.Uprobe(s.Name, l7_req.L7BpfProgsAndMaps.GoTlsConnReadExit, &link.UprobeOptions{Address: address, Offset: uint64(offset)})
 				if err != nil {
-					return nil // TODO: return error
+					log.Logger.Debug().Err(err).Str("reason", "gotls").Uint32("pid", pid).Msg("error attaching uretprobe")
+					errors = append(errors, err)
+					return errors
 				}
 				e.goTlsReadUretprobes[pid] = append(e.goTlsReadUretprobes[pid], l)
 				log.Logger.Debug().Str("reason", "gotls").Uint32("pid", pid).Msgf("attached uretprobe to %s at offset %d", s.Name, offset)
