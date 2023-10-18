@@ -415,7 +415,7 @@ func (e *EbpfCollector) AttachSSlUprobes(pid uint32, executablePath string, vers
 	var sslWriteUprobe, sslReadEnterUprobe, sslReadURetprobe link.Link
 
 	if semver.Compare(version, "v3.0.0") >= 0 {
-		log.Logger.Info().Str("path", executablePath).Uint32("pid", pid).Str("version", version).Msgf("attaching ssl uprobes v3")
+		log.Logger.Debug().Str("path", executablePath).Uint32("pid", pid).Str("version", version).Msgf("attaching ssl uprobes v3")
 
 		sslWriteUprobe, err = ex.Uprobe("SSL_write", l7_req.L7BpfProgsAndMaps.SslWriteV3, nil)
 		if err != nil {
@@ -435,7 +435,7 @@ func (e *EbpfCollector) AttachSSlUprobes(pid uint32, executablePath string, vers
 			return err
 		}
 	} else if semver.Compare(version, "v1.1.0") >= 0 { // accept 1.1 as >= 1.1.1 for now, linking to 1.1.1 compatible uprobes
-		log.Logger.Info().Str("path", executablePath).Uint32("pid", pid).Str("version", version).Msgf("attaching ssl uprobes v1.1")
+		log.Logger.Debug().Str("path", executablePath).Uint32("pid", pid).Str("version", version).Msgf("attaching ssl uprobes v1.1")
 
 		sslWriteUprobe, err = ex.Uprobe("SSL_write", l7_req.L7BpfProgsAndMaps.SslWriteV111, nil)
 		if err != nil {
@@ -455,6 +455,7 @@ func (e *EbpfCollector) AttachSSlUprobes(pid uint32, executablePath string, vers
 			return err
 		}
 	} else if semver.Compare(version, "v1.0.2") >= 0 {
+		log.Logger.Debug().Str("path", executablePath).Uint32("pid", pid).Str("version", version).Msgf("attaching ssl uprobes v1.0.2")
 		sslWriteUprobe, err = ex.Uprobe("SSL_write", l7_req.L7BpfProgsAndMaps.SslWriteV102, nil)
 		if err != nil {
 			log.Logger.Error().Err(err).Msgf("error attaching %s uprobe", "SSL_write")
@@ -480,7 +481,7 @@ func (e *EbpfCollector) AttachSSlUprobes(pid uint32, executablePath string, vers
 	e.sslReadEnterUprobes[pid] = sslReadEnterUprobe
 	e.sslReadURetprobes[pid] = sslReadURetprobe
 
-	log.Logger.Info().Str("path", executablePath).Uint32("pid", pid).Msgf("successfully attached ssl uprobes")
+	log.Logger.Debug().Str("path", executablePath).Uint32("pid", pid).Msgf("successfully attached ssl uprobes")
 	return nil
 }
 

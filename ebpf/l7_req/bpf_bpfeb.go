@@ -19,10 +19,9 @@ type bpfGoReadKey struct {
 }
 
 type bpfGoReqKey struct {
-	Pid  uint32
-	_    [4]byte
-	Goid uint64
-	Fd   uint64
+	Pid uint32
+	_   [4]byte
+	Fd  uint64
 }
 
 type bpfL7Event struct {
@@ -52,6 +51,16 @@ type bpfL7Request struct {
 	PayloadReadComplete uint8
 	RequestType         uint8
 	_                   [6]byte
+}
+
+type bpfLogMessage struct {
+	Level    uint32
+	LogMsg   [100]uint8
+	FuncName [100]uint8
+	Pid      uint32
+	Arg1     uint64
+	Arg2     uint64
+	Arg3     uint64
 }
 
 type bpfSocketKey struct {
@@ -135,6 +144,8 @@ type bpfMapSpecs struct {
 	L7EventHeap        *ebpf.MapSpec `ebpf:"l7_event_heap"`
 	L7Events           *ebpf.MapSpec `ebpf:"l7_events"`
 	L7RequestHeap      *ebpf.MapSpec `ebpf:"l7_request_heap"`
+	LogHeap            *ebpf.MapSpec `ebpf:"log_heap"`
+	LogMap             *ebpf.MapSpec `ebpf:"log_map"`
 }
 
 // bpfObjects contains all objects after they have been loaded into the kernel.
@@ -165,6 +176,8 @@ type bpfMaps struct {
 	L7EventHeap        *ebpf.Map `ebpf:"l7_event_heap"`
 	L7Events           *ebpf.Map `ebpf:"l7_events"`
 	L7RequestHeap      *ebpf.Map `ebpf:"l7_request_heap"`
+	LogHeap            *ebpf.Map `ebpf:"log_heap"`
+	LogMap             *ebpf.Map `ebpf:"log_map"`
 }
 
 func (m *bpfMaps) Close() error {
@@ -178,6 +191,8 @@ func (m *bpfMaps) Close() error {
 		m.L7EventHeap,
 		m.L7Events,
 		m.L7RequestHeap,
+		m.LogHeap,
+		m.LogMap,
 	)
 }
 

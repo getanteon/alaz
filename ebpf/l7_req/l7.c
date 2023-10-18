@@ -10,10 +10,12 @@
 #include <stddef.h>
 #include "../headers/pt_regs.h"
 
+#include "log.h"
 #include "http.c"
 #include "amqp.c"
 #include "postgres.c"
 #include "openssl.c"
+
 
 #define PROTOCOL_UNKNOWN    0
 #define PROTOCOL_HTTP	    1
@@ -26,7 +28,6 @@
 // for rabbitmq methods
 #define METHOD_PUBLISH           1
 #define METHOD_DELIVER           2
-
 
 #define TLS_MASK 0x8000000000000000
 
@@ -171,14 +172,15 @@ struct {
 // Processing enter of write and sendto syscalls
 static __always_inline
 int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, char* buf, __u64 count){
+    unsigned char func_name[] = "process_enter_of_syscalls_write_sendto";
     __u64 id = bpf_get_current_pid_tgid();
-
+    
     int zero = 0;
     struct l7_request *req = bpf_map_lookup_elem(&l7_request_heap, &zero);
 
     if (!req) {
-        char msg[] = "Err: Could not get request from l7_request_heap";
-        bpf_trace_printk(msg, sizeof(msg));
+        unsigned char log_msg[] = "failed to get from l7_request_heap -- ||";
+        log_to_userspace(ctx, DEBUG, func_name, log_msg, 0, 0, 0);
         return 0;
     }
 
@@ -194,7 +196,6 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
     k.fd = fd;
     k.is_tls = is_tls;
 
-    
 
     if(buf){
         // We are tracking tcp connections (sockets) on tcp_state bpf program, sending them to userspace
@@ -235,8 +236,8 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
             return 0; // do not continue processing for now (udp requests are flowing and overlaps with http requests)
         }
     }else{
-        char msgCtx[] = "write buffer is null or too small";
-        bpf_trace_printk(msgCtx, sizeof(msgCtx));
+        unsigned char log_msg[] = "write buf is null -- ||";
+        log_to_userspace(ctx, DEBUG, func_name, log_msg, 0, 0, 0);
         return 0;
     }
 
@@ -253,17 +254,17 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
     long res = bpf_map_update_elem(&active_l7_requests, &k, req, BPF_ANY);
     if(res < 0)
     {
-		char msg[] = "Error writing to active_l7_requests - %ld";
-		bpf_trace_printk(msg, sizeof(msg), res);
+        unsigned char log_msg[] = "write failed to active_l7_requests -- fd|is_tls|";
+        log_to_userspace(ctx, DEBUG, func_name, log_msg, k.fd, k.is_tls, 0);
     }
 
     return 0;
 }
 
-
 // Processing enter of read, recv, recvfrom syscalls
 static __always_inline
-int process_enter_of_syscalls_read_recvfrom(__u64 id, __u32 pid, __u64 fd, char* buf, __u64 size) {
+int process_enter_of_syscalls_read_recvfrom(void *ctx, __u64 id, __u64 fd, char* buf, __u64 size) {
+    unsigned char func_name[] = "process_enter_of_syscalls_read_recvfrom";
     // __u64 id = bpf_get_current_pid_tgid();
     
     // struct socket_key k = {};
@@ -289,8 +290,8 @@ int process_enter_of_syscalls_read_recvfrom(__u64 id, __u32 pid, __u64 fd, char*
     long res = bpf_map_update_elem(&active_reads, &id, &args, BPF_ANY);
     if(res < 0)
     {
-        char msg[] = "Error writing to active_reads - %ld";
-        bpf_trace_printk(msg, sizeof(msg), res);
+        unsigned char log_msg[] = "write to active_reads failed -- err||";
+        log_to_userspace(ctx, DEBUG, func_name, log_msg, res, 0, 0);        
     }
     return 0;
 }
@@ -298,6 +299,7 @@ int process_enter_of_syscalls_read_recvfrom(__u64 id, __u32 pid, __u64 fd, char*
 
 static __always_inline
 int process_exit_of_syscalls_write_sendto(void* ctx, __s64 ret){
+    // unsigned char func_name[] = "process_exit_of_syscalls_write_sendto";
     __u64 id = bpf_get_current_pid_tgid();
 
     // we only used this func for amqp, others will only be in active_l7_requests
@@ -365,6 +367,7 @@ int process_exit_of_syscalls_write_sendto(void* ctx, __s64 ret){
 
 static __always_inline
 int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64 ret, __u8 is_tls) {
+    unsigned char func_name[] = "process_exit_of_syscalls_read_recvfrom";
     if (ret < 0) { // read failed
         // -ERRNO
         // __u64 id = bpf_get_current_pid_tgid();
@@ -399,10 +402,6 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
     // __u64 id = bpf_get_current_pid_tgid();
     struct read_args *read_info = bpf_map_lookup_elem(&active_reads, &id);
     if (!read_info) {
-        if (is_tls){
-            char msg[] = "tls could not find read_info";
-            bpf_trace_printk(msg, sizeof(msg));
-        }
         return 0;
     }
     
@@ -447,10 +446,6 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
 
     struct l7_request *active_req = bpf_map_lookup_elem(&active_l7_requests, &k);
     if (!active_req) {
-        if (is_tls){
-            char msg[] = "tls could not find active_l7_req fd: %ld, pid: %ld";
-            bpf_trace_printk(msg, sizeof(msg), k.fd, k.pid);
-        }
         bpf_map_delete_elem(&active_reads, &id);
         return 0;
     }
@@ -482,8 +477,6 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
             long r = bpf_probe_read(&buf_prefix, sizeof(buf_prefix), (void *)(read_info->buf)) ;
             
             if (r < 0) {
-                char msg[] = "could not read into buf_prefix - %ld";
-                bpf_trace_printk(msg, sizeof(msg), r);
                 bpf_map_delete_elem(&active_reads, &id);
                 return 0;
             }
@@ -511,8 +504,9 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
             }
         }
     }else{
-        char msgCtx[] = "read buffer is null or too small";
-        bpf_trace_printk(msgCtx, sizeof(msgCtx));
+        unsigned char log_msg[] = "read buffer is null or too small -- ||";
+        log_to_userspace(ctx, DEBUG, func_name, log_msg, 0, 0, 0);
+
         bpf_map_delete_elem(&active_reads, &id);
         return 0;
     }
@@ -522,8 +516,8 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
 
     long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
     if (r < 0) {
-        char msg[] = "could not write to l7_events - %ld";
-        bpf_trace_printk(msg, sizeof(msg), r);
+        unsigned char log_msg[] = "failed write to l7_events -- res|fd|psize";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, e->fd, e->payload_size);        
     }
 
     return 0;
@@ -556,19 +550,23 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
 
 static __always_inline 
 void ssl_uprobe_write_v_1_0_2(struct pt_regs *ctx, void* ssl, void* buffer, int num, size_t *count_ptr) {
+    unsigned char func_name[] = "ssl_uprobe_write_v_1_0_2";
     struct ssl_st_v1_0_2 ssl_st;
-    bpf_probe_read_user(&ssl_st, sizeof(ssl_st), ssl);
-    
-    struct bio_st_v1_0_2 bio;                                                   
-    if (bpf_probe_read(&bio, sizeof(bio), (void*)ssl_st.wbio)) {         
-        char msg3[] = "could not read bio";
-        bpf_trace_printk(msg3, sizeof(msg3));
+    long r = bpf_probe_read_user(&ssl_st, sizeof(ssl_st), ssl);
+    if(r < 0) {         
+        unsigned char log_msg[] = "could not read ssl_st -- res||";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, 0, 0);
+        return;                                                       
+    };
+
+    struct bio_st_v1_0_2 bio;                     
+    r = bpf_probe_read(&bio, sizeof(bio), (void*)ssl_st.wbio);                              
+    if(r < 0) {         
+        unsigned char log_msg[] = "could not bio -- res||";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, 0, 0);
         return;                                                       
     };                                                              
     __u32 fd = bio.num;
-
-    char msg[] = "ssl_uprobe_write_v_1_0_2 tls bio->fd %ld";
-    bpf_trace_printk(msg, sizeof(msg),fd);
     
     char* buf_ptr = (char*) buffer;               
     __u64 buf_size = num;
@@ -578,44 +576,49 @@ void ssl_uprobe_write_v_1_0_2(struct pt_regs *ctx, void* ssl, void* buffer, int 
 
 static __always_inline 
 void ssl_uprobe_read_enter_v1_0_2(struct pt_regs *ctx, __u64 id,  __u32 pid, void* ssl, void* buffer, int num, size_t *count_ptr) {
+    unsigned char func_name[] = "ssl_uprobe_read_enter_v1_0_2";
     struct ssl_st_v1_0_2 ssl_st;
-    bpf_probe_read_user(&ssl_st, sizeof(ssl_st), ssl);
+    long r = bpf_probe_read_user(&ssl_st, sizeof(ssl_st), ssl);
+    if(r < 0) {         
+        unsigned char log_msg[] = "could not read ssl_st -- res||";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, 0, 0);
+        return;                                                       
+    };
     
     struct bio_st_v1_0_2 bio;                                                   
-    if (bpf_probe_read(&bio, sizeof(bio), (void*)ssl_st.rbio)) {         
-        char msg[] = "could not read rbio";
-        bpf_trace_printk(msg, sizeof(msg));
+    r = bpf_probe_read(&bio, sizeof(bio), (void*)ssl_st.rbio);
+    if (r < 0) {         
+        unsigned char log_msg[] = "could not rbio -- res||";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, 0, 0);
         return;                                                       
     };                                                              
     __u32 fd = bio.num;
 
-    char msg[] = "ssl_uprobe_read_enter_v1_0_2 bio->fd %ld";
-    bpf_trace_printk(msg, sizeof(msg),fd);
-    
     char* buf_ptr = (char*) buffer;               
     __u64 buf_size = num;
  
-    char msg4[] = "tls read enter going to be processed";
-    bpf_trace_printk(msg4, sizeof(msg4));
-
-    process_enter_of_syscalls_read_recvfrom(id, pid, fd, buf_ptr, buf_size);            
+    process_enter_of_syscalls_read_recvfrom(ctx, id, fd, buf_ptr, buf_size);            
 }
 
 static __always_inline 
 void ssl_uprobe_write_v_1_1_1(struct pt_regs *ctx, void* ssl, void* buffer, int num, size_t *count_ptr) {
+    unsigned char func_name[] = "ssl_uprobe_write_v_1_1_1";
     struct ssl_st_v1_1_1 ssl_st;
-    bpf_probe_read_user(&ssl_st, sizeof(ssl_st), ssl);
+    long r = bpf_probe_read_user(&ssl_st, sizeof(ssl_st), ssl);
+    if(r < 0) {         
+        unsigned char log_msg[] = "could not read ssl_st -- res||";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, 0, 0);
+        return;                                                       
+    };
     
     struct bio_st_v1_1_1 bio;                                                   
-    if (bpf_probe_read(&bio, sizeof(bio), (void*)ssl_st.wbio)) {         
-        char msg3[] = "could not read bio";
-        bpf_trace_printk(msg3, sizeof(msg3));
+    r = bpf_probe_read(&bio, sizeof(bio), (void*)ssl_st.wbio);
+    if (r < 0) {         
+        unsigned char log_msg[] = "could not wbio -- res||";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, 0, 0);
         return;                                                       
     };                                                              
     __u32 fd = bio.num;
-
-    char msg[] = "ssl_uprobe_write_v_1_1 tls bio->fd %ld";
-    bpf_trace_printk(msg, sizeof(msg),fd);
     
     char* buf_ptr = (char*) buffer;               
     __u64 buf_size = num;
@@ -625,45 +628,50 @@ void ssl_uprobe_write_v_1_1_1(struct pt_regs *ctx, void* ssl, void* buffer, int 
 
 static __always_inline 
 void ssl_uprobe_read_enter_v1_1_1(struct pt_regs *ctx, __u64 id,  __u32 pid, void* ssl, void* buffer, int num, size_t *count_ptr) {
+    unsigned char func_name[] = "ssl_uprobe_read_enter_v1_1_1";
     struct ssl_st_v1_1_1 ssl_st;
-    bpf_probe_read_user(&ssl_st, sizeof(ssl_st), ssl);
+    long r = bpf_probe_read_user(&ssl_st, sizeof(ssl_st), ssl);
+    if(r < 0) {         
+        unsigned char log_msg[] = "could not read ssl_st -- res||";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, 0, 0);
+        return;                                                       
+    };
     
     struct bio_st_v1_1_1 bio;                                                   
-    if (bpf_probe_read(&bio, sizeof(bio), (void*)ssl_st.rbio)) {         
-        char msg[] = "could not read rbio";
-        bpf_trace_printk(msg, sizeof(msg));
+    r = bpf_probe_read(&bio, sizeof(bio), (void*)ssl_st.rbio);
+    if (r < 0) {         
+        unsigned char log_msg[] = "could not rbio -- res||";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, 0, 0);
         return;                                                       
     };                                                              
     __u32 fd = bio.num;
-
-    char msg[] = "ssl_uprobe_read_enter_v1_1 bio->fd %ld";
-    bpf_trace_printk(msg, sizeof(msg),fd);
     
     char* buf_ptr = (char*) buffer;               
     __u64 buf_size = num;
  
-    char msg4[] = "tls read enter going to be processed";
-    bpf_trace_printk(msg4, sizeof(msg4));
-
-    process_enter_of_syscalls_read_recvfrom(id, pid, fd, buf_ptr, buf_size);            
+    process_enter_of_syscalls_read_recvfrom(ctx, id, fd, buf_ptr, buf_size);            
 }
 
 
 static __always_inline 
 void ssl_uprobe_write_v_3(struct pt_regs *ctx, void* ssl, void* buffer, int num, size_t *count_ptr) {
+    unsigned char func_name[] = "ssl_uprobe_write_v_3";
     struct ssl_st_v3_0_0 ssl_st;
-    bpf_probe_read_user(&ssl_st, sizeof(ssl_st), ssl);
+    long r = bpf_probe_read_user(&ssl_st, sizeof(ssl_st), ssl);
+    if(r < 0) {         
+        unsigned char log_msg[] = "could not read ssl_st -- res||";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, 0, 0);
+        return;                                                       
+    };
     
     struct bio_st_v3_0 bio;                                                   
-    if (bpf_probe_read(&bio, sizeof(bio), (void*)ssl_st.wbio)) {         
-        char msg3[] = "could not read bio";
-        bpf_trace_printk(msg3, sizeof(msg3));
+    r = bpf_probe_read(&bio, sizeof(bio), (void*)ssl_st.wbio);
+    if (r < 0) {         
+        unsigned char log_msg[] = "could not wbio -- res||";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, 0, 0);
         return;                                                       
     };                                                              
     __u32 fd = bio.num;
-
-    char msg[] = "tls bio->fd %ld";
-    bpf_trace_printk(msg, sizeof(msg),fd);
     
     char* buf_ptr = (char*) buffer;               
     __u64 buf_size = num;
@@ -673,27 +681,28 @@ void ssl_uprobe_write_v_3(struct pt_regs *ctx, void* ssl, void* buffer, int num,
 
 static __always_inline 
 void ssl_uprobe_read_enter_v3(struct pt_regs *ctx, __u64 id,  __u32 pid, void* ssl, void* buffer, int num, size_t *count_ptr) {
+    unsigned char func_name[] = "ssl_uprobe_read_enter_v3";
     struct ssl_st_v3_0_0 ssl_st;
-    bpf_probe_read_user(&ssl_st, sizeof(ssl_st), ssl);
+    long r = bpf_probe_read_user(&ssl_st, sizeof(ssl_st), ssl);
+    if (r < 0) {         
+        unsigned char log_msg[] = "could not read ssl_st -- res||";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, 0, 0);
+        return;                                                       
+    };
     
     struct bio_st_v3_0 bio;                                                   
-    if (bpf_probe_read(&bio, sizeof(bio), (void*)ssl_st.rbio)) {         
-        char msg[] = "could not read rbio";
-        bpf_trace_printk(msg, sizeof(msg));
+    r = bpf_probe_read(&bio, sizeof(bio), (void*)ssl_st.rbio);
+    if (r < 0) {         
+        unsigned char log_msg[] = "could not rbio -- res||";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, 0, 0);
         return;                                                       
     };                                                              
-    __u32 fd = bio.num;
-
-    char msg[] = "ssl_uprobe_read_enter bio->fd %ld";
-    bpf_trace_printk(msg, sizeof(msg),fd);
     
+    __u32 fd = bio.num;
     char* buf_ptr = (char*) buffer;               
     __u64 buf_size = num;
  
-    char msg4[] = "tls read enter going to be processed";
-    bpf_trace_printk(msg4, sizeof(msg4));
-
-    process_enter_of_syscalls_read_recvfrom(id, pid, fd, buf_ptr, buf_size);            
+    process_enter_of_syscalls_read_recvfrom(ctx, id, fd, buf_ptr, buf_size);            
 }
 
 SEC("tracepoint/syscalls/sys_enter_write")
@@ -719,15 +728,13 @@ int sys_exit_sendto(struct trace_event_raw_sys_exit_sendto* ctx) {
 SEC("tracepoint/syscalls/sys_enter_read")
 int sys_enter_read(struct trace_event_raw_sys_enter_read* ctx) {
     __u64 id = bpf_get_current_pid_tgid();
-    __u32 pid = id >> 32;
-    return process_enter_of_syscalls_read_recvfrom(id, pid, ctx->fd, ctx->buf, ctx->count);
+    return process_enter_of_syscalls_read_recvfrom(ctx, id, ctx->fd, ctx->buf, ctx->count);
 }
 
 SEC("tracepoint/syscalls/sys_enter_recvfrom")
 int sys_enter_recvfrom(struct trace_event_raw_sys_enter_recvfrom* ctx) {
     __u64 id = bpf_get_current_pid_tgid();
-    __u32 pid = id >> 32;
-    return process_enter_of_syscalls_read_recvfrom(id, pid, ctx->fd, ctx->ubuf, ctx->size);
+    return process_enter_of_syscalls_read_recvfrom(ctx, id, ctx->fd, ctx->ubuf, ctx->size);
 }
 
 SEC("tracepoint/syscalls/sys_exit_read")
@@ -750,10 +757,7 @@ void BPF_UPROBE(ssl_write_v1_1_1, void * ssl, void* buffer, int num) {
 }
 
 SEC("uprobe/SSL_read_v1_1_1")
-void BPF_UPROBE(ssl_read_enter_v1_1_1, void* ssl, void* buffer, int num) {
-    char msg[] = "this is uprobe ssl_read_enter_v1_1_1";
-    bpf_trace_printk(msg, sizeof(msg));
-     
+void BPF_UPROBE(ssl_read_enter_v1_1_1, void* ssl, void* buffer, int num) {  
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 pid = pid_tgid >> 32;
     __u64 id = pid_tgid | TLS_MASK;
@@ -767,9 +771,6 @@ void BPF_URETPROBE(ssl_ret_read) {
     __u64 id = pid_tgid | TLS_MASK;
 
     int returnValue = PT_REGS_RC(ctx);
-    
-    char msg[] = "this is uretprobe ssl_read ret: %ld";
-    bpf_trace_printk(msg, sizeof(msg), returnValue);
 
     process_exit_of_syscalls_read_recvfrom(ctx, id, pid, returnValue, 1);
 }
@@ -780,10 +781,7 @@ void BPF_UPROBE(ssl_write_v3, void * ssl, void* buffer, int num) {
 }
 
 SEC("uprobe/SSL_read_v3")
-void BPF_UPROBE(ssl_read_enter_v3, void* ssl, void* buffer, int num) {
-    char msg[] = "this is uprobe ssl_read_enter_v3";
-    bpf_trace_printk(msg, sizeof(msg));
-     
+void BPF_UPROBE(ssl_read_enter_v3, void* ssl, void* buffer, int num) {     
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 pid = pid_tgid >> 32;
     __u64 id = pid_tgid | TLS_MASK;
@@ -797,9 +795,6 @@ void BPF_UPROBE(ssl_write_v1_0_2, void * ssl, void* buffer, int num) {
 
 SEC("uprobe/SSL_read_v1_0_2")
 void BPF_UPROBE(ssl_read_enter_v1_0_2, void* ssl, void* buffer, int num) {
-    char msg[] = "this is uprobe ssl_read_enter_v1_0_2";
-    bpf_trace_printk(msg, sizeof(msg));
-     
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 pid = pid_tgid >> 32;
     __u64 id = pid_tgid | TLS_MASK;
@@ -826,7 +821,8 @@ struct go_interface {
 
 
 static __always_inline
-int process_enter_of_go_conn_write(__u64 goid, __u32 pid, __u32 fd, char *buf_ptr, __u64 count) {
+int process_enter_of_go_conn_write(void *ctx, __u32 pid, __u32 fd, char *buf_ptr, __u64 count) {
+    unsigned char func_name[] = "process_enter_of_go_conn_write";
     // parse and write to go_active_l7_req map
     struct go_req_key k = {};
     k.pid = pid;
@@ -871,8 +867,8 @@ int process_enter_of_go_conn_write(__u64 goid, __u32 pid, __u32 fd, char *buf_pt
     long res = bpf_map_update_elem(&go_active_l7_requests, &k, req, BPF_ANY);
     if(res < 0)
     {
-		char msg[] = "go_active_l7_requests - %ld";
-		bpf_trace_printk(msg, sizeof(msg), res);
+        unsigned char log_msg[] = "write failed to go_active_l7_requests -- res|fd|method";
+        log_to_userspace(ctx, WARN, func_name, log_msg, res, k.fd, req->method);
     }
 
     return 0;
@@ -881,7 +877,7 @@ int process_enter_of_go_conn_write(__u64 goid, __u32 pid, __u32 fd, char *buf_pt
 // (c *Conn) Write(b []byte) (int, error)
 SEC("uprobe/go_tls_conn_write_enter")
 int BPF_UPROBE(go_tls_conn_write_enter) {
-    __u64 goid = GOROUTINE(ctx);
+    // unsigned char func_name[] = "go_tls_conn_write_enter";
     __u32 pid = bpf_get_current_pid_tgid() >> 32;
     
     __u32 fd;
@@ -889,18 +885,18 @@ int BPF_UPROBE(go_tls_conn_write_enter) {
     // Registers contain the function arguments
     
     // X0(arm64) register contains the pointer to the first function argument, c *Conn
-    if (bpf_probe_read_user(&conn, sizeof(conn), (void*)GO_PARAM1(ctx))) {
+    if (bpf_probe_read_user(&conn, sizeof(conn), (void*)GO_PARAM1(ctx)) < 0) {
         return 0;
     };
     void* fd_ptr;
-    if (bpf_probe_read_user(&fd_ptr, sizeof(fd_ptr), conn.ptr)) {
+    if (bpf_probe_read_user(&fd_ptr, sizeof(fd_ptr), conn.ptr) < 0) {
         return 0;
     }
     
     if(!fd_ptr) {
         return 0;
     }
-    if (bpf_probe_read_user(&fd, sizeof(fd), fd_ptr + 0x10)) {
+    if (bpf_probe_read_user(&fd, sizeof(fd), fd_ptr + 0x10) < 0) {
         return 1;
     }
 
@@ -909,16 +905,14 @@ int BPF_UPROBE(go_tls_conn_write_enter) {
     // X2(arm64) register contains the length of the slice
     __u64 buf_size = GO_PARAM3(ctx);
 
-    char msg[] = "go_tls_conn_write_enter fd: %ld";
-    bpf_trace_printk(msg, sizeof(msg), fd);
-
-
-    return process_enter_of_go_conn_write(goid, pid, fd, buf_ptr, buf_size);
+    return process_enter_of_go_conn_write(ctx, pid, fd, buf_ptr, buf_size);
 }
 
 // func (c *Conn) Read(b []byte) (int, error)
 SEC("uprobe/go_tls_conn_read_enter")
 int BPF_UPROBE(go_tls_conn_read_enter) {
+    unsigned char func_name[] = "go_tls_conn_read_enter";
+    
     __u32 fd;
     struct go_interface conn;
 
@@ -939,10 +933,6 @@ int BPF_UPROBE(go_tls_conn_read_enter) {
     // // X2(arm64) register contains the length of the slice
     __u64 buf_size = GO_PARAM3(ctx);
 
-    char msg[] = "go_tls_conn_read_enter fd: %ld";
-    bpf_trace_printk(msg, sizeof(msg), fd);
-
-
     struct go_read_args args = {};
     args.fd = fd;
     args.buf = buf_ptr;
@@ -956,8 +946,8 @@ int BPF_UPROBE(go_tls_conn_read_enter) {
     long res = bpf_map_update_elem(&go_active_reads, &k, &args, BPF_ANY);
     if(res < 0)
     {
-        char msg[] = "Error writing to go_active_reads - %ld";
-        bpf_trace_printk(msg, sizeof(msg), res);
+        unsigned char log_msg[] = "write failed to go_active_reads -- res|goid|";
+        log_to_userspace(ctx, WARN, func_name, log_msg, res, k.goid, 0);
     }
     return 0;
 }
@@ -965,12 +955,10 @@ int BPF_UPROBE(go_tls_conn_read_enter) {
 // attached to all RET instructions since uretprobe crashes go applications
 SEC("uprobe/go_tls_conn_read_exit")
 int BPF_UPROBE(go_tls_conn_read_exit) {
+    unsigned char func_name[] = "go_tls_conn_read_exit";
+    
     // can't access to register we've access on read_enter here,
     // registers are changed.
-
-    char msg[] = "go_tls_conn_read_exit go_uretprobe";
-    bpf_trace_printk(msg, sizeof(msg));
-
     long int ret = GO_PARAM1(ctx);
 
     struct go_read_key k = {};
@@ -1006,8 +994,6 @@ int BPF_UPROBE(go_tls_conn_read_exit) {
 
     e->duration = bpf_ktime_get_ns() - req->write_time_ns;
     e->write_time_ns = req->write_time_ns;
-    e->payload_size = req->payload_size;
-    e->payload_read_complete = req->payload_read_complete;
     e->failed = 0; // success
     
     e->fd = read_args->fd;
@@ -1015,7 +1001,6 @@ int BPF_UPROBE(go_tls_conn_read_exit) {
     e->is_tls = 1;
     e->method = req->method;
     e->protocol = req->protocol;
-    e->write_time_ns = req->write_time_ns;
     
     // request payload
     e->payload_size = req->payload_size;
@@ -1027,15 +1012,16 @@ int BPF_UPROBE(go_tls_conn_read_exit) {
     e->failed = 0; // success
     e->status = 0;
     // parse response payload
-    if(read_args->buf && ret > PAYLOAD_PREFIX_SIZE){
+    if(read_args->buf && ret >= PAYLOAD_PREFIX_SIZE){
         if(e->protocol == PROTOCOL_HTTP){ // if http, try to parse status code
             // read first 16 bytes of read buffer
             char buf_prefix[PAYLOAD_PREFIX_SIZE];
             long r = bpf_probe_read(&buf_prefix, sizeof(buf_prefix), (void *)(read_args->buf)) ;
             
             if (r < 0) {
-                char msg[] = "go_tls_conn_read_exit could not read into buf_prefix - %ld";
-                bpf_trace_printk(msg, sizeof(msg), r);
+                unsigned char log_msg[] = "read failed for resp buf -- res|goid|method";
+                log_to_userspace(ctx, WARN, func_name, log_msg, r, k.goid, e->method);
+
                 bpf_map_delete_elem(&go_active_reads, &k);
                 // bpf_map_delete_elem(&go_active_l7_requests, &req_k); // TODO: check ?
                 return 0;
@@ -1062,8 +1048,9 @@ int BPF_UPROBE(go_tls_conn_read_exit) {
             return 0;
         }
     }else{
-        char msgCtx[] = "go_tls_conn_read_exit read buffer is null or too small";
-        bpf_trace_printk(msgCtx, sizeof(msgCtx));
+        unsigned char log_msg[] = "read buffer is null or too small -- |goid|method";
+        log_to_userspace(ctx, DEBUG, func_name, log_msg, 0, k.goid, e->method);
+
         bpf_map_delete_elem(&go_active_reads, &k);
         return 0;
     }
@@ -1073,8 +1060,8 @@ int BPF_UPROBE(go_tls_conn_read_exit) {
 
     long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
     if (r < 0) {
-        char msg[] = "could not write gotls event to l7_events - %ld";
-        bpf_trace_printk(msg, sizeof(msg), r);
+        unsigned char log_msg[] = "write failed to l7_events -- r|fd|method";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, e->fd, e->method);
     }
 
     return 0;

@@ -95,11 +95,29 @@ const (
 	healthCheckEndpoint = "/alaz/healthcheck/"
 )
 
+type LeveledLogger struct {
+	l zerolog.Logger
+}
+
+func (ll LeveledLogger) Error(msg string, keysAndValues ...interface{}) {
+	ll.l.Error().Fields(keysAndValues).Msg(msg)
+}
+func (ll LeveledLogger) Info(msg string, keysAndValues ...interface{}) {
+	ll.l.Info().Fields(keysAndValues).Msg(msg)
+}
+func (ll LeveledLogger) Debug(msg string, keysAndValues ...interface{}) {
+	ll.l.Debug().Fields(keysAndValues).Msg(msg)
+}
+func (ll LeveledLogger) Warn(msg string, keysAndValues ...interface{}) {
+	ll.l.Warn().Fields(keysAndValues).Msg(msg)
+}
+
 func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *BackendDS {
 	ctx, _ := context.WithCancel(parentCtx)
 	rand.Seed(time.Now().UnixNano())
 
 	retryClient := retryablehttp.NewClient()
+	retryClient.Logger = LeveledLogger{l: log.Logger.With().Str("component", "retryablehttp").Logger()}
 	retryClient.Backoff = retryablehttp.DefaultBackoff
 	retryClient.RetryWaitMin = 1 * time.Second
 	retryClient.RetryWaitMax = 5 * time.Second
