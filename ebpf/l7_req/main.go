@@ -1,6 +1,7 @@
 package l7_req
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"unsafe"
@@ -312,10 +313,126 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		l7Events.Close()
 	}()
 
-	// Read loop reporting the total amount of times the kernel
-	// function was entered, once per second.
+	logs, err := perf.NewReader(L7BpfProgsAndMaps.LogMap, 64*os.Getpagesize())
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
+	}
+	defer func() {
+		log.Logger.Info().Msg("closing l7 events perf event array reader")
+		logs.Close()
+	}()
 
+	logsDone := make(chan struct{})
 	readDone := make(chan struct{})
+
+	go func() {
+		var logMessage []byte
+		var funcName []byte
+		for {
+			read := func() {
+				record, err := logs.Read()
+				if err != nil {
+					log.Logger.Warn().Err(err).Msg("error reading from perf array")
+				}
+
+				if record.LostSamples != 0 {
+					log.Logger.Debug().Msgf("lost #%d samples due to ring buffer's full", record.LostSamples)
+				}
+
+				if record.RawSample == nil || len(record.RawSample) == 0 {
+					log.Logger.Debug().Msgf("read empty record from perf array")
+					return
+				}
+
+				logMsg := (*bpfLogMessage)(unsafe.Pointer(&record.RawSample[0]))
+
+				funcEnd := findEndIndex(logMsg.FuncName)
+				msgEnd := findEndIndex(logMsg.LogMsg)
+
+				logMessage = logMsg.LogMsg[:msgEnd]
+				funcName = logMsg.FuncName[:funcEnd]
+
+				args := []struct {
+					argName  string
+					argValue uint64
+				}{
+					{
+						argName:  "",
+						argValue: 0,
+					},
+					{
+						argName:  "",
+						argValue: 0,
+					},
+					{
+						argName:  "",
+						argValue: 0,
+					},
+				}
+
+				parseLogMessage := func(input []byte, logMsg *bpfLogMessage) []byte {
+					// fd,x,y -- {log-msg}
+					// fd,, -- {log-msg}
+
+					parts := bytes.SplitN(input, []byte(" -- "), 2)
+					if len(parts) != 2 {
+						log.Logger.Warn().Msgf("invalid ebpf log message: %s", string(input))
+						return nil
+					}
+
+					parsedArgs := bytes.SplitN(parts[1], []byte("|"), 3)
+					if len(parsedArgs) != 3 {
+						log.Logger.Warn().Msgf("invalid ebpf log message not 3 args: %s", string(input))
+						return nil
+					}
+
+					args[0].argName = string(parsedArgs[0])
+					args[0].argValue = logMsg.Arg1
+
+					args[1].argName = string(parsedArgs[1])
+					args[1].argValue = logMsg.Arg2
+
+					args[2].argName = string(parsedArgs[2])
+					args[2].argValue = logMsg.Arg3
+					return parts[0]
+				}
+
+				// will change resultArgs
+				logMessage = parseLogMessage(logMessage, logMsg)
+				if logMessage == nil {
+					log.Logger.Warn().Msgf("invalid ebpf log message: %s", string(logMsg.LogMsg[:]))
+					return
+				}
+
+				switch logMsg.Level {
+				case 0:
+					log.Logger.Debug().Str("func", string(funcName)).Uint32("pid", logMsg.Pid).
+						Uint64(args[0].argName, args[0].argValue).Uint64(args[1].argName, args[1].argValue).Uint64(args[2].argName, args[2].argValue).
+						Str("log-msg", string(logMessage)).Msg("ebpf-log")
+				case 1:
+					log.Logger.Info().Str("func", string(funcName)).Uint32("pid", logMsg.Pid).
+						Uint64(args[0].argName, args[0].argValue).Uint64(args[1].argName, args[1].argValue).Uint64(args[2].argName, args[2].argValue).
+						Str("log-msg", string(logMessage)).Msg("ebpf-log")
+				case 2:
+					log.Logger.Warn().Str("func", string(funcName)).Uint32("pid", logMsg.Pid).
+						Uint64(args[0].argName, args[0].argValue).Uint64(args[1].argName, args[1].argValue).Uint64(args[2].argName, args[2].argValue).
+						Str("log-msg", string(logMessage)).Msg("ebpf-log")
+				case 3:
+					log.Logger.Error().Str("func", string(funcName)).Uint32("pid", logMsg.Pid).
+						Uint64(args[0].argName, args[0].argValue).Uint64(args[1].argName, args[1].argValue).Uint64(args[2].argName, args[2].argValue).
+						Str("log-msg", string(logMessage)).Msg("ebpf-log")
+				}
+			}
+
+			select {
+			case <-logsDone:
+				return
+			default:
+				read()
+			}
+		}
+	}()
+
 	go func() {
 		for {
 			read := func() {
@@ -325,12 +442,12 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 				}
 
 				if record.LostSamples != 0 {
-					log.Logger.Warn().Msgf("lost samples l7-event %d", record.LostSamples)
+					log.Logger.Debug().Msgf("lost samples l7-event %d", record.LostSamples)
 				}
 
 				// TODO: investigate why this is happening
 				if record.RawSample == nil || len(record.RawSample) == 0 {
-					log.Logger.Warn().Msgf("read sample l7-event nil or empty")
+					log.Logger.Debug().Msgf("read sample l7-event nil or empty")
 					return
 				}
 
@@ -385,10 +502,20 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 
 	<-ctx.Done() // wait for context to be cancelled
 	readDone <- struct{}{}
+	logsDone <- struct{}{}
 	// defers will clean up
 }
 
 // 0 is false, 1 is true
 func uint8ToBool(num uint8) bool {
 	return num != 0
+}
+
+func findEndIndex(b [100]uint8) (endIndex int) {
+	for i, v := range b {
+		if v == 0 {
+			return i
+		}
+	}
+	return len(b)
 }

@@ -10,10 +10,12 @@
 #include <stddef.h>
 #include "../headers/pt_regs.h"
 
+#include "log.h"
 #include "http.c"
 #include "amqp.c"
 #include "postgres.c"
 #include "openssl.c"
+
 
 #define PROTOCOL_UNKNOWN    0
 #define PROTOCOL_HTTP	    1
@@ -26,7 +28,6 @@
 // for rabbitmq methods
 #define METHOD_PUBLISH           1
 #define METHOD_DELIVER           2
-
 
 #define TLS_MASK 0x8000000000000000
 
@@ -171,8 +172,12 @@ struct {
 // Processing enter of write and sendto syscalls
 static __always_inline
 int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, char* buf, __u64 count){
+    unsigned char func_name[] = "process_enter_of_syscalls_write_sendto";
     __u64 id = bpf_get_current_pid_tgid();
 
+    unsigned char log_msg[] = "start cakir -- fd||";
+    log_to_userspace(ctx, DEBUG, func_name, log_msg, fd, 0, 0);
+    
     int zero = 0;
     struct l7_request *req = bpf_map_lookup_elem(&l7_request_heap, &zero);
 
@@ -194,7 +199,6 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
     k.fd = fd;
     k.is_tls = is_tls;
 
-    
 
     if(buf){
         // We are tracking tcp connections (sockets) on tcp_state bpf program, sending them to userspace
@@ -259,7 +263,6 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
 
     return 0;
 }
-
 
 // Processing enter of read, recv, recvfrom syscalls
 static __always_inline
@@ -1006,8 +1009,6 @@ int BPF_UPROBE(go_tls_conn_read_exit) {
 
     e->duration = bpf_ktime_get_ns() - req->write_time_ns;
     e->write_time_ns = req->write_time_ns;
-    e->payload_size = req->payload_size;
-    e->payload_read_complete = req->payload_read_complete;
     e->failed = 0; // success
     
     e->fd = read_args->fd;
@@ -1015,7 +1016,6 @@ int BPF_UPROBE(go_tls_conn_read_exit) {
     e->is_tls = 1;
     e->method = req->method;
     e->protocol = req->protocol;
-    e->write_time_ns = req->write_time_ns;
     
     // request payload
     e->payload_size = req->payload_size;
@@ -1035,6 +1035,7 @@ int BPF_UPROBE(go_tls_conn_read_exit) {
             
             if (r < 0) {
                 char msg[] = "go_tls_conn_read_exit could not read into buf_prefix - %ld";
+                
                 bpf_trace_printk(msg, sizeof(msg), r);
                 bpf_map_delete_elem(&go_active_reads, &k);
                 // bpf_map_delete_elem(&go_active_l7_requests, &req_k); // TODO: check ?
