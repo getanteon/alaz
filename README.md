@@ -135,6 +135,7 @@ helm delete alaz --namespace ddosify
 Alaz supports the following protocols:
 
 - HTTP
+- HTTPS (OpenSSL and Go TLS)
 - Postgres
 - RabbitMQ
 

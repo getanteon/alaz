@@ -2,14 +2,20 @@
 #include "../headers/common.h"
 #include "../headers/l7_req.h"
 
+// order is important
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_tracing.h>
+#include <stddef.h>
+#include "../headers/pt_regs.h"
 
+#include "log.h"
 #include "http.c"
 #include "amqp.c"
 #include "postgres.c"
+#include "openssl.c"
+
 
 #define PROTOCOL_UNKNOWN    0
 #define PROTOCOL_HTTP	    1
@@ -23,9 +29,9 @@
 #define METHOD_PUBLISH           1
 #define METHOD_DELIVER           2
 
+#define TLS_MASK 0x8000000000000000
 
 char __license[] SEC("license") = "Dual MIT/GPL";
-
 
 struct l7_event {
     __u64 fd;
@@ -40,6 +46,7 @@ struct l7_event {
     __u32 payload_size;
     __u8 payload_read_complete;
     __u8 failed;
+    __u8 is_tls;
 };
 
 struct l7_request {
@@ -55,6 +62,18 @@ struct l7_request {
 struct socket_key {
     __u64 fd;
     __u32 pid;
+    __u8 is_tls;
+};
+
+struct go_req_key {
+    __u32 pid;
+    __u64 fd;
+};
+
+struct go_read_key {
+    __u32 pid;
+    __u64 goid; // goroutine id
+    // __u64 fd; can't have fd at exit of read, because it is not available
 };
 
 // Instead of allocating on bpf stack, we allocate on a per-CPU array map
@@ -78,6 +97,34 @@ struct {
     __type(key, struct socket_key);
     __type(value, struct l7_request);
 } active_l7_requests SEC(".maps");
+
+struct {
+     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+     __type(key, __u32);
+     __type(value, struct l7_request);
+     __uint(max_entries, 1);
+} go_l7_request_heap SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __uint(max_entries, 32768);
+    __type(key, struct go_req_key);
+    __type(value, struct l7_request);
+} go_active_l7_requests SEC(".maps");
+
+struct go_read_args {
+    __u64 fd;
+    char* buf;
+    __u64 size;
+    __u64 read_start_ns;  
+};
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, struct go_read_key);
+    __uint(value_size, sizeof(struct go_read_args));
+    __uint(max_entries, 10240);
+} go_active_reads SEC(".maps");
 
 // send l7 events to userspace
 struct {
@@ -124,15 +171,16 @@ struct {
 
 // Processing enter of write and sendto syscalls
 static __always_inline
-int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, char* buf, __u64 count){
+int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, char* buf, __u64 count){
+    unsigned char func_name[] = "process_enter_of_syscalls_write_sendto";
     __u64 id = bpf_get_current_pid_tgid();
-
+    
     int zero = 0;
     struct l7_request *req = bpf_map_lookup_elem(&l7_request_heap, &zero);
 
     if (!req) {
-        char msg[] = "Err: Could not get request from l7_request_heap";
-        bpf_trace_printk(msg, sizeof(msg));
+        unsigned char log_msg[] = "failed to get from l7_request_heap -- ||";
+        log_to_userspace(ctx, DEBUG, func_name, log_msg, 0, 0, 0);
         return 0;
     }
 
@@ -146,6 +194,8 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, char* buf, __u64
     struct socket_key k = {};
     k.pid = id >> 32;
     k.fd = fd;
+    k.is_tls = is_tls;
+
 
     if(buf){
         // We are tracking tcp connections (sockets) on tcp_state bpf program, sending them to userspace
@@ -186,8 +236,8 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, char* buf, __u64
             return 0; // do not continue processing for now (udp requests are flowing and overlaps with http requests)
         }
     }else{
-        char msgCtx[] = "write buffer is null or too small";
-        bpf_trace_printk(msgCtx, sizeof(msgCtx));
+        unsigned char log_msg[] = "write buf is null -- ||";
+        log_to_userspace(ctx, DEBUG, func_name, log_msg, 0, 0, 0);
         return 0;
     }
 
@@ -200,26 +250,26 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, char* buf, __u64
         req->payload_size = count;
         req->payload_read_complete = 1;
     }
-    
+
     long res = bpf_map_update_elem(&active_l7_requests, &k, req, BPF_ANY);
     if(res < 0)
     {
-		char msg[] = "Error writing to active_l7_requests - %ld";
-		bpf_trace_printk(msg, sizeof(msg), res);
+        unsigned char log_msg[] = "write failed to active_l7_requests -- fd|is_tls|";
+        log_to_userspace(ctx, DEBUG, func_name, log_msg, k.fd, k.is_tls, 0);
     }
 
     return 0;
 }
 
-
 // Processing enter of read, recv, recvfrom syscalls
 static __always_inline
-int process_enter_of_syscalls_read_recvfrom(__u64 fd, char* buf, __u64 size) {
-    __u64 id = bpf_get_current_pid_tgid();
+int process_enter_of_syscalls_read_recvfrom(void *ctx, __u64 id, __u64 fd, char* buf, __u64 size) {
+    unsigned char func_name[] = "process_enter_of_syscalls_read_recvfrom";
+    // __u64 id = bpf_get_current_pid_tgid();
     
-    struct socket_key k = {};
-    k.pid = id >> 32;
-    k.fd = fd;
+    // struct socket_key k = {};
+    // k.pid = pid;
+    // k.fd = fd;
 
     // since a message consume in amqp does not have a prior write, we will not have a request in active_l7_requests
     // only in http, a prior write is needed, so we will have a request in active_l7_requests
@@ -240,8 +290,8 @@ int process_enter_of_syscalls_read_recvfrom(__u64 fd, char* buf, __u64 size) {
     long res = bpf_map_update_elem(&active_reads, &id, &args, BPF_ANY);
     if(res < 0)
     {
-        char msg[] = "Error writing to active_reads - %ld";
-        bpf_trace_printk(msg, sizeof(msg), res);
+        unsigned char log_msg[] = "write to active_reads failed -- err||";
+        log_to_userspace(ctx, DEBUG, func_name, log_msg, res, 0, 0);        
     }
     return 0;
 }
@@ -249,6 +299,7 @@ int process_enter_of_syscalls_read_recvfrom(__u64 fd, char* buf, __u64 size) {
 
 static __always_inline
 int process_exit_of_syscalls_write_sendto(void* ctx, __s64 ret){
+    // unsigned char func_name[] = "process_exit_of_syscalls_write_sendto";
     __u64 id = bpf_get_current_pid_tgid();
 
     // we only used this func for amqp, others will only be in active_l7_requests
@@ -297,6 +348,7 @@ int process_exit_of_syscalls_write_sendto(void* ctx, __s64 ret){
         // request payload
         e->payload_size = active_req->payload_size;
         e->payload_read_complete = active_req->payload_read_complete;
+        e->is_tls = 0;
         
         // copy req payload
         bpf_probe_read(e->payload, MAX_PAYLOAD_SIZE, active_req->payload);
@@ -314,10 +366,11 @@ int process_exit_of_syscalls_write_sendto(void* ctx, __s64 ret){
 }
 
 static __always_inline
-int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
+int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64 ret, __u8 is_tls) {
+    unsigned char func_name[] = "process_exit_of_syscalls_read_recvfrom";
     if (ret < 0) { // read failed
         // -ERRNO
-        __u64 id = bpf_get_current_pid_tgid();
+        // __u64 id = bpf_get_current_pid_tgid();
 
         // check if this read was initiated by us
         struct read_args *read_info = bpf_map_lookup_elem(&active_reads, &id);
@@ -326,30 +379,36 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
         }
 
         struct socket_key k = {};
-        k.pid = id >> 32;
+        k.pid = pid;
         k.fd = read_info->fd;
-
+        k.is_tls = is_tls;
 
         // clean up
         bpf_map_delete_elem(&active_reads, &id);
-        bpf_map_delete_elem(&active_l7_requests, &k);
+
+        // bpf_map_delete_elem(&active_l7_requests, &k);
+        // TODO: Before we were cleaning the record active_l7_requests in case of a failed read
+        // in order to avoid filling up the map with requests that will never be sent to userspace in case of consecutive failed read attempts(request failure actually, could not read the response).
+        // But if the first read fails and we delete the record from active_l7_requests, 
+        // we will not be able to send the l7 event in case of a retried first read call succeeds.
+        
+        // TODO: On roadmap, when we want to parse the whole response, we have to send all chunks to userspace in order to parse the whole response.
+        // Right now, we only cover the case that we read the first 16 bytes of first successful read call of response, trying to parse the status code
 
         return 0;
     }
 
 
-    __u64 id = bpf_get_current_pid_tgid();
+    // __u64 id = bpf_get_current_pid_tgid();
     struct read_args *read_info = bpf_map_lookup_elem(&active_reads, &id);
     if (!read_info) {
         return 0;
     }
-
-
     
     struct socket_key k = {};
-    k.pid = id >> 32;
+    k.pid = pid;
     k.fd = read_info->fd; 
-
+    k.is_tls = is_tls;
 
     // Instead of allocating on bpf stack, use cpu map
     int zero = 0;
@@ -358,14 +417,15 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
         bpf_map_delete_elem(&active_reads, &id);
         return 0;
     }
+    e->is_tls = is_tls;
 
     // For a amqp consume, there will be no write, so we will not have a request in active_l7_requests
     // Process amqp consume first, if it is not amqp consume, look for a request in active_l7_requests
 
-    if (is_rabbitmq_consume(read_info->buf, read_info->size)) {
+    if (is_rabbitmq_consume(read_info->buf, ret)) {
         e->protocol = PROTOCOL_AMQP;
         e->method = METHOD_DELIVER;
-        e->duration = bpf_ktime_get_ns()- read_info->read_start_ns;
+    e->duration = bpf_ktime_get_ns()- read_info->read_start_ns;
         e->write_time_ns = read_info->read_start_ns; // TODO: it is not write time, but start of read time
         e->payload_size = 0;
         e->payload_read_complete = 0;
@@ -410,15 +470,13 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
     e->failed = 0; // success
 
     e->status = 0;
-    if(read_info->buf && read_info->size > PAYLOAD_PREFIX_SIZE){
+    if(read_info->buf && ret > PAYLOAD_PREFIX_SIZE){
         if(e->protocol==PROTOCOL_HTTP){ // if http, try to parse status code
             // read first 16 bytes of read buffer
             char buf_prefix[PAYLOAD_PREFIX_SIZE];
             long r = bpf_probe_read(&buf_prefix, sizeof(buf_prefix), (void *)(read_info->buf)) ;
             
             if (r < 0) {
-                char msg[] = "could not read into buf_prefix - %ld";
-                bpf_trace_printk(msg, sizeof(msg), r);
                 bpf_map_delete_elem(&active_reads, &id);
                 return 0;
             }
@@ -426,6 +484,18 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
             int status = parse_http_status(buf_prefix);
             if (status != -1){
                 e->status = status;
+            }else{
+                // status code will be send as 0 if not returned
+                // In case of write happens but read_exit probe doesn't get called for a request (sigkill of process?)
+                // a read from the same socket (same pid-fd pair) after some time, can match with the previous write
+                // if the latter is http1.1, requests can mismatch (if expression above will satisfy)
+                // or(not http1.1) the status code will be 0 if continued processing.
+                // So we'll clean up the request here if it's not a protocol we support before hand.
+                // mismatches can still occur, but it's better than nothing.
+                // TODO: find a solution for the mismatch problem
+
+                bpf_map_delete_elem(&active_reads, &id);
+                return 0;
             }
         }else if (e->protocol == PROTOCOL_POSTGRES){
             e->status = parse_postgres_server_resp(read_info->buf, ret);
@@ -434,8 +504,9 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
             }
         }
     }else{
-        char msgCtx[] = "read buffer is null or too small";
-        bpf_trace_printk(msgCtx, sizeof(msgCtx));
+        unsigned char log_msg[] = "read buffer is null or too small -- ||";
+        log_to_userspace(ctx, DEBUG, func_name, log_msg, 0, 0, 0);
+
         bpf_map_delete_elem(&active_reads, &id);
         return 0;
     }
@@ -445,8 +516,8 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
 
     long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
     if (r < 0) {
-        char msg[] = "could not write to l7_events - %ld";
-        bpf_trace_printk(msg, sizeof(msg), r);
+        unsigned char log_msg[] = "failed write to l7_events -- res|fd|psize";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, e->fd, e->payload_size);        
     }
 
     return 0;
@@ -477,15 +548,171 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __s64 ret) {
 // sys_enter_ receiving syscalls -- process_enter_of_syscalls_read_recvfrom
 // sys_exit_ receiving syscalls -- process_exit_of_syscalls_read_recvfrom
 
+static __always_inline 
+void ssl_uprobe_write_v_1_0_2(struct pt_regs *ctx, void* ssl, void* buffer, int num, size_t *count_ptr) {
+    unsigned char func_name[] = "ssl_uprobe_write_v_1_0_2";
+    struct ssl_st_v1_0_2 ssl_st;
+    long r = bpf_probe_read_user(&ssl_st, sizeof(ssl_st), ssl);
+    if(r < 0) {         
+        unsigned char log_msg[] = "could not read ssl_st -- res||";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, 0, 0);
+        return;                                                       
+    };
+
+    struct bio_st_v1_0_2 bio;                     
+    r = bpf_probe_read(&bio, sizeof(bio), (void*)ssl_st.wbio);                              
+    if(r < 0) {         
+        unsigned char log_msg[] = "could not bio -- res||";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, 0, 0);
+        return;                                                       
+    };                                                              
+    __u32 fd = bio.num;
+    
+    char* buf_ptr = (char*) buffer;               
+    __u64 buf_size = num;
+
+    process_enter_of_syscalls_write_sendto(ctx, fd, 1, buf_ptr, buf_size);                   
+}
+
+static __always_inline 
+void ssl_uprobe_read_enter_v1_0_2(struct pt_regs *ctx, __u64 id,  __u32 pid, void* ssl, void* buffer, int num, size_t *count_ptr) {
+    unsigned char func_name[] = "ssl_uprobe_read_enter_v1_0_2";
+    struct ssl_st_v1_0_2 ssl_st;
+    long r = bpf_probe_read_user(&ssl_st, sizeof(ssl_st), ssl);
+    if(r < 0) {         
+        unsigned char log_msg[] = "could not read ssl_st -- res||";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, 0, 0);
+        return;                                                       
+    };
+    
+    struct bio_st_v1_0_2 bio;                                                   
+    r = bpf_probe_read(&bio, sizeof(bio), (void*)ssl_st.rbio);
+    if (r < 0) {         
+        unsigned char log_msg[] = "could not rbio -- res||";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, 0, 0);
+        return;                                                       
+    };                                                              
+    __u32 fd = bio.num;
+
+    char* buf_ptr = (char*) buffer;               
+    __u64 buf_size = num;
+ 
+    process_enter_of_syscalls_read_recvfrom(ctx, id, fd, buf_ptr, buf_size);            
+}
+
+static __always_inline 
+void ssl_uprobe_write_v_1_1_1(struct pt_regs *ctx, void* ssl, void* buffer, int num, size_t *count_ptr) {
+    unsigned char func_name[] = "ssl_uprobe_write_v_1_1_1";
+    struct ssl_st_v1_1_1 ssl_st;
+    long r = bpf_probe_read_user(&ssl_st, sizeof(ssl_st), ssl);
+    if(r < 0) {         
+        unsigned char log_msg[] = "could not read ssl_st -- res||";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, 0, 0);
+        return;                                                       
+    };
+    
+    struct bio_st_v1_1_1 bio;                                                   
+    r = bpf_probe_read(&bio, sizeof(bio), (void*)ssl_st.wbio);
+    if (r < 0) {         
+        unsigned char log_msg[] = "could not wbio -- res||";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, 0, 0);
+        return;                                                       
+    };                                                              
+    __u32 fd = bio.num;
+    
+    char* buf_ptr = (char*) buffer;               
+    __u64 buf_size = num;
+
+    process_enter_of_syscalls_write_sendto(ctx, fd, 1, buf_ptr, buf_size);                   
+}
+
+static __always_inline 
+void ssl_uprobe_read_enter_v1_1_1(struct pt_regs *ctx, __u64 id,  __u32 pid, void* ssl, void* buffer, int num, size_t *count_ptr) {
+    unsigned char func_name[] = "ssl_uprobe_read_enter_v1_1_1";
+    struct ssl_st_v1_1_1 ssl_st;
+    long r = bpf_probe_read_user(&ssl_st, sizeof(ssl_st), ssl);
+    if(r < 0) {         
+        unsigned char log_msg[] = "could not read ssl_st -- res||";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, 0, 0);
+        return;                                                       
+    };
+    
+    struct bio_st_v1_1_1 bio;                                                   
+    r = bpf_probe_read(&bio, sizeof(bio), (void*)ssl_st.rbio);
+    if (r < 0) {         
+        unsigned char log_msg[] = "could not rbio -- res||";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, 0, 0);
+        return;                                                       
+    };                                                              
+    __u32 fd = bio.num;
+    
+    char* buf_ptr = (char*) buffer;               
+    __u64 buf_size = num;
+ 
+    process_enter_of_syscalls_read_recvfrom(ctx, id, fd, buf_ptr, buf_size);            
+}
+
+
+static __always_inline 
+void ssl_uprobe_write_v_3(struct pt_regs *ctx, void* ssl, void* buffer, int num, size_t *count_ptr) {
+    unsigned char func_name[] = "ssl_uprobe_write_v_3";
+    struct ssl_st_v3_0_0 ssl_st;
+    long r = bpf_probe_read_user(&ssl_st, sizeof(ssl_st), ssl);
+    if(r < 0) {         
+        unsigned char log_msg[] = "could not read ssl_st -- res||";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, 0, 0);
+        return;                                                       
+    };
+    
+    struct bio_st_v3_0 bio;                                                   
+    r = bpf_probe_read(&bio, sizeof(bio), (void*)ssl_st.wbio);
+    if (r < 0) {         
+        unsigned char log_msg[] = "could not wbio -- res||";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, 0, 0);
+        return;                                                       
+    };                                                              
+    __u32 fd = bio.num;
+    
+    char* buf_ptr = (char*) buffer;               
+    __u64 buf_size = num;
+
+    process_enter_of_syscalls_write_sendto(ctx, fd, 1, buf_ptr, buf_size);                   
+}
+
+static __always_inline 
+void ssl_uprobe_read_enter_v3(struct pt_regs *ctx, __u64 id,  __u32 pid, void* ssl, void* buffer, int num, size_t *count_ptr) {
+    unsigned char func_name[] = "ssl_uprobe_read_enter_v3";
+    struct ssl_st_v3_0_0 ssl_st;
+    long r = bpf_probe_read_user(&ssl_st, sizeof(ssl_st), ssl);
+    if (r < 0) {         
+        unsigned char log_msg[] = "could not read ssl_st -- res||";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, 0, 0);
+        return;                                                       
+    };
+    
+    struct bio_st_v3_0 bio;                                                   
+    r = bpf_probe_read(&bio, sizeof(bio), (void*)ssl_st.rbio);
+    if (r < 0) {         
+        unsigned char log_msg[] = "could not rbio -- res||";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, 0, 0);
+        return;                                                       
+    };                                                              
+    
+    __u32 fd = bio.num;
+    char* buf_ptr = (char*) buffer;               
+    __u64 buf_size = num;
+ 
+    process_enter_of_syscalls_read_recvfrom(ctx, id, fd, buf_ptr, buf_size);            
+}
 
 SEC("tracepoint/syscalls/sys_enter_write")
 int sys_enter_write(struct trace_event_raw_sys_enter_write* ctx) {
-   return process_enter_of_syscalls_write_sendto(ctx, ctx->fd, ctx->buf, ctx->count);
+   return process_enter_of_syscalls_write_sendto(ctx, ctx->fd, 0, ctx->buf, ctx->count);
 }
 
 SEC("tracepoint/syscalls/sys_enter_sendto")
 int sys_enter_sendto(struct trace_event_raw_sys_enter_sendto* ctx) {
-   return process_enter_of_syscalls_write_sendto(ctx, ctx->fd, ctx->buff, ctx->len);
+   return process_enter_of_syscalls_write_sendto(ctx, ctx->fd, 0 ,ctx->buff, ctx->len);
 }
 
 SEC("tracepoint/syscalls/sys_exit_write")
@@ -500,21 +727,343 @@ int sys_exit_sendto(struct trace_event_raw_sys_exit_sendto* ctx) {
 
 SEC("tracepoint/syscalls/sys_enter_read")
 int sys_enter_read(struct trace_event_raw_sys_enter_read* ctx) {
-    return process_enter_of_syscalls_read_recvfrom(ctx->fd, ctx->buf, ctx->count);
+    __u64 id = bpf_get_current_pid_tgid();
+    return process_enter_of_syscalls_read_recvfrom(ctx, id, ctx->fd, ctx->buf, ctx->count);
 }
 
 SEC("tracepoint/syscalls/sys_enter_recvfrom")
 int sys_enter_recvfrom(struct trace_event_raw_sys_enter_recvfrom* ctx) {
-    return process_enter_of_syscalls_read_recvfrom(ctx->fd, ctx->ubuf, ctx->size);
+    __u64 id = bpf_get_current_pid_tgid();
+    return process_enter_of_syscalls_read_recvfrom(ctx, id, ctx->fd, ctx->ubuf, ctx->size);
 }
 
 SEC("tracepoint/syscalls/sys_exit_read")
 int sys_exit_read(struct trace_event_raw_sys_exit_read* ctx) {
-    return process_exit_of_syscalls_read_recvfrom(ctx, ctx->ret);
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 pid = pid_tgid >> 32;
+    return process_exit_of_syscalls_read_recvfrom(ctx, pid_tgid, pid, ctx->ret, 0);
 }
 
 SEC("tracepoint/syscalls/sys_exit_recvfrom")
 int sys_exit_recvfrom(struct trace_event_raw_sys_exit_recvfrom* ctx) {
-    return process_exit_of_syscalls_read_recvfrom(ctx, ctx->ret);
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 pid = pid_tgid >> 32;
+    return process_exit_of_syscalls_read_recvfrom(ctx, pid_tgid, pid, ctx->ret, 0);
+}
+
+SEC("uprobe/SSL_write_v1_1_1")
+void BPF_UPROBE(ssl_write_v1_1_1, void * ssl, void* buffer, int num) {
+	ssl_uprobe_write_v_1_1_1(ctx, ssl, buffer, num, 0);
+}
+
+SEC("uprobe/SSL_read_v1_1_1")
+void BPF_UPROBE(ssl_read_enter_v1_1_1, void* ssl, void* buffer, int num) {  
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 pid = pid_tgid >> 32;
+    __u64 id = pid_tgid | TLS_MASK;
+    ssl_uprobe_read_enter_v1_1_1(ctx, id, pid, ssl, buffer, num, 0);
+}
+
+SEC("uretprobe/SSL_read")
+void BPF_URETPROBE(ssl_ret_read) {
+	__u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u64 pid = pid_tgid >> 32;
+    __u64 id = pid_tgid | TLS_MASK;
+
+    int returnValue = PT_REGS_RC(ctx);
+
+    process_exit_of_syscalls_read_recvfrom(ctx, id, pid, returnValue, 1);
+}
+
+SEC("uprobe/SSL_write_v3")
+void BPF_UPROBE(ssl_write_v3, void * ssl, void* buffer, int num) {
+	ssl_uprobe_write_v_3(ctx, ssl, buffer, num, 0);
+}
+
+SEC("uprobe/SSL_read_v3")
+void BPF_UPROBE(ssl_read_enter_v3, void* ssl, void* buffer, int num) {     
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 pid = pid_tgid >> 32;
+    __u64 id = pid_tgid | TLS_MASK;
+    ssl_uprobe_read_enter_v3(ctx, id, pid, ssl, buffer, num, 0);
+}
+
+SEC("uprobe/SSL_write_v1_0_2")
+void BPF_UPROBE(ssl_write_v1_0_2, void * ssl, void* buffer, int num) {
+	ssl_uprobe_write_v_1_0_2(ctx, ssl, buffer, num, 0);
+}
+
+SEC("uprobe/SSL_read_v1_0_2")
+void BPF_UPROBE(ssl_read_enter_v1_0_2, void* ssl, void* buffer, int num) {
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 pid = pid_tgid >> 32;
+    __u64 id = pid_tgid | TLS_MASK;
+    ssl_uprobe_read_enter_v1_0_2(ctx, id, pid, ssl, buffer, num, 0);
+}
+
+struct go_interface {
+    __s64 type;
+    void* ptr;
+};
+
+#if defined(__TARGET_ARCH_x86)
+#define GO_PARAM1(x) ((x)->ax)
+#define GO_PARAM2(x) ((x)->bx)
+#define GO_PARAM3(x) ((x)->cx)
+#define GOROUTINE(x) ((x)->r14)
+#elif defined(__TARGET_ARCH_arm64) 
+/* arm64 provides struct user_pt_regs instead of struct pt_regs to userspace */
+#define GO_PARAM1(x) (((struct user_pt_regs *)(x))->regs[0])
+#define GO_PARAM2(x) (((struct user_pt_regs *)(x))->regs[1])
+#define GO_PARAM3(x) (((struct user_pt_regs *)(x))->regs[2])
+#define GOROUTINE(x) (((struct user_pt_regs *)(x))->regs[28])
+#endif
+
+
+static __always_inline
+int process_enter_of_go_conn_write(void *ctx, __u32 pid, __u32 fd, char *buf_ptr, __u64 count) {
+    unsigned char func_name[] = "process_enter_of_go_conn_write";
+    // parse and write to go_active_l7_req map
+    struct go_req_key k = {};
+    k.pid = pid;
+    k.fd = fd;
+
+    int zero = 0;
+    struct l7_request *req = bpf_map_lookup_elem(&go_l7_request_heap, &zero);
+    if (!req) {
+        return 0;
+    }
+    req->method = METHOD_UNKNOWN;
+    req->protocol = PROTOCOL_UNKNOWN;
+    req->payload_size = 0;
+    req->payload_read_complete = 0;
+    req->write_time_ns = bpf_ktime_get_ns();
+    req->request_type = 0;
+
+    if(buf_ptr){
+        // try to parse only http1.1 for gotls reqs for now.
+        int method = parse_http_method(buf_ptr);
+        if (method != -1){
+            req->protocol = PROTOCOL_HTTP;
+            req-> method = method;
+        }else{
+            req->protocol = PROTOCOL_UNKNOWN;
+            req->method = METHOD_UNKNOWN;
+            return 0; 
+        }
+    }
+
+    // copy req payload
+    bpf_probe_read(&req->payload, MAX_PAYLOAD_SIZE, buf_ptr);
+    if(count > MAX_PAYLOAD_SIZE){
+        // will not be able to copy all of it
+        req->payload_size = MAX_PAYLOAD_SIZE;
+        req->payload_read_complete = 0;
+    }else{
+        req->payload_size = count;
+        req->payload_read_complete = 1;
+    }
+
+    long res = bpf_map_update_elem(&go_active_l7_requests, &k, req, BPF_ANY);
+    if(res < 0)
+    {
+        unsigned char log_msg[] = "write failed to go_active_l7_requests -- res|fd|method";
+        log_to_userspace(ctx, WARN, func_name, log_msg, res, k.fd, req->method);
+    }
+
+    return 0;
+}
+
+// (c *Conn) Write(b []byte) (int, error)
+SEC("uprobe/go_tls_conn_write_enter")
+int BPF_UPROBE(go_tls_conn_write_enter) {
+    // unsigned char func_name[] = "go_tls_conn_write_enter";
+    __u32 pid = bpf_get_current_pid_tgid() >> 32;
+    
+    __u32 fd;
+    struct go_interface conn;
+    // Registers contain the function arguments
+    
+    // X0(arm64) register contains the pointer to the first function argument, c *Conn
+    if (bpf_probe_read_user(&conn, sizeof(conn), (void*)GO_PARAM1(ctx)) < 0) {
+        return 0;
+    };
+    void* fd_ptr;
+    if (bpf_probe_read_user(&fd_ptr, sizeof(fd_ptr), conn.ptr) < 0) {
+        return 0;
+    }
+    
+    if(!fd_ptr) {
+        return 0;
+    }
+    if (bpf_probe_read_user(&fd, sizeof(fd), fd_ptr + 0x10) < 0) {
+        return 1;
+    }
+
+    // X1(arm64) register contains the byte ptr, pointing to first byte of the slice
+    char *buf_ptr = (char*)GO_PARAM2(ctx);
+    // X2(arm64) register contains the length of the slice
+    __u64 buf_size = GO_PARAM3(ctx);
+
+    return process_enter_of_go_conn_write(ctx, pid, fd, buf_ptr, buf_size);
+}
+
+// func (c *Conn) Read(b []byte) (int, error)
+SEC("uprobe/go_tls_conn_read_enter")
+int BPF_UPROBE(go_tls_conn_read_enter) {
+    unsigned char func_name[] = "go_tls_conn_read_enter";
+    
+    __u32 fd;
+    struct go_interface conn;
+
+    // X0(arm64) register contains the pointer to the first function argument, c *Conn
+    if (bpf_probe_read_user(&conn, sizeof(conn), (void*)GO_PARAM1(ctx))) {
+        return 1;
+    };
+    void* fd_ptr;
+    if (bpf_probe_read_user(&fd_ptr, sizeof(fd_ptr), conn.ptr)) {
+        return 1;
+    }
+    if (bpf_probe_read_user(&fd, sizeof(fd), fd_ptr + 0x10)) {
+        return 1;
+    }
+
+    // X1(arm64) register contains the byte ptr, pointing to first byte of the slice
+    char *buf_ptr = (char*)GO_PARAM2(ctx);
+    // // X2(arm64) register contains the length of the slice
+    __u64 buf_size = GO_PARAM3(ctx);
+
+    struct go_read_args args = {};
+    args.fd = fd;
+    args.buf = buf_ptr;
+    args.size = buf_size;
+    args.read_start_ns = bpf_ktime_get_ns();
+
+    struct go_read_key k = {};
+    k.goid = GOROUTINE(ctx);
+    k.pid = bpf_get_current_pid_tgid() >> 32;
+
+    long res = bpf_map_update_elem(&go_active_reads, &k, &args, BPF_ANY);
+    if(res < 0)
+    {
+        unsigned char log_msg[] = "write failed to go_active_reads -- res|goid|";
+        log_to_userspace(ctx, WARN, func_name, log_msg, res, k.goid, 0);
+    }
+    return 0;
+}
+
+// attached to all RET instructions since uretprobe crashes go applications
+SEC("uprobe/go_tls_conn_read_exit")
+int BPF_UPROBE(go_tls_conn_read_exit) {
+    unsigned char func_name[] = "go_tls_conn_read_exit";
+    
+    // can't access to register we've access on read_enter here,
+    // registers are changed.
+    long int ret = GO_PARAM1(ctx);
+
+    struct go_read_key k = {};
+    k.goid = GOROUTINE(ctx);
+    k.pid = bpf_get_current_pid_tgid() >> 32;
+
+    struct go_read_args *read_args = bpf_map_lookup_elem(&go_active_reads, &k);
+    if (!read_args) {
+        return 0;
+    }
+    if(ret < 0){
+        bpf_map_delete_elem(&go_active_reads, &k);
+        return 0;
+    }
+
+    // writeloop and readloop different goroutines
+
+    struct go_req_key req_k = {};
+    req_k.pid = k.pid;
+    req_k.fd = read_args->fd;
+
+    struct l7_request *req = bpf_map_lookup_elem(&go_active_l7_requests, &req_k);
+    if (!req) {
+        return 0;
+    }
+
+    int zero = 0;
+    struct l7_event *e = bpf_map_lookup_elem(&l7_event_heap, &zero);
+    if (!e) {
+        bpf_map_delete_elem(&go_active_reads, &k);
+        return 0;
+    }
+
+    e->duration = bpf_ktime_get_ns() - req->write_time_ns;
+    e->write_time_ns = req->write_time_ns;
+    e->failed = 0; // success
+    
+    e->fd = read_args->fd;
+    e->pid = k.pid;
+    e->is_tls = 1;
+    e->method = req->method;
+    e->protocol = req->protocol;
+    
+    // request payload
+    e->payload_size = req->payload_size;
+    e->payload_read_complete = req->payload_read_complete;
+    
+    // copy req payload
+    bpf_probe_read(e->payload, MAX_PAYLOAD_SIZE, req->payload);
+    
+    e->failed = 0; // success
+    e->status = 0;
+    // parse response payload
+    if(read_args->buf && ret >= PAYLOAD_PREFIX_SIZE){
+        if(e->protocol == PROTOCOL_HTTP){ // if http, try to parse status code
+            // read first 16 bytes of read buffer
+            char buf_prefix[PAYLOAD_PREFIX_SIZE];
+            long r = bpf_probe_read(&buf_prefix, sizeof(buf_prefix), (void *)(read_args->buf)) ;
+            
+            if (r < 0) {
+                unsigned char log_msg[] = "read failed for resp buf -- res|goid|method";
+                log_to_userspace(ctx, WARN, func_name, log_msg, r, k.goid, e->method);
+
+                bpf_map_delete_elem(&go_active_reads, &k);
+                // bpf_map_delete_elem(&go_active_l7_requests, &req_k); // TODO: check ?
+                return 0;
+            }
+
+            int status = parse_http_status(buf_prefix);
+            if (status != -1){
+                e->status = status;
+            }else{
+                // In case of write happens but read_exit probe doesn't get called for a request (sigkill of process?)
+                // a read from the same socket (same pid-fd pair) after some time, can match with the previous write
+                // if the latter is http1.1, requests can mismatch (if expression above will satisfy)
+                // or(not http1.1) the status code will be 0 if continued processing.
+                // So we'll clean up the request here if it's not a protocol we support before hand.
+                // mismatches can still occur, but it's better than nothing.
+                // TODO: find a solution for the mismatch problem
+
+                bpf_map_delete_elem(&go_active_reads, &k);
+                bpf_map_delete_elem(&go_active_l7_requests, &req_k);
+                return 0;
+            }
+        }else{
+            bpf_map_delete_elem(&go_active_reads, &k);
+            return 0;
+        }
+    }else{
+        unsigned char log_msg[] = "read buffer is null or too small -- |goid|method";
+        log_to_userspace(ctx, DEBUG, func_name, log_msg, 0, k.goid, e->method);
+
+        bpf_map_delete_elem(&go_active_reads, &k);
+        return 0;
+    }
+
+    bpf_map_delete_elem(&go_active_reads, &k);
+    bpf_map_delete_elem(&go_active_l7_requests, &req_k);
+
+    long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
+    if (r < 0) {
+        unsigned char log_msg[] = "write failed to l7_events -- r|fd|method";
+        log_to_userspace(ctx, WARN, func_name, log_msg, r, e->fd, e->method);
+    }
+
+    return 0;
 }
 

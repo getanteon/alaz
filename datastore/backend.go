@@ -95,11 +95,29 @@ const (
 	healthCheckEndpoint = "/alaz/healthcheck/"
 )
 
+type LeveledLogger struct {
+	l zerolog.Logger
+}
+
+func (ll LeveledLogger) Error(msg string, keysAndValues ...interface{}) {
+	ll.l.Error().Fields(keysAndValues).Msg(msg)
+}
+func (ll LeveledLogger) Info(msg string, keysAndValues ...interface{}) {
+	ll.l.Info().Fields(keysAndValues).Msg(msg)
+}
+func (ll LeveledLogger) Debug(msg string, keysAndValues ...interface{}) {
+	ll.l.Debug().Fields(keysAndValues).Msg(msg)
+}
+func (ll LeveledLogger) Warn(msg string, keysAndValues ...interface{}) {
+	ll.l.Warn().Fields(keysAndValues).Msg(msg)
+}
+
 func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *BackendDS {
 	ctx, _ := context.WithCancel(parentCtx)
 	rand.Seed(time.Now().UnixNano())
 
 	retryClient := retryablehttp.NewClient()
+	retryClient.Logger = LeveledLogger{l: log.Logger.With().Str("component", "retryablehttp").Logger()}
 	retryClient.Backoff = retryablehttp.DefaultBackoff
 	retryClient.RetryWaitMin = 1 * time.Second
 	retryClient.RetryWaitMax = 5 * time.Second
@@ -128,14 +146,29 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 				if err != nil {
 					log.Logger.Debug().Msgf("error reading response body: %v", err)
 				}
-				var resp BackendResponse
-				err = json.Unmarshal(rb, &resp)
-				if err != nil {
-					log.Logger.Debug().Msgf("error unmarshalling response body: %v", err)
-				}
-				if len(resp.Errors) > 0 {
-					for _, e := range resp.Errors {
-						log.Logger.Debug().Str("errorMsg", e.Error).Any("event", e.Event).Msgf("backend persist error")
+
+				// if req endpoint
+				if resp.Request.URL.Path == reqEndpoint {
+					var resp ReqBackendReponse
+					err = json.Unmarshal(rb, &resp)
+					if err != nil {
+						log.Logger.Debug().Msgf("error unmarshalling response body: %v", err)
+					}
+					if len(resp.Errors) > 0 {
+						for _, e := range resp.Errors {
+							log.Logger.Error().Str("errorMsg", e.Error).Any("event", e.Event).Msgf("backend persist error")
+						}
+					}
+				} else {
+					var resp BackendResponse
+					err = json.Unmarshal(rb, &resp)
+					if err != nil {
+						log.Logger.Debug().Msgf("error unmarshalling response body: %v", err)
+					}
+					if len(resp.Errors) > 0 {
+						for _, e := range resp.Errors {
+							log.Logger.Error().Str("errorMsg", e.Error).Any("event", e.Event).Msgf("backend persist error")
+						}
 					}
 				}
 			}
@@ -163,7 +196,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 		port:               conf.Port,
 		c:                  client,
 		batchSize:          bs,
-		reqInfoPool:        newReqInfoPool(func() *ReqInfo { return &ReqInfo{} }, func(r *ReqInfo) { r = nil }),
+		reqInfoPool:        newReqInfoPool(func() *ReqInfo { return &ReqInfo{} }, func(r *ReqInfo) {}),
 		reqChanBuffer:      make(chan *ReqInfo, 10000),
 		podEventChan:       make(chan interface{}, 100),
 		svcEventChan:       make(chan interface{}, 100),
@@ -265,7 +298,9 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 
 	go func() {
 		<-ds.ctx.Done()
-		ds.reqInfoPool.Done()
+		// TODO:
+		// reqInfoPool.Put() results in send to closed channel if Done() is called
+		// ds.reqInfoPool.Done()
 		log.Logger.Info().Msg("backend datastore stopped")
 	}()
 
@@ -428,7 +463,7 @@ func newReqInfoPool(factory func() *ReqInfo, close func(*ReqInfo)) *poolutil.Poo
 	}
 }
 
-func (b *BackendDS) PersistRequest(request Request) error {
+func (b *BackendDS) PersistRequest(request *Request) error {
 	// get a reqInfo from the pool
 	reqInfo := b.reqInfoPool.Get()
 
@@ -448,6 +483,7 @@ func (b *BackendDS) PersistRequest(request Request) error {
 	reqInfo[12] = request.FailReason // TODO ??
 	reqInfo[13] = request.Method
 	reqInfo[14] = request.Path
+	reqInfo[15] = request.Tls
 
 	b.reqChanBuffer <- reqInfo
 

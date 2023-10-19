@@ -8,6 +8,7 @@ package aggregator
 // 5. docker (TODO)
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strings"
@@ -27,9 +28,13 @@ import (
 )
 
 type Aggregator struct {
+	ctx context.Context
+
 	// listen to events from different sources
 	k8sChan  <-chan interface{}
 	ebpfChan <-chan interface{}
+
+	ec *ebpf.EbpfCollector
 
 	// store the service map
 	clusterInfo *ClusterInfo
@@ -97,7 +102,8 @@ func init() {
 	reverseDnsCache = cache.New(defaultExpiration, purgeTime)
 }
 
-func NewAggregator(k8sChan <-chan interface{}, crChan <-chan interface{}, ebpfChan <-chan interface{}, ds datastore.DataStore) *Aggregator {
+func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, ec *ebpf.EbpfCollector, ds datastore.DataStore) *Aggregator {
+	ctx, _ := context.WithCancel(parentCtx)
 	clusterInfo := &ClusterInfo{
 		PodIPToPodUid:         map[string]types.UID{},
 		ServiceIPToServiceUid: map[string]types.UID{},
@@ -105,8 +111,10 @@ func NewAggregator(k8sChan <-chan interface{}, crChan <-chan interface{}, ebpfCh
 	}
 
 	return &Aggregator{
+		ctx:         ctx,
 		k8sChan:     k8sChan,
-		ebpfChan:    ebpfChan,
+		ebpfChan:    ec.EbpfEvents(),
+		ec:          ec,
 		clusterInfo: clusterInfo,
 		ds:          ds,
 	}
@@ -114,7 +122,7 @@ func NewAggregator(k8sChan <-chan interface{}, crChan <-chan interface{}, ebpfCh
 
 func (a *Aggregator) Run() {
 	go a.processk8s()
-	go a.processEbpf()
+	go a.processEbpf(a.ctx)
 }
 
 func (a *Aggregator) processk8s() {
@@ -141,57 +149,69 @@ func (a *Aggregator) processk8s() {
 	}
 }
 
-func (a *Aggregator) processEbpf() {
+func (a *Aggregator) processEbpf(ctx context.Context) {
+	stop := make(chan struct{})
+	go func() {
+		<-ctx.Done()
+		close(stop)
+	}()
+
 	for data := range a.ebpfChan {
-		bpfEvent, ok := data.(ebpf.BpfEvent)
-		if !ok {
-			log.Logger.Error().Interface("ebpfData", data).Msg("error casting ebpf event")
-			continue
-		}
-		switch bpfEvent.Type() {
-		case tcp_state.TCP_CONNECT_EVENT:
-			d := data.(tcp_state.TcpConnectEvent) // copy data's value
-			tcpConnectEvent := tcp_state.TcpConnectEvent{
-				Fd:        d.Fd,
-				Timestamp: d.Timestamp,
-				Type_:     d.Type_,
-				Pid:       d.Pid,
-				SPort:     d.SPort,
-				DPort:     d.DPort,
-				SAddr:     d.SAddr,
-				DAddr:     d.DAddr,
+		select {
+		case <-stop:
+			log.Logger.Info().Msg("processEbpf exiting...")
+			return
+		default:
+			bpfEvent, ok := data.(ebpf.BpfEvent)
+			if !ok {
+				log.Logger.Error().Interface("ebpfData", data).Msg("error casting ebpf event")
+				continue
 			}
-			go a.processTcpConnect(tcpConnectEvent)
-		case l7_req.L7_EVENT:
-			d := data.(l7_req.L7Event) // copy data's value
+			switch bpfEvent.Type() {
+			case tcp_state.TCP_CONNECT_EVENT:
+				d := data.(tcp_state.TcpConnectEvent) // copy data's value
+				tcpConnectEvent := tcp_state.TcpConnectEvent{
+					Fd:        d.Fd,
+					Timestamp: d.Timestamp,
+					Type_:     d.Type_,
+					Pid:       d.Pid,
+					SPort:     d.SPort,
+					DPort:     d.DPort,
+					SAddr:     d.SAddr,
+					DAddr:     d.DAddr,
+				}
+				go a.processTcpConnect(tcpConnectEvent)
+			case l7_req.L7_EVENT:
+				d := data.(l7_req.L7Event) // copy data's value
 
-			// copy payload slice
-			payload := [512]uint8{}
-			copy(payload[:], d.Payload[:])
+				// copy payload slice
+				payload := [512]uint8{}
+				copy(payload[:], d.Payload[:])
 
-			l7Event := l7_req.L7Event{
-				Fd:                  d.Fd,
-				Pid:                 d.Pid,
-				Status:              d.Status,
-				Duration:            d.Duration,
-				Protocol:            d.Protocol,
-				Method:              d.Method,
-				Payload:             payload,
-				PayloadSize:         d.PayloadSize,
-				PayloadReadComplete: d.PayloadReadComplete,
-				Failed:              d.Failed,
-				WriteTimeNs:         d.WriteTimeNs,
+				l7Event := l7_req.L7Event{
+					Fd:                  d.Fd,
+					Pid:                 d.Pid,
+					Status:              d.Status,
+					Duration:            d.Duration,
+					Protocol:            d.Protocol,
+					Tls:                 d.Tls,
+					Method:              d.Method,
+					Payload:             payload,
+					PayloadSize:         d.PayloadSize,
+					PayloadReadComplete: d.PayloadReadComplete,
+					Failed:              d.Failed,
+					WriteTimeNs:         d.WriteTimeNs,
+				}
+				go a.processL7(ctx, l7Event)
 			}
-			go a.processL7(l7Event)
 		}
 	}
 }
 
 func (a *Aggregator) processTcpConnect(data interface{}) {
 	d := data.(tcp_state.TcpConnectEvent)
+	go a.ec.ListenForEncryptedReqs(d.Pid)
 	if d.Type_ == tcp_state.EVENT_TCP_ESTABLISHED {
-		// {pid,fd} -> SockInfo
-
 		// filter out localhost connections
 		if d.SAddr == "127.0.0.1" || d.DAddr == "127.0.0.1" {
 			return
@@ -328,7 +348,7 @@ func parseSqlCommand(r []uint8) string {
 	return sqlStatement
 }
 
-func (a *Aggregator) processL7(d l7_req.L7Event) {
+func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
 	var sockMap *SocketMap
 	var skLine *SocketLine
 	var ok bool
@@ -346,6 +366,8 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 		a.clusterInfo.mu.Lock() // lock for writing
 		a.clusterInfo.PidToSocketMap[d.Pid] = sockMap
 		a.clusterInfo.mu.Unlock() // unlock for writing
+
+		go a.ec.ListenForEncryptedReqs(d.Pid)
 	}
 
 	sockMap.mu.RLock() // lock for reading
@@ -399,6 +421,14 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 		if rc == 0 {
 			break
 		}
+
+		select {
+		case <-ctx.Done():
+			log.Logger.Debug().Msg("processL7 exiting, stop retrying...")
+			return
+		default:
+			continue
+		}
 	}
 
 	if rc < retryLimit && skInfo != nil {
@@ -420,6 +450,7 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 		FromIP:     skInfo.Saddr,
 		ToIP:       skInfo.Daddr,
 		Protocol:   d.Protocol,
+		Tls:        d.Tls,
 		Completed:  true,
 		StatusCode: d.Status,
 		FailReason: "",
@@ -505,8 +536,12 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 		reqDto.FromType, reqDto.ToType = reqDto.ToType, reqDto.FromType
 	}
 
+	if d.Protocol == l7_req.L7_PROTOCOL_HTTP && d.Tls {
+		reqDto.Protocol = "HTTPS"
+	}
+
 	go func() {
-		err := a.ds.PersistRequest(reqDto)
+		err := a.ds.PersistRequest(&reqDto)
 		if err != nil {
 			log.Logger.Error().Err(err).Msg("error persisting request")
 		}

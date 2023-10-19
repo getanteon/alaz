@@ -97,6 +97,7 @@ type Request struct {
 	ToUID      string
 	ToPort     uint16
 	Protocol   string
+	Tls        bool
 	Completed  bool
 	StatusCode uint32
 	FailReason string
@@ -110,5 +111,14 @@ type BackendResponse struct {
 		EventNum int         `json:"event_num"`
 		Event    interface{} `json:"event"`
 		Error    string      `json:"error"`
+	} `json:"errors"`
+}
+
+type ReqBackendReponse struct {
+	Msg    string `json:"msg"`
+	Errors []struct {
+		EventNum int         `json:"request_num"`
+		Event    interface{} `json:"request"`
+		Error    string      `json:"errors"`
 	} `json:"errors"`
 }

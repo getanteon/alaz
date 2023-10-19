@@ -1,6 +1,7 @@
 package l7_req
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"unsafe"
@@ -186,6 +187,7 @@ type L7Event struct {
 	Status              uint32
 	Duration            uint64
 	Protocol            string // L7_PROTOCOL_HTTP
+	Tls                 bool   // Whether request was encrypted
 	Method              string
 	Payload             [512]uint8
 	PayloadSize         uint32 // How much of the payload was copied
@@ -200,22 +202,27 @@ func (e L7Event) Type() string {
 	return L7_EVENT
 }
 
-// returns when program is detached
-func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
-	ctx, _ := context.WithCancel(parentCtx)
+var L7BpfProgsAndMaps bpfObjects
+
+func LoadBpfObjects() {
 	// Allow the current process to lock memory for eBPF resources.
 	if err := rlimit.RemoveMemlock(); err != nil {
 		log.Logger.Fatal().Err(err).Msg("failed to remove memlock limit")
 	}
-
 	// Load pre-compiled programs and maps into the kernel.
-	objs := bpfObjects{}
-	if err := loadBpfObjects(&objs, nil); err != nil {
+	L7BpfProgsAndMaps = bpfObjects{}
+	if err := loadBpfObjects(&L7BpfProgsAndMaps, nil); err != nil {
 		log.Logger.Fatal().Err(err).Msg("loading objects")
 	}
-	defer objs.Close()
+}
 
-	l, err := link.Tracepoint("syscalls", "sys_enter_read", objs.bpfPrograms.SysEnterRead, nil)
+// returns when program is detached
+func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
+	ctx, _ := context.WithCancel(parentCtx)
+	defer L7BpfProgsAndMaps.Close()
+
+	// link programs
+	l, err := link.Tracepoint("syscalls", "sys_enter_read", L7BpfProgsAndMaps.bpfPrograms.SysEnterRead, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_enter_read tracepoint")
 	}
@@ -225,9 +232,9 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		l.Close()
 	}()
 
-	l1, err := link.Tracepoint("syscalls", "sys_enter_write", objs.bpfPrograms.SysEnterWrite, nil)
+	l1, err := link.Tracepoint("syscalls", "sys_enter_write", L7BpfProgsAndMaps.bpfPrograms.SysEnterWrite, nil)
 	if err != nil {
-		log.Logger.Warn().Str("verifier log", string(objs.bpfPrograms.SysEnterWrite.VerifierLog)).Msg("verifier log")
+		log.Logger.Warn().Str("verifier log", string(L7BpfProgsAndMaps.bpfPrograms.SysEnterWrite.VerifierLog)).Msg("verifier log")
 		log.Logger.Fatal().Err(err).Msg("link sys_enter_write tracepoint")
 	}
 	log.Logger.Info().Msg("sys_enter_write linked")
@@ -236,7 +243,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		l1.Close()
 	}()
 
-	l2, err := link.Tracepoint("syscalls", "sys_exit_read", objs.bpfPrograms.SysExitRead, nil)
+	l2, err := link.Tracepoint("syscalls", "sys_exit_read", L7BpfProgsAndMaps.bpfPrograms.SysExitRead, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_exit_read tracepoint")
 	}
@@ -246,7 +253,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		l2.Close()
 	}()
 
-	l3, err := link.Tracepoint("syscalls", "sys_enter_sendto", objs.bpfPrograms.SysEnterSendto, nil)
+	l3, err := link.Tracepoint("syscalls", "sys_enter_sendto", L7BpfProgsAndMaps.bpfPrograms.SysEnterSendto, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_enter_sendto tracepoint")
 	}
@@ -256,7 +263,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		l3.Close()
 	}()
 
-	l4, err := link.Tracepoint("syscalls", "sys_enter_recvfrom", objs.bpfPrograms.SysEnterRecvfrom, nil)
+	l4, err := link.Tracepoint("syscalls", "sys_enter_recvfrom", L7BpfProgsAndMaps.bpfPrograms.SysEnterRecvfrom, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_enter_recvfrom tracepoint")
 	}
@@ -266,7 +273,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		l4.Close()
 	}()
 
-	l5, err := link.Tracepoint("syscalls", "sys_exit_recvfrom", objs.bpfPrograms.SysExitRecvfrom, nil)
+	l5, err := link.Tracepoint("syscalls", "sys_exit_recvfrom", L7BpfProgsAndMaps.bpfPrograms.SysExitRecvfrom, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_exit_recvfrom tracepoint")
 	}
@@ -276,7 +283,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		l5.Close()
 	}()
 
-	l6, err := link.Tracepoint("syscalls", "sys_exit_sendto", objs.bpfPrograms.SysExitSendto, nil)
+	l6, err := link.Tracepoint("syscalls", "sys_exit_sendto", L7BpfProgsAndMaps.bpfPrograms.SysExitSendto, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_exit_sendto tracepoint")
 	}
@@ -286,7 +293,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		l6.Close()
 	}()
 
-	l7, err := link.Tracepoint("syscalls", "sys_exit_write", objs.bpfPrograms.SysExitWrite, nil)
+	l7, err := link.Tracepoint("syscalls", "sys_exit_write", L7BpfProgsAndMaps.bpfPrograms.SysExitWrite, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_exit_write tracepoint")
 	}
@@ -297,7 +304,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	}()
 
 	// initialize perf event readers
-	l7Events, err := perf.NewReader(objs.L7Events, 64*os.Getpagesize())
+	l7Events, err := perf.NewReader(L7BpfProgsAndMaps.L7Events, 64*os.Getpagesize())
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
 	}
@@ -306,61 +313,181 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		l7Events.Close()
 	}()
 
-	// Read loop reporting the total amount of times the kernel
-	// function was entered, once per second.
+	logs, err := perf.NewReader(L7BpfProgsAndMaps.LogMap, 64*os.Getpagesize())
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
+	}
+	defer func() {
+		log.Logger.Info().Msg("closing l7 events perf event array reader")
+		logs.Close()
+	}()
 
+	logsDone := make(chan struct{}, 1)
 	readDone := make(chan struct{})
+
 	go func() {
-		for {
-			read := func() {
-				record, err := l7Events.Read()
-				if err != nil {
-					log.Logger.Warn().Err(err).Msg("error reading from perf array")
-				}
-
-				if record.LostSamples != 0 {
-					log.Logger.Warn().Msgf("lost samples l7-event %d", record.LostSamples)
-				}
-
-				// TODO: investigate why this is happening
-				if record.RawSample == nil || len(record.RawSample) == 0 {
-					log.Logger.Warn().Msgf("read sample l7-event nil or empty")
-					return
-				}
-
-				l7Event := (*bpfL7Event)(unsafe.Pointer(&record.RawSample[0]))
-
-				go func() {
-
-					protocol := L7ProtocolConversion(l7Event.Protocol).String()
-					var method string
-					switch protocol {
-					case L7_PROTOCOL_HTTP:
-						method = HTTPMethodConversion(l7Event.Method).String()
-					case L7_PROTOCOL_AMQP:
-						method = RabbitMQMethodConversion(l7Event.Method).String()
-					case L7_PROTOCOL_POSTGRES:
-						method = PostgresMethodConversion(l7Event.Method).String()
-					default:
-						method = "Unknown"
-					}
-
-					ch <- L7Event{
-						Fd:                  l7Event.Fd,
-						Pid:                 l7Event.Pid,
-						Status:              l7Event.Status,
-						Duration:            l7Event.Duration,
-						Protocol:            protocol,
-						Method:              method,
-						Payload:             l7Event.Payload,
-						PayloadSize:         l7Event.PayloadSize,
-						PayloadReadComplete: uint8ToBool(l7Event.PayloadReadComplete),
-						Failed:              uint8ToBool(l7Event.Failed),
-						WriteTimeNs:         l7Event.WriteTimeNs,
-					}
-				}()
+		var logMessage []byte
+		var funcName []byte
+		read := func() {
+			record, err := logs.Read()
+			if err != nil {
+				log.Logger.Warn().Err(err).Msg("error reading from perf array")
 			}
 
+			if record.LostSamples != 0 {
+				log.Logger.Debug().Msgf("lost #%d samples due to ring buffer's full", record.LostSamples)
+			}
+
+			if record.RawSample == nil || len(record.RawSample) == 0 {
+				log.Logger.Debug().Msgf("read empty record from perf array")
+				return
+			}
+
+			logMsg := (*bpfLogMessage)(unsafe.Pointer(&record.RawSample[0]))
+
+			funcEnd := findEndIndex(logMsg.FuncName)
+			msgEnd := findEndIndex(logMsg.LogMsg)
+
+			logMessage = logMsg.LogMsg[:msgEnd]
+			funcName = logMsg.FuncName[:funcEnd]
+
+			args := []struct {
+				argName  string
+				argValue uint64
+			}{
+				{
+					argName:  "",
+					argValue: 0,
+				},
+				{
+					argName:  "",
+					argValue: 0,
+				},
+				{
+					argName:  "",
+					argValue: 0,
+				},
+			}
+
+			parseLogMessage := func(input []byte, logMsg *bpfLogMessage) []byte {
+				// fd,x,y -- {log-msg}
+				// fd,, -- {log-msg}
+
+				parts := bytes.SplitN(input, []byte(" -- "), 2)
+				if len(parts) != 2 {
+					log.Logger.Warn().Msgf("invalid ebpf log message: %s", string(input))
+					return nil
+				}
+
+				parsedArgs := bytes.SplitN(parts[1], []byte("|"), 3)
+				if len(parsedArgs) != 3 {
+					log.Logger.Warn().Msgf("invalid ebpf log message not 3 args: %s", string(input))
+					return nil
+				}
+
+				args[0].argName = string(parsedArgs[0])
+				args[0].argValue = logMsg.Arg1
+
+				args[1].argName = string(parsedArgs[1])
+				args[1].argValue = logMsg.Arg2
+
+				args[2].argName = string(parsedArgs[2])
+				args[2].argValue = logMsg.Arg3
+				return parts[0]
+			}
+
+			// will change resultArgs
+			logMessage = parseLogMessage(logMessage, logMsg)
+			if logMessage == nil {
+				log.Logger.Warn().Msgf("invalid ebpf log message: %s", string(logMsg.LogMsg[:]))
+				return
+			}
+
+			switch logMsg.Level {
+			case 0:
+				log.Logger.Debug().Str("func", string(funcName)).Uint32("pid", logMsg.Pid).
+					Uint64(args[0].argName, args[0].argValue).Uint64(args[1].argName, args[1].argValue).Uint64(args[2].argName, args[2].argValue).
+					Str("log-msg", string(logMessage)).Msg("ebpf-log")
+			case 1:
+				log.Logger.Info().Str("func", string(funcName)).Uint32("pid", logMsg.Pid).
+					Uint64(args[0].argName, args[0].argValue).Uint64(args[1].argName, args[1].argValue).Uint64(args[2].argName, args[2].argValue).
+					Str("log-msg", string(logMessage)).Msg("ebpf-log")
+			case 2:
+				log.Logger.Warn().Str("func", string(funcName)).Uint32("pid", logMsg.Pid).
+					Uint64(args[0].argName, args[0].argValue).Uint64(args[1].argName, args[1].argValue).Uint64(args[2].argName, args[2].argValue).
+					Str("log-msg", string(logMessage)).Msg("ebpf-log")
+			case 3:
+				log.Logger.Error().Str("func", string(funcName)).Uint32("pid", logMsg.Pid).
+					Uint64(args[0].argName, args[0].argValue).Uint64(args[1].argName, args[1].argValue).Uint64(args[2].argName, args[2].argValue).
+					Str("log-msg", string(logMessage)).Msg("ebpf-log")
+			}
+		}
+		for {
+			select {
+			case <-logsDone:
+				return
+			default:
+				read()
+			}
+		}
+	}()
+
+	go func() {
+		read := func() {
+			record, err := l7Events.Read()
+			if err != nil {
+				log.Logger.Warn().Err(err).Msg("error reading from perf array")
+			}
+
+			if record.LostSamples != 0 {
+				log.Logger.Debug().Msgf("lost samples l7-event %d", record.LostSamples)
+			}
+
+			// TODO: investigate why this is happening
+			if record.RawSample == nil || len(record.RawSample) == 0 {
+				log.Logger.Debug().Msgf("read sample l7-event nil or empty")
+				return
+			}
+
+			l7Event := (*bpfL7Event)(unsafe.Pointer(&record.RawSample[0]))
+
+			go func() {
+
+				protocol := L7ProtocolConversion(l7Event.Protocol).String()
+				var method string
+				switch protocol {
+				case L7_PROTOCOL_HTTP:
+					method = HTTPMethodConversion(l7Event.Method).String()
+				case L7_PROTOCOL_AMQP:
+					method = RabbitMQMethodConversion(l7Event.Method).String()
+				case L7_PROTOCOL_POSTGRES:
+					method = PostgresMethodConversion(l7Event.Method).String()
+				default:
+					method = "Unknown"
+				}
+
+				if uint8ToBool(l7Event.IsTls) {
+					log.Logger.Debug().Uint16("fd", uint16(l7Event.Fd)).Uint32("pid", l7Event.Pid).
+						Str("payload", string(l7Event.Payload[:])).Str("method", method).Str("protocol", protocol).Uint32("status", l7Event.Status).Msg("l7tls event")
+				}
+
+				ch <- L7Event{
+					Fd:                  l7Event.Fd,
+					Pid:                 l7Event.Pid,
+					Status:              l7Event.Status,
+					Duration:            l7Event.Duration,
+					Protocol:            protocol,
+					Tls:                 uint8ToBool(l7Event.IsTls),
+					Method:              method,
+					Payload:             l7Event.Payload,
+					PayloadSize:         l7Event.PayloadSize,
+					PayloadReadComplete: uint8ToBool(l7Event.PayloadReadComplete),
+					Failed:              uint8ToBool(l7Event.Failed),
+					WriteTimeNs:         l7Event.WriteTimeNs,
+				}
+			}()
+		}
+		for {
 			select {
 			case <-readDone:
 				return
@@ -373,10 +500,20 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 
 	<-ctx.Done() // wait for context to be cancelled
 	readDone <- struct{}{}
+	logsDone <- struct{}{}
 	// defers will clean up
 }
 
 // 0 is false, 1 is true
 func uint8ToBool(num uint8) bool {
 	return num != 0
+}
+
+func findEndIndex(b [100]uint8) (endIndex int) {
+	for i, v := range b {
+		if v == 0 {
+			return i
+		}
+	}
+	return len(b)
 }

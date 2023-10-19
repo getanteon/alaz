@@ -88,23 +88,25 @@ func (e TcpConnectEvent) Type() string {
 	return TCP_CONNECT_EVENT
 }
 
-// returns when program is detached
-func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
-	ctx, _ := context.WithCancel(parentCtx)
+var objs bpfObjects
+
+func LoadBpfObjects() {
 	// Allow the current process to lock memory for eBPF resources.
 	if err := rlimit.RemoveMemlock(); err != nil {
 		log.Logger.Fatal().Err(err).Msg("failed to remove memlock limit")
 	}
 
 	// Load pre-compiled programs and maps into the kernel.
-	objs := bpfObjects{}
+	objs = bpfObjects{}
 	if err := loadBpfObjects(&objs, nil); err != nil {
 		log.Logger.Fatal().Err(err).Msg("loading objects")
 	}
-	defer objs.Close()
+}
 
-	ticker := time.NewTicker(1 * time.Millisecond)
-	defer ticker.Stop()
+// returns when program is detached
+func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
+	ctx, _ := context.WithCancel(parentCtx)
+	defer objs.Close()
 
 	time.Sleep(1 * time.Second)
 

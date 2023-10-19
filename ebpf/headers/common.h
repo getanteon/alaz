@@ -116,3 +116,20 @@ enum {
         return 0;                                     \
     }                                                 \
 })
+
+#ifndef __VMLINUX_H__
+#define __VMLINUX_H__
+
+// #if defined(__TARGET_ARCH_x86)
+//     #define bpf_target_x86
+//     #define bpf_target_defined
+// #elif defined(__TARGET_ARCH_arm64)
+//     #define bpf_target_arm64
+//     #define bpf_target_defined
+// #else
+//     #undef bpf_target_defined
+// #endif
+#endif /* __VMLINUX_H__ */
+
+
+
