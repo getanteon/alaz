@@ -298,7 +298,9 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 
 	go func() {
 		<-ds.ctx.Done()
-		ds.reqInfoPool.Done()
+		// TODO:
+		// reqInfoPool.Put() results in send to closed channel if Done() is called
+		// ds.reqInfoPool.Done()
 		log.Logger.Info().Msg("backend datastore stopped")
 	}()
 
@@ -461,7 +463,7 @@ func newReqInfoPool(factory func() *ReqInfo, close func(*ReqInfo)) *poolutil.Poo
 	}
 }
 
-func (b *BackendDS) PersistRequest(request Request) error {
+func (b *BackendDS) PersistRequest(request *Request) error {
 	// get a reqInfo from the pool
 	reqInfo := b.reqInfoPool.Get()
 

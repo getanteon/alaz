@@ -8,6 +8,7 @@ package aggregator
 // 5. docker (TODO)
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strings"
@@ -27,6 +28,8 @@ import (
 )
 
 type Aggregator struct {
+	ctx context.Context
+
 	// listen to events from different sources
 	k8sChan  <-chan interface{}
 	ebpfChan <-chan interface{}
@@ -99,7 +102,8 @@ func init() {
 	reverseDnsCache = cache.New(defaultExpiration, purgeTime)
 }
 
-func NewAggregator(k8sChan <-chan interface{}, ec *ebpf.EbpfCollector, ds datastore.DataStore) *Aggregator {
+func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, ec *ebpf.EbpfCollector, ds datastore.DataStore) *Aggregator {
+	ctx, _ := context.WithCancel(parentCtx)
 	clusterInfo := &ClusterInfo{
 		PodIPToPodUid:         map[string]types.UID{},
 		ServiceIPToServiceUid: map[string]types.UID{},
@@ -107,6 +111,7 @@ func NewAggregator(k8sChan <-chan interface{}, ec *ebpf.EbpfCollector, ds datast
 	}
 
 	return &Aggregator{
+		ctx:         ctx,
 		k8sChan:     k8sChan,
 		ebpfChan:    ec.EbpfEvents(),
 		ec:          ec,
@@ -117,7 +122,7 @@ func NewAggregator(k8sChan <-chan interface{}, ec *ebpf.EbpfCollector, ds datast
 
 func (a *Aggregator) Run() {
 	go a.processk8s()
-	go a.processEbpf()
+	go a.processEbpf(a.ctx)
 }
 
 func (a *Aggregator) processk8s() {
@@ -144,49 +149,61 @@ func (a *Aggregator) processk8s() {
 	}
 }
 
-func (a *Aggregator) processEbpf() {
+func (a *Aggregator) processEbpf(ctx context.Context) {
+	stop := make(chan struct{})
+	go func() {
+		<-ctx.Done()
+		close(stop)
+	}()
+
 	for data := range a.ebpfChan {
-		bpfEvent, ok := data.(ebpf.BpfEvent)
-		if !ok {
-			log.Logger.Error().Interface("ebpfData", data).Msg("error casting ebpf event")
-			continue
-		}
-		switch bpfEvent.Type() {
-		case tcp_state.TCP_CONNECT_EVENT:
-			d := data.(tcp_state.TcpConnectEvent) // copy data's value
-			tcpConnectEvent := tcp_state.TcpConnectEvent{
-				Fd:        d.Fd,
-				Timestamp: d.Timestamp,
-				Type_:     d.Type_,
-				Pid:       d.Pid,
-				SPort:     d.SPort,
-				DPort:     d.DPort,
-				SAddr:     d.SAddr,
-				DAddr:     d.DAddr,
+		select {
+		case <-stop:
+			log.Logger.Info().Msg("processEbpf exiting...")
+			return
+		default:
+			bpfEvent, ok := data.(ebpf.BpfEvent)
+			if !ok {
+				log.Logger.Error().Interface("ebpfData", data).Msg("error casting ebpf event")
+				continue
 			}
-			go a.processTcpConnect(tcpConnectEvent)
-		case l7_req.L7_EVENT:
-			d := data.(l7_req.L7Event) // copy data's value
+			switch bpfEvent.Type() {
+			case tcp_state.TCP_CONNECT_EVENT:
+				d := data.(tcp_state.TcpConnectEvent) // copy data's value
+				tcpConnectEvent := tcp_state.TcpConnectEvent{
+					Fd:        d.Fd,
+					Timestamp: d.Timestamp,
+					Type_:     d.Type_,
+					Pid:       d.Pid,
+					SPort:     d.SPort,
+					DPort:     d.DPort,
+					SAddr:     d.SAddr,
+					DAddr:     d.DAddr,
+				}
+				go a.processTcpConnect(tcpConnectEvent)
+			case l7_req.L7_EVENT:
+				d := data.(l7_req.L7Event) // copy data's value
 
-			// copy payload slice
-			payload := [512]uint8{}
-			copy(payload[:], d.Payload[:])
+				// copy payload slice
+				payload := [512]uint8{}
+				copy(payload[:], d.Payload[:])
 
-			l7Event := l7_req.L7Event{
-				Fd:                  d.Fd,
-				Pid:                 d.Pid,
-				Status:              d.Status,
-				Duration:            d.Duration,
-				Protocol:            d.Protocol,
-				Tls:                 d.Tls,
-				Method:              d.Method,
-				Payload:             payload,
-				PayloadSize:         d.PayloadSize,
-				PayloadReadComplete: d.PayloadReadComplete,
-				Failed:              d.Failed,
-				WriteTimeNs:         d.WriteTimeNs,
+				l7Event := l7_req.L7Event{
+					Fd:                  d.Fd,
+					Pid:                 d.Pid,
+					Status:              d.Status,
+					Duration:            d.Duration,
+					Protocol:            d.Protocol,
+					Tls:                 d.Tls,
+					Method:              d.Method,
+					Payload:             payload,
+					PayloadSize:         d.PayloadSize,
+					PayloadReadComplete: d.PayloadReadComplete,
+					Failed:              d.Failed,
+					WriteTimeNs:         d.WriteTimeNs,
+				}
+				go a.processL7(ctx, l7Event)
 			}
-			go a.processL7(l7Event)
 		}
 	}
 }
@@ -331,7 +348,7 @@ func parseSqlCommand(r []uint8) string {
 	return sqlStatement
 }
 
-func (a *Aggregator) processL7(d l7_req.L7Event) {
+func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
 	var sockMap *SocketMap
 	var skLine *SocketLine
 	var ok bool
@@ -403,6 +420,14 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 
 		if rc == 0 {
 			break
+		}
+
+		select {
+		case <-ctx.Done():
+			log.Logger.Debug().Msg("processL7 exiting, stop retrying...")
+			return
+		default:
+			continue
 		}
 	}
 
@@ -516,7 +541,7 @@ func (a *Aggregator) processL7(d l7_req.L7Event) {
 	}
 
 	go func() {
-		err := a.ds.PersistRequest(reqDto)
+		err := a.ds.PersistRequest(&reqDto)
 		if err != nil {
 			log.Logger.Error().Err(err).Msg("error persisting request")
 		}
