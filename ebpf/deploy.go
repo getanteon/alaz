@@ -2,6 +2,7 @@ package ebpf
 
 import (
 	"context"
+	"debug/buildinfo"
 	"debug/elf"
 	"fmt"
 	"io"
@@ -232,6 +233,22 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 		}
 	}()
 
+	// read build info of a go executable
+	bi, err := buildinfo.ReadFile(path)
+	if err != nil {
+		log.Logger.Debug().Err(err).Uint32("pid", pid).Msg("error reading build info")
+		errors = append(errors, err)
+		return errors
+	}
+
+	// func arguments are stored in stack in go versions below 1.17
+	// we need to get the stack pointer in order to read the arguments etc.
+	// we only support reading arguments from registers for go versions >= 1.17
+	if bi.GoVersion < "go1.17" {
+		log.Logger.Debug().Str("reason", "gotls").Uint32("pid", pid).Str("version", bi.GoVersion).Msg("go version is below 1.17, skipping")
+		return errors
+	}
+
 	// open in elf format in order to get the symbols
 	ef, err := elf.Open(path)
 	if err != nil {
@@ -244,23 +261,6 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 	symbols, err := ef.Symbols()
 	if err != nil {
 		log.Logger.Debug().Err(err).Uint32("pid", pid).Msg("error reading symbols")
-		errors = append(errors, err)
-		return errors
-	}
-
-	// .text section contains the instructions
-	// in order to read the .text section of the executable
-	// readelf or objdump can be used
-	textSection := ef.Section(".text")
-	if textSection == nil {
-		log.Logger.Debug().Uint32("pid", pid).Msg("no .text section found")
-		errors = append(errors, fmt.Errorf("no .text section found"))
-		return errors
-	}
-
-	textSectionData, err := textSection.Data()
-	if err != nil {
-		log.Logger.Debug().Err(err).Uint32("pid", pid).Msg("error reading .text section")
 		errors = append(errors, err)
 		return errors
 	}
@@ -321,6 +321,23 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 					address = s.Value - prog.Vaddr + prog.Off
 					break
 				}
+			}
+
+			// .text section contains the instructions
+			// in order to read the .text section of the executable
+			// readelf or objdump can be used
+			textSection := ef.Section(".text")
+			if textSection == nil {
+				log.Logger.Debug().Uint32("pid", pid).Msg("no .text section found")
+				errors = append(errors, fmt.Errorf("no .text section found"))
+				return errors
+			}
+
+			textSectionData, err := textSection.Data()
+			if err != nil {
+				log.Logger.Debug().Err(err).Uint32("pid", pid).Msg("error reading .text section")
+				errors = append(errors, err)
+				return errors
 			}
 
 			sStart := s.Value - textSection.Addr
