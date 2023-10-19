@@ -6,7 +6,6 @@ import (
 	"debug/elf"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"sync"
 	"time"
@@ -104,32 +103,6 @@ func (e *EbpfCollector) EbpfEvents() chan interface{} {
 }
 
 func (e *EbpfCollector) Deploy() {
-	http.HandleFunc("/attach-ssl-write",
-		func(w http.ResponseWriter, r *http.Request) {
-			queryParam := r.URL.Query().Get("number")
-			if queryParam == "" {
-				http.Error(w, "Missing query parameter 'number'", http.StatusBadRequest)
-				return
-			}
-			// number, err := strconv.ParseUint(queryParam, 10, 32)
-			// if err != nil {
-			// 	http.Error(w, "Invalid query parameter 'number'", http.StatusBadRequest)
-			// 	return
-			// }
-			// pid := uint32(number)
-
-			// errors := e.AddSSLLibPid("/proc", pid)
-			// if errors != nil {
-			// 	for _, err := range errors {
-			// 		log.Logger.Error().Err(err).Uint32("pid", pid).
-			// 			Msgf("error attaching ssl lib for pid: %d", pid)
-			// 	}
-			// 	http.Error(w, errors[0].Error(), http.StatusInternalServerError)
-			// 	return
-			// }
-		},
-	)
-
 	// load programs and convert them to user space structs
 	tcp_state.LoadBpfObjects()
 	l7_req.LoadBpfObjects()
@@ -148,14 +121,15 @@ func (e *EbpfCollector) Deploy() {
 	}()
 	wg.Wait()
 
-	log.Logger.Info().Msg("ebpf programs exited")
+	log.Logger.Info().Msg("reading ebpf maps stopped")
+	e.close()
 	close(e.done)
 
 	// go listenDebugMsgs()
-
 }
 
 func (e *EbpfCollector) close() {
+	log.Logger.Info().Msg("closing ebpf links")
 	close(e.ebpfEvents)
 
 	for pid := range e.sslWriteUprobes {

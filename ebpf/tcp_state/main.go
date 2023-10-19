@@ -108,9 +108,6 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	ctx, _ := context.WithCancel(parentCtx)
 	defer objs.Close()
 
-	ticker := time.NewTicker(1 * time.Millisecond)
-	defer ticker.Stop()
-
 	time.Sleep(1 * time.Second)
 
 	l, err := link.Tracepoint("sock", "inet_sock_set_state", objs.bpfPrograms.InetSockSetState, nil)
