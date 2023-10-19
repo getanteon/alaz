@@ -97,11 +97,11 @@ build_push:
 	docker push $(REGISTRY)/$(ALAZ_IMAGE_NAME):$(ALAZ_TAG)
 
 # make go_builder_image_build
-
+# ALAZ_TAG=latest
 # make go_generate TARGET_ARCH=arm64
-# make build_push_buildx TARGET_ARCH=arm64 ALAZ_TAG=latest
+# make build_push_buildx TARGET_ARCH=arm64 ALAZ_TAG=$ALAZ_TAG
 
 # make go_generate TARGET_ARCH=x86
-# make build_push_buildx TARGET_ARCH=x86 ALAZ_TAG=latest
+# make build_push_buildx TARGET_ARCH=x86 ALAZ_TAG=$ALAZ_TAG
 
-# make docker_merge_platforms
+# make docker_merge_platforms ALAZ_TAG=$ALAZ_TAG
