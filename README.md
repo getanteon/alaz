@@ -157,7 +157,7 @@ For the time being, we expect that btf information is readily available on your 
 #### Encryption Libraries
 These are the libraries that alaz hooks into for capturing encrypted traffic.
 - [crypto/tls](https://pkg.go.dev/crypto/tls)
-In order to Alaz to capture tls requests in your Go applications, your go version must be **1.17+**.
+In order to Alaz to capture tls requests in your Go applications, your go version must be **1.17+** and your executable must include debug info.
 
 - [openSSL](https://www.openssl.org/)
 OpenSSL shared objects that is dynamically linked into your executable is supported.
