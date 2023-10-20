@@ -154,6 +154,15 @@ command and whether btf is enabled by default or not at the [btfhub](https://git
 
 For the time being, we expect that btf information is readily available on your system. We'll support all kernels in the upcoming weeks leveraging [btfhub](https://github.com/aquasecurity/btfhub).
 
+#### Encryption Libraries
+These are the libraries that alaz hooks into for capturing encrypted traffic.
+- [crypto/tls](https://pkg.go.dev/crypto/tls)
+In order to Alaz to capture tls requests in your Go applications, your go version must be **1.17+**.
+
+- [openSSL](https://www.openssl.org/)
+OpenSSL shared objects that is dynamically linked into your executable is supported.
+Supported versions : **1.0.2**, **1.1.1** and **3.***
+
 ## Contributing
 
 Contributions to Alaz are welcome! To contribute, please follow these steps:
