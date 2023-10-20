@@ -1,12 +1,12 @@
 # Alaz Architecture
-Alaz is designed to run in a kubernetes cluster as an agent, deployed as Daemonset (runs on each cluster node seperately).
+Alaz is designed to run in a kubernetes cluster as an agent, deployed as Daemonset (runs on each cluster node separately).
 
 What it does is to watch and pull data from cluster to gain visibility onto the cluster.
 
 It gathers information from 3 different sources:
  
 ## 1- Kubernetes Client
-Using kubernetes client, it polls different type of events related to kubernetes resources. Like **ADD, UPDATE, DELETE** events for any kind of k8s resources like **Pods,Deployments,Services** etc.
+Using kubernetes client, it polls different type of events related to kubernetes resources. Like **ADD, UPDATE, DELETE** events for any kind of K8s resources like **Pods,Deployments,Services** etc.
 
 	 Packages used: 
 - 	 `k8s.io/api/core/v1`
@@ -14,8 +14,8 @@ Using kubernetes client, it polls different type of events related to kubernetes
 - 	 `k8s.io/client-go`
 
 ## 2- Container Runtimes (containerd)
-There are different types of container runtimes available for k8s clusters like containerd,crio,docker etc.
-By connecting to chosen container runtimes socket, alaz is able to gather more detailed information on containers running on nodes.
+There are different types of container runtimes available for K8s clusters like containerd, crio, docker etc.
+By connecting to chosen container runtimes socket, Alaz is able to gather more detailed information on containers running on nodes.
 - log directory of the container,
 - information related to its sandbox,
 - pid,
@@ -23,17 +23,17 @@ By connecting to chosen container runtimes socket, alaz is able to gather more d
 - environment variables
 - ...
 
-> At time of today(23th August 2023). We do not take into consideration container runtimes data, we do not need it for todays objectives. Will be used later on for collecting more detailed data.
+> We do not take into consideration container runtimes data, we do not need it for todays objectives. Will be used later on for collecting more detailed data.
 
 ## 3- eBPF Programs
 
 In Alaz's eBPF directory there are a couple of **eBPF programs written in C using libbpf**.
 
-In order to compile these programs, we have a **eBPF-builder image** that contains necessary dependencies installed like **clang,llvm,libbpf and go**.
+In order to compile these programs, we have a **eBPF-builder image** that contains necessary dependencies installed like **clang, llvm, libbpf and go**.
 
-eBPF programs are compiled in mentioned container, leveraging ciliums bpf2go package. `github.com/cilium/eBPF/cmd/bpf2go`.
+eBPF programs are compiled in mentioned container, leveraging [Cilium bpf2go package](https://github.com/cilium/ebpf/tree/main/cmd/bpf2go).
 
-Using go generate directive with bpf2go, it compiles the eBPF program and generated necessary helper files in go in order us to interact with eBPF programs. 
+Using go generate directive with `bpf2go`, it compiles the eBPF program and generated necessary helper files in go in order us to interact with eBPF programs. 
 
 - Link the program to a tracepoint or a kprobe. 
 - Read bpf maps from user space and pass them for sense-making of data.
@@ -63,7 +63,7 @@ tracepoint/syscalls/sys_enter_connect (tcp_state)
 tracepoint/syscalls/sys_exit_connect (tcp_state)
 ```
 
-uprobes
+uprobes:
 ```
 SSL_write
 SSL_read
@@ -78,19 +78,11 @@ That's why we disassemble the executable and find return instructions addresses 
 ## How to Build Alaz
 Alaz embeds compiled eBPF programs in it. After compilation process on eBPF-builder is done, compiled programs are located in project structure.
 
-Using **//go:embed** directive of golang. We embed *.o* files and load them into kernel using `github.com/cilium/eBPF` package.
+Using **//go:embed** directive of golang. We embed *.o* files and load them into kernel using [Cilium eBPF package](https://github.com/cilium/eBPF).
 
 Then we build Alaz like a ordinary golang app more or less since compiled codes are embedded.
 
 #### How to Deploy Alaz
 Deployed as a privileged DaemonSet resource on the cluster. Alaz is required to run as a privileged container since it needs read access to `/proc` directory of the host machine.
 
-
-If we are going to use containerd, we must mount related sock path:
-```			
-            - mountPath: /var/run/containerd/containerd.sock
-            name: containerd-sock
-            readOnly: true
-```
-			
-And Alaz's `serviceAccount` must be should be associated with `ClusterRole` and `ClusterRoleBinding` resources in order to be able to talk with k8s server.
+And Alaz's `serviceAccount` must be should be associated with `ClusterRole` and `ClusterRoleBinding` resources in order to be able to talk with K8s server.
