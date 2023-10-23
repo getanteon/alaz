@@ -255,12 +255,6 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 							return
 						}
 
-						// body, err := io.ReadAll(resp.Body)
-						// if err != nil {
-						// 	log.Logger.Error().Msgf("error reading inner metrics response body: %v", err)
-						// 	return
-						// }
-
 						req, err = http.NewRequest(http.MethodPost, fmt.Sprintf("%s/alaz/metrics/scrape/?instance=%s&monitoring_id=%s", ds.host, NodeID, MonitoringID), resp.Body)
 						if err != nil {
 							log.Logger.Error().Msgf("error creating metrics request: %v", err)

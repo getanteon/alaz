@@ -157,11 +157,11 @@ func (e *EbpfCollector) close() {
 
 func (e *EbpfCollector) ListenForEncryptedReqs(pid uint32) {
 	e.pidLocks.Lock(pid)
+	defer e.pidLocks.Release(pid)
 	if _, ok := e.tlsPidMap[pid]; ok {
 		log.Logger.Debug().Msgf("pid: %d already attached for tls", pid)
 		return
 	}
-	defer e.pidLocks.Release(pid)
 
 	// attach to libssl uprobes if process is using libssl
 	errors := e.AttachSslUprobesOnProcess("/proc", pid)

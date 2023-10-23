@@ -122,7 +122,11 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, ec *eb
 
 func (a *Aggregator) Run() {
 	go a.processk8s()
-	go a.processEbpf(a.ctx)
+
+	numWorker := 10
+	for i := 0; i < numWorker; i++ {
+		go a.processEbpf(a.ctx)
+	}
 }
 
 func (a *Aggregator) processk8s() {
