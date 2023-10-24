@@ -92,47 +92,42 @@ func (nl *SocketLine) GetValue(timestamp uint64) (*SockInfo, error) {
 
 func (nl *SocketLine) DeleteUnused() {
 	// Delete socket lines that are not in use
-	ticker := time.NewTicker(1 * time.Minute)
+	nl.mu.Lock()
+	defer nl.mu.Unlock()
 
-	for range ticker.C {
-		func() {
-			nl.mu.Lock()
-			defer nl.mu.Unlock()
-
-			if len(nl.Values) == 0 {
-				return
-			}
-
-			var lastMatchedReqTime uint64 = 0
-
-			// traverse the slice backwards
-			for i := len(nl.Values) - 1; i >= 0; i-- {
-				if nl.Values[i].LastMatch != 0 && nl.Values[i].LastMatch > lastMatchedReqTime {
-					lastMatchedReqTime = nl.Values[i].LastMatch
-				}
-			}
-
-			if lastMatchedReqTime == 0 {
-				return
-			}
-
-			// assumedInterval is inversely proportional to the number of requests being discarded
-			assumedInterval := uint64(5 * time.Minute)
-
-			// delete all values that
-			// closed and its LastMatch + assumedInterval < lastMatchedReqTime
-			for i := len(nl.Values) - 1; i >= 1; i-- {
-				if nl.Values[i].SockInfo == nil &&
-					nl.Values[i-1].SockInfo != nil &&
-					nl.Values[i-1].LastMatch+assumedInterval < lastMatchedReqTime {
-
-					// delete these two values
-					nl.Values = append(nl.Values[:i-1], nl.Values[i+1:]...)
-					i-- // we deleted two values, so we need to decrement i by 2
-				}
-			}
-		}()
+	if len(nl.Values) == 0 {
+		return
 	}
+
+	var lastMatchedReqTime uint64 = 0
+
+	// traverse the slice backwards
+	for i := len(nl.Values) - 1; i >= 0; i-- {
+		if nl.Values[i].LastMatch != 0 && nl.Values[i].LastMatch > lastMatchedReqTime {
+			lastMatchedReqTime = nl.Values[i].LastMatch
+		}
+	}
+
+	if lastMatchedReqTime == 0 {
+		return
+	}
+
+	// assumedInterval is inversely proportional to the number of requests being discarded
+	assumedInterval := uint64(5 * time.Minute)
+
+	// delete all values that
+	// closed and its LastMatch + assumedInterval < lastMatchedReqTime
+	for i := len(nl.Values) - 1; i >= 1; i-- {
+		if nl.Values[i].SockInfo == nil &&
+			nl.Values[i-1].SockInfo != nil &&
+			nl.Values[i-1].LastMatch+assumedInterval < lastMatchedReqTime {
+
+			// delete these two values
+			nl.Values = append(nl.Values[:i-1], nl.Values[i+1:]...)
+			i-- // we deleted two values, so we need to decrement i by 2
+		}
+	}
+
 }
 
 func (nl *SocketLine) GetAlreadyExistingSockets() {
