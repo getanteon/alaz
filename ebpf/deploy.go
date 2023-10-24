@@ -9,6 +9,7 @@ import (
 	"os"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/cilium/ebpf/link"
 	"github.com/ddosify/alaz/ebpf/l7_req"
@@ -156,11 +157,11 @@ func (e *EbpfCollector) close() {
 
 func (e *EbpfCollector) ListenForEncryptedReqs(pid uint32) {
 	e.pidLocks.Lock(pid)
+	defer e.pidLocks.Release(pid)
 	if _, ok := e.tlsPidMap[pid]; ok {
 		log.Logger.Debug().Msgf("pid: %d already attached for tls", pid)
 		return
 	}
-	defer e.pidLocks.Release(pid)
 
 	// attach to libssl uprobes if process is using libssl
 	errors := e.AttachSslUprobesOnProcess("/proc", pid)
@@ -230,6 +231,7 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 		errors = append(errors, err)
 		return errors
 	}
+	defer ef.Close()
 
 	// nm command can be used to get the symbols as well
 	symbols, err := ef.Symbols()
@@ -374,7 +376,7 @@ func findSSLExecutablesByPid(procfs string, pid uint32) (map[string]*sslLib, err
 		return nil, err
 	}
 
-	libsMap, err := parseSSLlib(string(fileContent))
+	libsMap, err := parseSSLlib(toString(fileContent))
 	if err != nil {
 		return nil, err
 	}
@@ -519,4 +521,12 @@ func getReturnOffsets(machine elf.Machine, instructions []byte) []int {
 		}
 	}
 	return res
+}
+
+// to avoid allocations
+func toBytes(s string) []byte {
+	return *(*[]byte)(unsafe.Pointer(&s))
+}
+func toString(b []byte) string {
+	return *(*string)(unsafe.Pointer(&b))
 }
