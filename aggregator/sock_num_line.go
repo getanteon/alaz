@@ -48,10 +48,8 @@ func NewSocketLine(pid uint32, fd uint64) *SocketLine {
 func (nl *SocketLine) AddValue(timestamp uint64, sockInfo *SockInfo) {
 	nl.mu.Lock()
 	defer nl.mu.Unlock()
-	nl.Values = append(nl.Values, TimestampedSocket{Timestamp: timestamp, SockInfo: sockInfo})
-	sort.Slice(nl.Values, func(i, j int) bool {
-		return nl.Values[i].Timestamp < nl.Values[j].Timestamp
-	})
+
+	nl.Values = insertIntoSortedSlice(nl.Values, TimestampedSocket{Timestamp: timestamp, SockInfo: sockInfo})
 }
 
 func (nl *SocketLine) GetValue(timestamp uint64) (*SockInfo, error) {
@@ -300,3 +298,16 @@ const (
 	stateEstablished = "01"
 	stateListen      = "0A"
 )
+
+func insertIntoSortedSlice(sortedSlice []TimestampedSocket, newItem TimestampedSocket) []TimestampedSocket {
+	idx := sort.Search(len(sortedSlice), func(i int) bool {
+		return sortedSlice[i].Timestamp >= newItem.Timestamp
+	})
+
+	// Insert the new item at the correct position.
+	sortedSlice = append(sortedSlice, TimestampedSocket{})
+	copy(sortedSlice[idx+1:], sortedSlice[idx:])
+	sortedSlice[idx] = newItem
+
+	return sortedSlice
+}
