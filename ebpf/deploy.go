@@ -287,9 +287,36 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 			continue
 		}
 
+		// find function address with cilium lib
+		address := s.Value
+		// find the address that will be used to attach uprobes
+		for _, prog := range ef.Progs {
+			// Skip uninteresting segments.
+			if prog.Type != elf.PT_LOAD || (prog.Flags&elf.PF_X) == 0 {
+				continue
+			}
+
+			if prog.Vaddr <= s.Value && s.Value < (prog.Vaddr+prog.Memsz) {
+				// If the symbol value is contained in the segment, calculate
+				// the symbol offset.
+				//
+				// fn symbol offset = fn symbol VA - .text VA + .text offset
+				//
+				// stackoverflow.com/a/40249502
+
+				address = s.Value - prog.Vaddr + prog.Off
+				break
+			}
+		}
+
 		switch s.Name {
 		case goTlsWriteSymbol:
-			l, err := ex.Uprobe(s.Name, l7_req.L7BpfProgsAndMaps.GoTlsConnWriteEnter, nil)
+			// &link.UprobeOptions{Address: address} is not necessary, we use it for efficiency
+			// give address directly to uprobes, otherwise it will be calculated again
+			// we calculate it here for uretprobes no matter what, because we need to attach uretprobes to ret instructions
+			// and we need the address of the function
+			// so in order to prevent Uprobe func to recalculating the address, we pass it here
+			l, err := ex.Uprobe(s.Name, l7_req.L7BpfProgsAndMaps.GoTlsConnWriteEnter, &link.UprobeOptions{Address: address})
 			if err != nil {
 				log.Logger.Debug().Err(err).Str("reason", "gotls").Uint32("pid", pid).Msg("error attaching uprobe")
 				errors = append(errors, err)
@@ -297,7 +324,7 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 			}
 			e.goTlsWriteUprobes[pid] = l
 		case goTlsReadSymbol:
-			l, err := ex.Uprobe(s.Name, l7_req.L7BpfProgsAndMaps.GoTlsConnReadEnter, nil)
+			l, err := ex.Uprobe(s.Name, l7_req.L7BpfProgsAndMaps.GoTlsConnReadEnter, &link.UprobeOptions{Address: address})
 			if err != nil {
 				log.Logger.Debug().Err(err).Str("reason", "gotls").Uint32("pid", pid).Msg("error attaching uprobe")
 				errors = append(errors, err)
@@ -310,29 +337,6 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 			// this messes up with go runtime and causes a crash
 			// so we attach all ret instructions in the function as uprobes
 
-			// find read functions address with cilium lib
-
-			address := s.Value
-			// find the address that will be used to attach uprobes
-			for _, prog := range ef.Progs {
-				// Skip uninteresting segments.
-				if prog.Type != elf.PT_LOAD || (prog.Flags&elf.PF_X) == 0 {
-					continue
-				}
-
-				if prog.Vaddr <= s.Value && s.Value < (prog.Vaddr+prog.Memsz) {
-					// If the symbol value is contained in the segment, calculate
-					// the symbol offset.
-					//
-					// fn symbol offset = fn symbol VA - .text VA + .text offset
-					//
-					// stackoverflow.com/a/40249502
-
-					address = s.Value - prog.Vaddr + prog.Off
-					break
-				}
-			}
-
 			// .text section contains the instructions
 			// in order to read the .text section of the executable
 			// readelf or objdump can be used
@@ -343,17 +347,8 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 				return errors
 			}
 
-			// textSectionData, err := textSection.Data()
-			// if err != nil {
-			// 	log.Logger.Debug().Err(err).Uint32("pid", pid).Msg("error reading .text section")
-			// 	errors = append(errors, err)
-			// 	return errors
-			// }
-
 			sStart := s.Value - textSection.Addr
 			sEnd := sStart + s.Size
-
-			// sBytes := textSectionData[sStart:sEnd]
 
 			sBytes := make([]byte, sEnd-sStart)
 			readSeeker := textSection.Open()
