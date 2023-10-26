@@ -51,6 +51,7 @@ func (p *PidLocks) Release(pid uint32) {
 const (
 	goTlsWriteSymbol = "crypto/tls.(*Conn).Write"
 	goTlsReadSymbol  = "crypto/tls.(*Conn).Read"
+	exeMaxSizeInMB   = 200
 )
 
 type BpfEvent interface {
@@ -58,9 +59,10 @@ type BpfEvent interface {
 }
 
 type EbpfCollector struct {
-	ctx        context.Context
-	done       chan struct{}
-	ebpfEvents chan interface{}
+	ctx            context.Context
+	done           chan struct{}
+	ebpfEvents     chan interface{}
+	tlsAttachQueue chan uint32
 
 	// TODO: objectify l7_req and tcp_state
 
@@ -91,6 +93,7 @@ func NewEbpfCollector(parentCtx context.Context) *EbpfCollector {
 		goTlsWriteUprobes:   make(map[uint32]link.Link),
 		goTlsReadUprobes:    make(map[uint32]link.Link),
 		goTlsReadUretprobes: make(map[uint32][]link.Link),
+		tlsAttachQueue:      make(chan uint32, 10),
 		pidLocks:            NewPidLocks(),
 	}
 }
@@ -105,6 +108,8 @@ func (e *EbpfCollector) EbpfEvents() chan interface{} {
 
 func (e *EbpfCollector) Deploy() {
 	// load programs and convert them to user space structs
+	go e.AttachUprobesForEncrypted()
+
 	tcp_state.LoadBpfObjects()
 	l7_req.LoadBpfObjects()
 
@@ -155,34 +160,51 @@ func (e *EbpfCollector) close() {
 	}
 }
 
+// in order to prevent the memory peak at the beginning
+// we'll attach to processes one by one
 func (e *EbpfCollector) ListenForEncryptedReqs(pid uint32) {
+	// one process can have only one item in the queue at all times
 	e.pidLocks.Lock(pid)
-	defer e.pidLocks.Release(pid)
+	// defer e.pidLocks.Release(pid)
+
 	if _, ok := e.tlsPidMap[pid]; ok {
-		log.Logger.Debug().Msgf("pid: %d already attached for tls", pid)
+		log.Logger.Debug().Msgf("tls attachment effort was made before for pid: %d ", pid)
+		e.pidLocks.Release(pid)
 		return
 	}
 
-	// attach to libssl uprobes if process is using libssl
-	errors := e.AttachSslUprobesOnProcess("/proc", pid)
-	if errors != nil && len(errors) > 0 {
-		for _, err := range errors {
-			log.Logger.Error().Err(err).Uint32("pid", pid).
-				Msgf("error attaching ssl lib for pid: %d", pid)
-		}
-	}
-
-	// TODO: check if process is go
-	// if process is go, attach to go tls
-	go_errs := e.AttachGoTlsUprobesOnProcess("/proc", pid)
-	if go_errs != nil && len(go_errs) > 0 {
-		for _, err := range go_errs {
-			log.Logger.Error().Err(err).Uint32("pid", pid).
-				Msgf("error attaching go tls for pid: %d", pid)
-		}
-	}
-
+	// pid sent to queue, no need to check again
 	e.tlsPidMap[pid] = struct{}{}
+	e.pidLocks.Release(pid)
+
+	e.tlsAttachQueue <- pid
+}
+
+// we check the size of the executable before reading it into memory
+// because it can be very large
+// otherwise we can get stuck to memory limit defined in k8s
+func (e *EbpfCollector) AttachUprobesForEncrypted() {
+	for pid := range e.tlsAttachQueue {
+		// to avoid memory peak
+		time.Sleep(5 * time.Second)
+
+		// attach to libssl uprobes if process is using libssl
+		errors := e.AttachSslUprobesOnProcess("/proc", pid)
+		if errors != nil && len(errors) > 0 {
+			for _, err := range errors {
+				log.Logger.Error().Err(err).Uint32("pid", pid).
+					Msgf("error attaching ssl lib for pid: %d", pid)
+			}
+		}
+
+		go_errs := e.AttachGoTlsUprobesOnProcess("/proc", pid)
+		if go_errs != nil && len(go_errs) > 0 {
+			for _, err := range go_errs {
+				log.Logger.Error().Err(err).Uint32("pid", pid).
+					Msgf("error attaching go tls for pid: %d", pid)
+			}
+		}
+	}
 }
 
 func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) []error {
@@ -207,6 +229,18 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 			}
 		}
 	}()
+
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		log.Logger.Debug().Err(err).Uint32("pid", pid).Msg("error getting file info")
+		errors = append(errors, err)
+		return errors
+	}
+
+	if fileInfo.Size() > exeMaxSizeInMB*1024*1024 {
+		log.Logger.Debug().Uint32("pid", pid).Msg("executable is too large, skipping")
+		return errors
+	}
 
 	// read build info of a go executable
 	bi, err := buildinfo.ReadFile(path)
@@ -309,17 +343,39 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 				return errors
 			}
 
-			textSectionData, err := textSection.Data()
+			// textSectionData, err := textSection.Data()
+			// if err != nil {
+			// 	log.Logger.Debug().Err(err).Uint32("pid", pid).Msg("error reading .text section")
+			// 	errors = append(errors, err)
+			// 	return errors
+			// }
+
+			sStart := s.Value - textSection.Addr
+			sEnd := sStart + s.Size
+
+			// sBytes := textSectionData[sStart:sEnd]
+
+			sBytes := make([]byte, sEnd-sStart)
+			readSeeker := textSection.Open()
+			_, err = readSeeker.Seek(int64(sStart), io.SeekStart)
+			if err != nil {
+				log.Logger.Debug().Err(err).Uint32("pid", pid).Msg("error seeking to .text section")
+				errors = append(errors, err)
+				return errors
+			}
+			readBytes, err := readSeeker.Read(sBytes)
 			if err != nil {
 				log.Logger.Debug().Err(err).Uint32("pid", pid).Msg("error reading .text section")
 				errors = append(errors, err)
 				return errors
 			}
 
-			sStart := s.Value - textSection.Addr
-			sEnd := sStart + s.Size
+			if readBytes != len(sBytes) {
+				log.Logger.Debug().Uint32("pid", pid).Msg("error reading .text section")
+				errors = append(errors, fmt.Errorf("error reading .text section"))
+				return errors
+			}
 
-			sBytes := textSectionData[sStart:sEnd]
 			returnOffsets := getReturnOffsets(ef.Machine, sBytes) // find all ret instructions in the function according to the architecture
 			e.goTlsReadUretprobes[pid] = make([]link.Link, 0)
 			for _, offset := range returnOffsets {
