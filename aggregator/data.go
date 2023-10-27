@@ -102,6 +102,30 @@ func init() {
 	reverseDnsCache = cache.New(defaultExpiration, purgeTime)
 }
 
+func clearSocketLines(ctx context.Context, pidToSocketMap map[uint32]*SocketMap) {
+	ticker := time.NewTicker(1 * time.Minute)
+	skLineCh := make(chan *SocketLine, 1000)
+
+	go func() {
+		// spawn N goroutines to clear socket map
+		for i := 0; i < 10; i++ {
+			go func() {
+				for skLine := range skLineCh {
+					skLine.DeleteUnused()
+				}
+			}()
+		}
+	}()
+
+	for range ticker.C {
+		for _, socketMap := range pidToSocketMap {
+			for _, socketLine := range socketMap.M {
+				skLineCh <- socketLine
+			}
+		}
+	}
+}
+
 func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, ec *ebpf.EbpfCollector, ds datastore.DataStore) *Aggregator {
 	ctx, _ := context.WithCancel(parentCtx)
 	clusterInfo := &ClusterInfo{
@@ -109,6 +133,8 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, ec *eb
 		ServiceIPToServiceUid: map[string]types.UID{},
 		PidToSocketMap:        make(map[uint32]*SocketMap, 0),
 	}
+
+	go clearSocketLines(ctx, clusterInfo.PidToSocketMap)
 
 	return &Aggregator{
 		ctx:         ctx,
@@ -122,7 +148,11 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, ec *eb
 
 func (a *Aggregator) Run() {
 	go a.processk8s()
-	go a.processEbpf(a.ctx)
+
+	numWorker := 10
+	for i := 0; i < numWorker; i++ {
+		go a.processEbpf(a.ctx)
+	}
 }
 
 func (a *Aggregator) processk8s() {
