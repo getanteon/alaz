@@ -387,7 +387,7 @@ func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
 	sockMap, ok = a.clusterInfo.PidToSocketMap[d.Pid]
 	a.clusterInfo.mu.RUnlock() // unlock for reading
 	if !ok {
-		log.Logger.Info().Uint32("pid", d.Pid).Msg("error finding socket map, initializing...")
+		log.Logger.Info().Uint32("pid", d.Pid).Msg("initializing socket map...")
 		// initialize socket map
 		sockMap = &SocketMap{
 			M:  make(map[uint64]*SocketLine),
@@ -443,14 +443,13 @@ func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
 			break
 		}
 		rc--
+		if rc == 0 {
+			break
+		}
 		time.Sleep(rt)
 		rt *= 2 // exponential backoff
 		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Uint64("writeTimeNs", d.WriteTimeNs).
 			Msg("retrying getting socket info from skLine")
-
-		if rc == 0 {
-			break
-		}
 
 		select {
 		case <-ctx.Done():
