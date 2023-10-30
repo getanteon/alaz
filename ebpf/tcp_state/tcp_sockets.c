@@ -79,6 +79,7 @@ struct
 SEC("tracepoint/sock/inet_sock_set_state")
 int inet_sock_set_state(void *ctx)
 {
+  __u64 timestamp = bpf_ktime_get_ns();
   struct trace_event_raw_inet_sock_set_state args = {};
   if (bpf_core_read(&args, sizeof(args), ctx) < 0)
   {
@@ -86,7 +87,7 @@ int inet_sock_set_state(void *ctx)
   }
 
   // if not tcp protocol, ignore
-if (BPF_CORE_READ(&args, protocol) != IPPROTO_TCP)
+  if (BPF_CORE_READ(&args, protocol) != IPPROTO_TCP)
   {
     return 0;
   }
@@ -127,7 +128,7 @@ if (BPF_CORE_READ(&args, protocol) != IPPROTO_TCP)
 
   __u64 fd = 0;
   __u32 type = 0;
-  __u64 timestamp = bpf_ktime_get_ns();
+  
   void *map = &tcp_connect_events;
   if (oldstate == BPF_TCP_SYN_SENT)
   {
