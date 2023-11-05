@@ -19,11 +19,13 @@ const (
 	BPF_L7_PROTOCOL_HTTP
 	BPF_L7_PROTOCOL_AMQP
 	BPF_L7_PROTOCOL_POSTGRES
+	BPF_L7_PROTOCOL_HTTP2
 )
 
 // for user space
 const (
 	L7_PROTOCOL_HTTP     = "HTTP"
+	L7_PROTOCOL_HTTP2    = "HTTP2"
 	L7_PROTOCOL_AMQP     = "AMQP"
 	L7_PROTOCOL_POSTGRES = "POSTGRES"
 	L7_PROTOCOL_UNKNOWN  = "UNKNOWN"
@@ -41,6 +43,8 @@ func (e L7ProtocolConversion) String() string {
 		return L7_PROTOCOL_AMQP
 	case BPF_L7_PROTOCOL_POSTGRES:
 		return L7_PROTOCOL_POSTGRES
+	case BPF_L7_PROTOCOL_HTTP2:
+		return L7_PROTOCOL_HTTP2
 	case BPF_L7_PROTOCOL_UNKNOWN:
 		return L7_PROTOCOL_UNKNOWN
 	default:
@@ -60,6 +64,12 @@ const (
 	BPF_METHOD_CONNECT
 	BPF_METHOD_OPTIONS
 	BPF_METHOD_TRACE
+)
+
+const (
+	BPF_HTTP2_METHOD_UNKNOWN = iota
+	BPF_HTTP2_METHOD_CLIENT
+	BPF_HTTP2_METHOD_SERVER
 )
 
 // match with values in l7_req.c, order is important
@@ -114,6 +124,12 @@ const (
 const (
 	CLOSE_OR_TERMINATE = "CLOSE_OR_TERMINATE"
 	SIMPLE_QUERY       = "SIMPLE_QUERY"
+)
+
+// for http2, user space
+const (
+	CLIENT_FRAME = "CLIENT_FRAME"
+	SERVER_FRAME = "SERVER_FRAME"
 )
 
 // Custom type for the enumeration
@@ -175,6 +191,21 @@ func (e PostgresMethodConversion) String() string {
 	}
 }
 
+// Custom type for the enumeration
+type Http2MethodConversion uint32
+
+// String representation of the enumeration values
+func (e Http2MethodConversion) String() string {
+	switch e {
+	case BPF_HTTP2_METHOD_CLIENT:
+		return CLIENT_FRAME
+	case BPF_HTTP2_METHOD_SERVER:
+		return SERVER_FRAME
+	default:
+		return "Unknown"
+	}
+}
+
 // $BPF_CLANG and $BPF_CFLAGS are set by the Makefile.
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc $BPF_CLANG -cflags $BPF_CFLAGS bpf l7.c -- -I../headers
 
@@ -189,7 +220,7 @@ type L7Event struct {
 	Protocol            string // L7_PROTOCOL_HTTP
 	Tls                 bool   // Whether request was encrypted
 	Method              string
-	Payload             [512]uint8
+	Payload             [1024]uint8
 	PayloadSize         uint32 // How much of the payload was copied
 	PayloadReadComplete bool   // Whether the payload was copied completely
 	Failed              bool   // Request failed
@@ -433,6 +464,14 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	}()
 
 	go func() {
+
+		// clientHpackDecoder := hpack.NewDecoder(4096, func(hf hpack.HeaderField) {
+		// 	fmt.Printf("Header field: %+v\n", hf)
+		// })
+		// serverHpackDecoder := hpack.NewDecoder(4096, func(hf hpack.HeaderField) {
+		// 	fmt.Printf("Header field: %+v\n", hf)
+		// })
+
 		read := func() {
 			record, err := l7Events.Read()
 			if err != nil {
@@ -462,14 +501,64 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 					method = RabbitMQMethodConversion(l7Event.Method).String()
 				case L7_PROTOCOL_POSTGRES:
 					method = PostgresMethodConversion(l7Event.Method).String()
+				case L7_PROTOCOL_HTTP2:
+					method = Http2MethodConversion(l7Event.Method).String()
 				default:
 					method = "Unknown"
 				}
 
-				if uint8ToBool(l7Event.IsTls) {
-					log.Logger.Debug().Uint16("fd", uint16(l7Event.Fd)).Uint32("pid", l7Event.Pid).
-						Str("payload", string(l7Event.Payload[:])).Str("method", method).Str("protocol", protocol).Uint32("status", l7Event.Status).Msg("l7tls event")
-				}
+				// if protocol == L7_PROTOCOL_HTTP2 {
+				// 	log.Logger.Warn().Uint16("fd", uint16(l7Event.Fd)).Uint32("pid", l7Event.Pid).
+				// 		Uint32("psize", l7Event.PayloadSize).Str("method", method).Str("protocol", protocol).Uint32("status", l7Event.Status).Msg("http2 event")
+				// 	// Uints8("payload", (l7Event.Payload[:l7Event.PayloadSize]))
+				// 	//│ panic: runtime error: slice bounds out of range [:1232] with length 512                                                                                                     │
+
+				// 	decoder := bytes.NewReader(l7Event.Payload[:l7Event.PayloadSize])
+				// 	framer := http2.NewFramer(nil, decoder)
+				// 	frame, err := framer.ReadFrame()
+				// 	if err != nil {
+				// 		log.Logger.Error().Err(err).Msg("error reading frame")
+				// 		return
+				// 	}
+
+				// 	fmt.Println("LENGTH: ", frame.Header().Length)
+				// 	fmt.Println("TYPE: ", frame.Header().Type)
+				// 	fmt.Println("FLAGS: ", frame.Header().Flags)
+				// 	fmt.Println("STREAMID: ", frame.Header().StreamID)
+
+				// 	fmt.Println("FLAGS SETTINGSACK: ", frame.Header().Flags.Has(http2.FlagSettingsAck))
+				// 	fmt.Println("FLAGS DATAENDSTREAM: ", frame.Header().Flags.Has(http2.FlagDataEndStream))
+				// 	fmt.Println("FLAGS ENDHEADERS : ", frame.Header().Flags.Has(http2.FlagHeadersEndHeaders))
+
+				// 	if frame.Header().Type == http2.FrameHeaders {
+				// 		// decode headers
+
+				// 		headerFrame := frame.(*http2.HeadersFrame)
+				// 		fmt.Println("Headers stream ID", headerFrame.StreamID)
+				// 		fmt.Println("Headers END_HEADERS", headerFrame.HeadersEnded())
+
+				// 		framePayload := headerFrame.HeaderBlockFragment()
+				// 		fmt.Println("Headers Payload", framePayload)
+
+				// 		// decode h2 headers with hpack
+
+				// 		if method == CLIENT_FRAME {
+				// 			clientHpackDecoder.Write(framePayload)
+				// 		} else if method == SERVER_FRAME {
+				// 			serverHpackDecoder.Write(framePayload)
+				// 		}
+
+				// 	} else if frame.Header().Type == http2.FrameData {
+
+				// 		dataFrame := frame.(*http2.DataFrame)
+				// 		fmt.Println("Data stream ID", dataFrame.StreamID)
+				// 		fmt.Println("Data END_STREAM", dataFrame.StreamEnded())
+				// 		fmt.Println("Data Payload", string(dataFrame.Data()))
+				// 	}
+
+				// 	// log.Logger.Debug().Uint16("fd", uint16(l7Event.Fd)).Uint32("pid", l7Event.Pid).
+				// 	// 	Str("payload", string(l7Event.Payload[:])).Str("method", method).Str("protocol", protocol).Uint32("status", l7Event.Status).Msg("l7tls event")
+				// }
 
 				ch <- L7Event{
 					Fd:                  l7Event.Fd,

@@ -15,14 +15,16 @@
 #include "amqp.c"
 #include "postgres.c"
 #include "openssl.c"
+#include "http2.c"
 
 
 #define PROTOCOL_UNKNOWN    0
 #define PROTOCOL_HTTP	    1
 #define PROTOCOL_AMQP	2
 #define PROTOCOL_POSTGRES	3
+#define PROTOCOL_HTTP2	    4
 
-#define MAX_PAYLOAD_SIZE 512
+#define MAX_PAYLOAD_SIZE 1024
 #define PAYLOAD_PREFIX_SIZE 16
 
 // for rabbitmq methods
@@ -901,6 +903,42 @@ int process_enter_of_go_conn_write(void *ctx, __u32 pid, __u32 fd, char *buf_ptr
         if (method != -1){
             req->protocol = PROTOCOL_HTTP;
             req-> method = method;
+        }else if(is_http2_frame(buf_ptr, count)){
+            struct l7_event *e = bpf_map_lookup_elem(&l7_event_heap, &zero);
+            if (!e) {
+                return 0;
+            }
+
+            e->protocol = PROTOCOL_HTTP2;
+            e->write_time_ns = timestamp;
+            e->fd = k.fd;
+            e->pid = k.pid;
+            e->method = CLIENT_FRAME;
+            e->status = 0;
+            e->failed = 0; // success
+            e->duration = 0; // total write time
+            e->is_tls = 1;
+            bpf_probe_read(e->payload, MAX_PAYLOAD_SIZE, buf_ptr);
+            if(count > MAX_PAYLOAD_SIZE){
+                // will not be able to copy all of it
+                e->payload_size = MAX_PAYLOAD_SIZE;
+                e->payload_read_complete = 0;
+            }else{
+                e->payload_size = count;
+                e->payload_read_complete = 1;
+            }
+
+            
+            
+            long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
+            if (r < 0) {
+                unsigned char log_msg[] = "failed write to l7_events -- res|fd|psize";
+                log_to_userspace(ctx, WARN, func_name, log_msg, r, e->fd, e->payload_size);        
+            }else{
+                unsigned char log_msg[] = "wrote http2 client frame -- res|fd|psize";
+                log_to_userspace(ctx, WARN, func_name, log_msg, r, e->fd, e->payload_size);        
+            }
+            return 0;
         }else{
             req->protocol = PROTOCOL_UNKNOWN;
             req->method = METHOD_UNKNOWN;
@@ -1028,6 +1066,47 @@ int BPF_UPROBE(go_tls_conn_read_exit) {
         bpf_map_delete_elem(&go_active_reads, &k);
         return 0;
     }
+
+    // if http2, send directly to userspace
+    if(is_http2_frame(read_args->buf,ret)){
+        int zero = 0;
+        struct l7_event *e = bpf_map_lookup_elem(&l7_event_heap, &zero);
+        if (!e) {
+            return 0;
+        }
+
+        e->protocol = PROTOCOL_HTTP2;
+        e->write_time_ns = timestamp;
+        e->fd = read_args->fd;
+        e->pid = k.pid;
+        e->method = SERVER_FRAME;
+        e->status = 0;
+        e->failed = 0; // success
+        e->duration = 0; // total write time
+        e->is_tls = 1;
+        bpf_probe_read(e->payload, MAX_PAYLOAD_SIZE, read_args->buf);
+        if(ret > MAX_PAYLOAD_SIZE){
+            // will not be able to copy all of it
+            e->payload_size = MAX_PAYLOAD_SIZE;
+            e->payload_read_complete = 0;
+        }else{
+            e->payload_size = ret;
+            e->payload_read_complete = 1;
+        }
+
+        long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
+        if (r < 0) {
+            unsigned char log_msg[] = "failed write to l7_events -- res|fd|psize";
+            log_to_userspace(ctx, WARN, func_name, log_msg, r, e->fd, e->payload_size);        
+        }else{
+            unsigned char log_msg[] = "wrote http2 server frame -- res|fd|psize";
+            log_to_userspace(ctx, WARN, func_name, log_msg, r, e->fd, e->payload_size);        
+        }
+
+        bpf_map_delete_elem(&go_active_reads, &k);
+        return 0;
+    }
+
 
     // writeloop and readloop different goroutines
 

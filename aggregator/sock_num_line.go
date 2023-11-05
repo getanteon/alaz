@@ -143,8 +143,8 @@ func (nl *SocketLine) GetAlreadyExistingSockets() {
 
 		ss, err := readSockets(sockPath)
 		if err != nil {
-			log.Logger.Warn().Err(err).Msgf("failed to read sockets from %s", sockPath)
-			return
+
+			continue
 		}
 
 		for _, s := range ss {

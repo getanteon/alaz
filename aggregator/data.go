@@ -20,6 +20,8 @@ import (
 	"github.com/ddosify/alaz/ebpf/l7_req"
 	"github.com/ddosify/alaz/ebpf/tcp_state"
 	"github.com/ddosify/alaz/log"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/hpack"
 
 	"github.com/ddosify/alaz/k8s"
 
@@ -41,6 +43,9 @@ type Aggregator struct {
 
 	// send data to datastore
 	ds datastore.DataStore
+
+	// http2 ch
+	h2Ch chan interface{}
 }
 
 // We need to keep track of the following
@@ -54,6 +59,21 @@ type SockInfo struct {
 	Sport uint16 `json:"sport"`
 	Daddr string `json:"daddr"`
 	Dport uint16 `json:"dport"`
+
+	// http2Parser
+	h2parser *http2Parser
+}
+
+type http2Parser struct {
+	// Framer is the HTTP/2 framer to use.
+	framer *http2.Framer
+	// framer.ReadFrame() returns a frame, which is a struct
+
+	// http2 request and response dynamic tables are separate
+	// 2 decoders are needed
+	// https://httpwg.org/specs/rfc7541.html#encoding.context
+	clientHpackDecoder *hpack.Decoder
+	serverHpackDecoder *hpack.Decoder
 }
 
 // type SocketMap
@@ -143,6 +163,7 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, ec *eb
 		ec:          ec,
 		clusterInfo: clusterInfo,
 		ds:          ds,
+		h2Ch:        make(chan interface{}, 1000),
 	}
 }
 
@@ -215,7 +236,7 @@ func (a *Aggregator) processEbpf(ctx context.Context) {
 				d := data.(l7_req.L7Event) // copy data's value
 
 				// copy payload slice
-				payload := [512]uint8{}
+				payload := [1024]uint8{}
 				copy(payload[:], d.Payload[:])
 
 				l7Event := l7_req.L7Event{
@@ -378,60 +399,71 @@ func parseSqlCommand(r []uint8) string {
 	return sqlStatement
 }
 
-func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
+func (a *Aggregator) processHttp2(ctx context.Context, d l7_req.L7Event) {
+	log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).
+		Msg("HTTP2 event")
+
+	// clientHpackDecoder := hpack.NewDecoder(4096, func(hf hpack.HeaderField) {
+	// 	fmt.Printf("Header field: %+v\n", hf)
+	// })
+	// serverHpackDecoder := hpack.NewDecoder(4096, func(hf hpack.HeaderField) {
+	// 	fmt.Printf("Header field: %+v\n", hf)
+	// })
+}
+
+func (a *Aggregator) listenHttp2Frames() {
+	for _ = range a.h2Ch {
+		// d := data.(l7_req.L7Event)
+
+		// TODO: find which socket this frame belongs to
+		// and parse the frame
+		// use different hpackDecoders for client and server frames
+
+		// when request is completed, send to datastore
+	}
+}
+
+func (a *Aggregator) fetchSocketMap(pid uint32) *SocketMap {
 	var sockMap *SocketMap
-	var skLine *SocketLine
 	var ok bool
 
 	a.clusterInfo.mu.RLock() // lock for reading
-	sockMap, ok = a.clusterInfo.PidToSocketMap[d.Pid]
+	sockMap, ok = a.clusterInfo.PidToSocketMap[pid]
 	a.clusterInfo.mu.RUnlock() // unlock for reading
 	if !ok {
-		log.Logger.Info().Uint32("pid", d.Pid).Msg("initializing socket map...")
 		// initialize socket map
 		sockMap = &SocketMap{
 			M:  make(map[uint64]*SocketLine),
 			mu: sync.RWMutex{},
 		}
 		a.clusterInfo.mu.Lock() // lock for writing
-		a.clusterInfo.PidToSocketMap[d.Pid] = sockMap
+		a.clusterInfo.PidToSocketMap[pid] = sockMap
 		a.clusterInfo.mu.Unlock() // unlock for writing
 
-		go a.ec.ListenForEncryptedReqs(d.Pid)
+		go a.ec.ListenForEncryptedReqs(pid)
 	}
+	return sockMap
+}
 
+func (a *Aggregator) fetchSkLine(sockMap *SocketMap, pid uint32, fd uint64) *SocketLine {
 	sockMap.mu.RLock() // lock for reading
-	skLine, ok = sockMap.M[d.Fd]
+	skLine, ok := sockMap.M[fd]
 	sockMap.mu.RUnlock() // unlock for reading
 
 	if !ok {
-		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("error finding skLine, go look for it")
+		log.Logger.Debug().Uint32("pid", pid).Uint64("fd", fd).Msg("error finding skLine, go look for it")
 		// start new socket line, find already established connections
-		skLine = NewSocketLine(d.Pid, d.Fd)
+		skLine = NewSocketLine(pid, fd)
 		skLine.GetAlreadyExistingSockets() // find already established connections
 		sockMap.mu.Lock()                  // lock for writing
-		sockMap.M[d.Fd] = skLine
+		sockMap.M[fd] = skLine
 		sockMap.mu.Unlock() // unlock for writing
 	}
 
-	// In case of late request, we don't have socket info
-	// ESTABLISHED
-	// CLOSED
-	// Request (late)
+	return skLine
+}
 
-	// Request (early)
-	// ESTABLISHED
-	// CLOSED
-
-	// Ideal case
-	// ESTABLISHED
-	// Request
-	// Request ...
-	// CLOSED
-
-	// Since we process events concurrently,
-	// CLOSED event can be processed before ESTABLISHED event (goroutine scheduling)
-
+func (a *Aggregator) fetchSkInfo(ctx context.Context, skLine *SocketLine, d *l7_req.L7Event) *SockInfo {
 	rc := retryLimit
 	rt := retryInterval
 	var skInfo *SockInfo
@@ -454,23 +486,44 @@ func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
 		select {
 		case <-ctx.Done():
 			log.Logger.Debug().Msg("processL7 exiting, stop retrying...")
-			return
+			return nil
 		default:
 			continue
 		}
 	}
 
-	if rc < retryLimit && skInfo != nil {
-		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Uint64("writeTimeNs", d.WriteTimeNs).
-			Msg("found socket info with retry")
+	return skInfo
+
+}
+
+func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) *SockInfo {
+	sockMap := a.fetchSocketMap(d.Pid)
+	skLine := a.fetchSkLine(sockMap, d.Pid, d.Fd)
+	skInfo := a.fetchSkInfo(ctx, skLine, d)
+
+	if skInfo == nil {
+		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("related socket info not found")
+		return nil
 	}
 
-	if err != nil || skInfo == nil {
-		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Uint64("writeTimeNs", d.WriteTimeNs).
-			Str("method", d.Method).Uint32("status", d.Status).Str("protocol", d.Protocol).Str("payload", string(d.Payload[0:d.PayloadSize])).
-			Msg("could not match socket, discarding request")
+	return skInfo
+
+}
+
+func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
+	if d.Protocol == l7_req.L7_PROTOCOL_HTTP2 {
+		a.h2Ch <- d
 		return
 	}
+
+	skInfo := a.findRelatedSocket(ctx, &d)
+	if skInfo == nil {
+		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("related socket info not found")
+		return
+	}
+
+	// Since we process events concurrently
+	// TCP events and L7 events can be processed out of order
 
 	// assuming successful request
 	reqDto := datastore.Request{

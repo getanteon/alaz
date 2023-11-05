@@ -320,9 +320,7 @@ func (b *BackendDS) DoRequest(req *http.Request) error {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("not success: %d, %s", resp.StatusCode, string(body))
-	} else {
-		log.Logger.Info().Str("reqHostPath", req.URL.Host+req.URL.Path).Msg("success on request")
+		return fmt.Errorf("req failed: %d, %s", resp.StatusCode, string(body))
 	}
 
 	return nil
