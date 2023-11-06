@@ -927,15 +927,10 @@ int process_enter_of_go_conn_write(void *ctx, __u32 pid, __u32 fd, char *buf_ptr
                 e->payload_size = count;
                 e->payload_read_complete = 1;
             }
-
-            
             
             long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
             if (r < 0) {
                 unsigned char log_msg[] = "failed write to l7_events -- res|fd|psize";
-                log_to_userspace(ctx, WARN, func_name, log_msg, r, e->fd, e->payload_size);        
-            }else{
-                unsigned char log_msg[] = "wrote http2 client frame -- res|fd|psize";
                 log_to_userspace(ctx, WARN, func_name, log_msg, r, e->fd, e->payload_size);        
             }
             return 0;
@@ -1098,11 +1093,7 @@ int BPF_UPROBE(go_tls_conn_read_exit) {
         if (r < 0) {
             unsigned char log_msg[] = "failed write to l7_events -- res|fd|psize";
             log_to_userspace(ctx, WARN, func_name, log_msg, r, e->fd, e->payload_size);        
-        }else{
-            unsigned char log_msg[] = "wrote http2 server frame -- res|fd|psize";
-            log_to_userspace(ctx, WARN, func_name, log_msg, r, e->fd, e->payload_size);        
         }
-
         bpf_map_delete_elem(&go_active_reads, &k);
         return 0;
     }
