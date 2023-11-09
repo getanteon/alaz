@@ -47,9 +47,8 @@ type Aggregator struct {
 	ds datastore.DataStore
 
 	// http2 ch
-	h2Ch map[uint32]chan *l7_req.L7Event // pid -> ch
-
-	http2Processors map[uint32]struct{}
+	h2ChMu sync.RWMutex
+	h2Ch   map[string]chan *l7_req.L7Event // pid-fd -> ch
 }
 
 // We need to keep track of the following
@@ -137,14 +136,13 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, ec *eb
 	go clearSocketLines(ctx, clusterInfo.PidToSocketMap)
 
 	return &Aggregator{
-		ctx:             ctx,
-		k8sChan:         k8sChan,
-		ebpfChan:        ec.EbpfEvents(),
-		ec:              ec,
-		clusterInfo:     clusterInfo,
-		ds:              ds,
-		h2Ch:            make(map[uint32]chan *l7_req.L7Event),
-		http2Processors: make(map[uint32]struct{}),
+		ctx:         ctx,
+		k8sChan:     k8sChan,
+		ebpfChan:    ec.EbpfEvents(),
+		ec:          ec,
+		clusterInfo: clusterInfo,
+		ds:          ds,
+		h2Ch:        make(map[string]chan *l7_req.L7Event),
 	}
 }
 
@@ -249,11 +247,6 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 			return
 		}
 
-		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).
-			Str("saddr", d.SAddr).Uint16("sport", d.SPort).
-			Str("daddr", d.DAddr).Uint16("dport", d.DPort).
-			Msg("TCP_ESTABLISHED event")
-
 		var sockMap *SocketMap
 		var ok bool
 
@@ -295,12 +288,6 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 			},
 		)
 	} else if d.Type_ == tcp_state.EVENT_TCP_CLOSED {
-		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).
-			Str("saddr", d.SAddr).Uint16("sport", d.SPort).
-			Str("daddr", d.DAddr).Uint16("dport", d.DPort).
-			Uint64("closeTime", d.Timestamp).
-			Msg("TCP_CLOSED event")
-
 		var sockMap *SocketMap
 		var ok bool
 
@@ -335,6 +322,16 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 			d.Timestamp, // get connection close timestamp from ebpf
 			nil,         // closed
 		)
+
+		// close h2 channel on connection close if exists
+		// a.h2ChMu.Lock()
+		// key := fmt.Sprintf("%d-%d", d.Pid, d.Fd)
+		// if _, ok := a.h2Ch[key]; ok {
+		// 	// close(a.h2Ch[key])
+		// 	delete(a.h2Ch, key)
+		// }
+		// a.h2ChMu.Unlock()
+
 	}
 }
 
@@ -363,31 +360,26 @@ func parseHttpPayload(request string) (method string, path string, httpVersion s
 	return method, path, httpVersion, hostHeader
 }
 
-// TODO: should call it on process creation instead of every http2 frame ?
+// called once per socket
 // TODO: must close on process close
-func (a *Aggregator) processHttp2Frames(pid uint32) {
-	// this worker should run only once per pid
-	if _, ok := a.http2Processors[pid]; ok {
-		return
-	}
-
+func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 	// socket-streamID -> RequestDto
 	// fmt.Sprintf("%d-%d-%d", pid, fd, streamId)
-	activeReqs := make(map[string]*datastore.Request)
 
-	for d := range a.h2Ch[pid] {
-		skInfo := a.findRelatedSocket(a.ctx, d)
-		if skInfo == nil {
-			log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("related socket info not found")
-			continue
-		}
-		if skInfo.h2parser == nil {
-			skInfo.h2parser = &http2Parser{
-				clientHpackDecoder: hpack.NewDecoder(4096, nil),
-				serverHpackDecoder: hpack.NewDecoder(4096, nil),
-			}
-		}
+	mu := sync.RWMutex{}
+	// by streamID
+	activeReqs := make(map[uint32]*datastore.Request)
 
+	// h2 parser per connection
+	// fmt.Sprintf("%d-%d", pid, fd)
+	// connectionH2Parsers := make(map[string]*http2Parser)
+
+	h2Parser := &http2Parser{
+		clientHpackDecoder: hpack.NewDecoder(4096, nil),
+		serverHpackDecoder: hpack.NewDecoder(4096, nil),
+	}
+
+	for d := range ch {
 		// TODO: payload size check, PayloadSize could be higher than the actual payload size ?
 		framer := http2.NewFramer(nil, bytes.NewReader(d.Payload[0:d.PayloadSize]))
 
@@ -396,6 +388,7 @@ func (a *Aggregator) processHttp2Frames(pid uint32) {
 		if d.Method == l7_req.CLIENT_FRAME {
 			for {
 				// can be multiple frames in the payload
+				// check golang.org/x/net/http2/frame.go:1587 for handling of CONTINUATION frames
 				f, err := framer.ReadFrame()
 				if err != nil {
 					break
@@ -404,11 +397,12 @@ func (a *Aggregator) processHttp2Frames(pid uint32) {
 				switch f := f.(type) {
 				case *http2.HeadersFrame:
 					streamId := f.Header().StreamID
-					key := fmt.Sprintf("%d-%d-%d", d.Pid, d.Fd, streamId)
-					if _, ok := activeReqs[key]; !ok {
-						activeReqs[key] = &datastore.Request{}
+					mu.Lock()
+					if _, ok := activeReqs[streamId]; !ok {
+						activeReqs[streamId] = &datastore.Request{}
 					}
-					req := activeReqs[key]
+					req := activeReqs[streamId]
+					mu.Unlock()
 					req.Latency = d.WriteTimeNs // set latency to write time here, will be updated later
 
 					reqHeaderSet := func(req *datastore.Request) func(hf hpack.HeaderField) {
@@ -418,29 +412,31 @@ func (a *Aggregator) processHttp2Frames(pid uint32) {
 								if req.Method == "" {
 									req.Method = hf.Value
 								} else {
-									log.Logger.Debug().Str("req.Method", req.Method).Str("hf.Value", hf.Value).Msg("method already set in http2")
+									log.Logger.Info().Uint32("streamId", streamId).Str("req.Method", req.Method).Str("hf.Value", hf.Value).Msg("method already set in http2")
 								}
 							case ":path":
 								if req.Path == "" {
 									req.Path = hf.Value
 								} else {
-									log.Logger.Debug().Str("req.Path", req.Path).Str("hf.Value", hf.Value).Msg("path already set in http2")
+									log.Logger.Info().Uint32("streamId", streamId).Str("req.Path", req.Path).Str("hf.Value", hf.Value).Msg("path already set in http2")
 								}
 							case ":authority":
 								if req.ToUID == "" {
 									req.ToUID = hf.Value // host header, could be modified later in setFromTo
 								} else {
-									log.Logger.Debug().Str("req.ToUID", req.ToUID).Str("hf.Value", hf.Value).Msg("toUID already set in http2")
+									log.Logger.Info().Uint32("streamId", streamId).Str("req.ToUID", req.ToUID).Str("hf.Value", hf.Value).Msg("toUID already set in http2")
 								}
 							}
 						}
 					}
 
-					skInfo.h2parser.clientHpackDecoder.SetEmitFunc(reqHeaderSet(req))
-					skInfo.h2parser.clientHpackDecoder.Write(f.HeaderBlockFragment())
+					h2Parser.clientHpackDecoder.SetEmitFunc(reqHeaderSet(req))
+					h2Parser.clientHpackDecoder.Write(f.HeaderBlockFragment())
 
-					// case *http2.DataFrame:
-					// 	log.Logger.Debug().Msg("http2 data frame")
+					break // only process the first header frame for now ?
+					// if f.HeadersEnded() { // if not a CONTINUATION frame will come
+					// 	break
+					// }
 				}
 			}
 		} else if d.Method == l7_req.SERVER_FRAME {
@@ -454,11 +450,12 @@ func (a *Aggregator) processHttp2Frames(pid uint32) {
 				switch f := f.(type) {
 				case *http2.HeadersFrame:
 					streamId := f.Header().StreamID
-					key := fmt.Sprintf("%d-%d-%d", d.Pid, d.Fd, streamId)
-					if _, ok := activeReqs[key]; !ok {
+					mu.RLock()
+					if _, ok := activeReqs[streamId]; !ok {
 						break
 					}
-					req := activeReqs[key]
+					req := activeReqs[streamId]
+					mu.RUnlock()
 
 					respHeaderSet := func(req *datastore.Request) func(hf hpack.HeaderField) {
 						return func(hf hpack.HeaderField) {
@@ -470,53 +467,76 @@ func (a *Aggregator) processHttp2Frames(pid uint32) {
 						}
 					}
 
-					skInfo.h2parser.serverHpackDecoder.SetEmitFunc(respHeaderSet(req))
-					skInfo.h2parser.serverHpackDecoder.Write(f.HeaderBlockFragment())
+					h2Parser.serverHpackDecoder.SetEmitFunc(respHeaderSet(req))
+					h2Parser.serverHpackDecoder.Write(f.HeaderBlockFragment())
 				case *http2.DataFrame:
+					// send to persist in a goroutine
+					// it may take a while to find the related socket info
+					// and we don't want to block the main loop
 					streamId := f.Header().StreamID
-					key := fmt.Sprintf("%d-%d-%d", d.Pid, d.Fd, streamId)
-					if _, ok := activeReqs[key]; !ok {
+					mu.RLock()
+					if _, ok := activeReqs[streamId]; !ok {
 						break
 					}
-					req := activeReqs[key]
+					req := activeReqs[streamId]
+					mu.RUnlock()
+					go func() {
+						// request completed, server sent response
+						// TODO: case where server doesn't send a data frame ?
+						// only headers frame ? is it possible ?
 
-					req.StartTime = time.Now().UnixMilli()
-					req.Latency = d.WriteTimeNs - req.Latency
-					req.Completed = true
-					req.FromIP = skInfo.Saddr
-					req.ToIP = skInfo.Daddr
-					req.Protocol = "HTTP2"
-					req.Tls = d.Tls
-					req.FromPort = skInfo.Sport
-					req.ToPort = skInfo.Dport
-					req.FailReason = ""
+						skInfo := a.findRelatedSocket(a.ctx, d)
+						if skInfo == nil {
+							log.Logger.Info().Uint32("pid", d.Pid).Uint64("fd", d.Fd).
+								Uint32("streamId", streamId).Msg("related socket info not found for h2 req")
+							// continue
+							return
+						}
 
-					// toUID is set to :authority header in client frame
-					a.setFromTo(skInfo, d, req, req.ToUID)
+						req.StartTime = time.Now().UnixMilli()
+						req.Latency = d.WriteTimeNs - req.Latency
+						req.Completed = true
+						req.FromIP = skInfo.Saddr
+						req.ToIP = skInfo.Daddr
+						req.Protocol = "HTTP2"
+						req.Tls = d.Tls
+						req.FromPort = skInfo.Sport
+						req.ToPort = skInfo.Dport
+						req.FailReason = ""
 
-					if d.Tls {
-						req.Protocol = "HTTPS"
-					}
+						// toUID is set to :authority header in client frame
+						err = a.setFromTo2(skInfo, d, req, req.ToUID)
+						if err != nil {
+							// log.Logger.Error().Err(err).Msg("error setting from/to")
+							return
+						}
 
-					log.Logger.Debug().
-						Str("path", req.Path).
-						Str("method", req.Method).
-						Uint32("statusCode", req.StatusCode).
-						Str("fromUID", req.FromUID).
-						Str("toUID", req.ToUID).
-						Str("fromIP", req.FromIP).
-						Uint16("fromPort", req.FromPort).
-						Str("toIP", req.ToIP).
-						Uint16("toPort", req.ToPort).
-						Str("fromType", req.FromType).
-						Str("toType", req.ToType).
-						Str("protocol", req.Protocol).
-						Bool("tls", req.Tls).
-						Bool("completed", req.Completed).
-						Msg("http2 request persisting")
-					a.ds.PersistRequest(req)
-					delete(activeReqs, key)
-					break
+						// if d.Tls {
+						// 	req.Protocol = "HTTPS"
+						// }
+
+						log.Logger.Info().
+							Str("path", req.Path).
+							Str("method", req.Method).
+							Uint32("statusCode", req.StatusCode).
+							Str("fromUID", req.FromUID).
+							Str("toUID", req.ToUID).
+							Str("fromIP", req.FromIP).
+							Uint16("fromPort", req.FromPort).
+							Str("toIP", req.ToIP).
+							Uint16("toPort", req.ToPort).
+							Str("fromType", req.FromType).
+							Str("toType", req.ToType).
+							Str("protocol", req.Protocol).
+							Bool("tls", req.Tls).
+							Bool("completed", req.Completed).
+							Msg("http2 request persisting")
+
+						a.ds.PersistRequest(req)
+						mu.Lock()
+						delete(activeReqs, streamId)
+						mu.Unlock()
+					}()
 				}
 			}
 		} else {
@@ -526,16 +546,68 @@ func (a *Aggregator) processHttp2Frames(pid uint32) {
 	}
 }
 
+func (a *Aggregator) setFromTo2(skInfo *SockInfo, d *l7_req.L7Event, reqDto *datastore.Request, hostHeader string) error {
+	// find pod info
+	a.clusterInfo.mu.RLock() // lock for reading
+	podUid, ok := a.clusterInfo.PodIPToPodUid[skInfo.Saddr]
+	a.clusterInfo.mu.RUnlock() // unlock for reading
+	if !ok {
+		return fmt.Errorf("error finding pod with sockets saddr")
+	}
+
+	reqDto.FromUID = string(podUid)
+	reqDto.FromType = "pod"
+	reqDto.FromPort = skInfo.Sport
+	reqDto.ToPort = skInfo.Dport
+
+	// find service info
+	a.clusterInfo.mu.RLock() // lock for reading
+	svcUid, ok := a.clusterInfo.ServiceIPToServiceUid[skInfo.Daddr]
+	a.clusterInfo.mu.RUnlock() // unlock for reading
+
+	if ok {
+		reqDto.ToUID = string(svcUid)
+		reqDto.ToType = "service"
+	} else {
+		a.clusterInfo.mu.RLock() // lock for reading
+		podUid, ok := a.clusterInfo.PodIPToPodUid[skInfo.Daddr]
+		a.clusterInfo.mu.RUnlock() // unlock for reading
+
+		if ok {
+			reqDto.ToUID = string(podUid)
+			reqDto.ToType = "pod"
+		} else {
+			// 3rd party url
+			if hostHeader != "" {
+				reqDto.ToUID = hostHeader
+				reqDto.ToType = "outbound"
+			} else {
+				remoteDnsHost, err := getHostnameFromIP(skInfo.Daddr)
+				if err == nil {
+					// dns lookup successful
+					reqDto.ToUID = remoteDnsHost
+					reqDto.ToType = "outbound"
+				} else {
+					reqDto.ToUID = skInfo.Daddr
+					reqDto.ToType = "outbound"
+					log.Logger.Warn().Err(err).Str("Daddr", skInfo.Daddr).Msg("error getting hostname from ip")
+				}
+			}
+		}
+	}
+
+	log.Logger.Info().Str("reqDto.ToType", reqDto.ToType).Str("reqDto.ToUID", reqDto.ToUID).
+		Str("skInfo.Daddr", skInfo.Daddr).Str("skInfo.Saddr", skInfo.Saddr).Msg("setFromTo2")
+
+	return nil
+}
+
 func (a *Aggregator) setFromTo(skInfo *SockInfo, d *l7_req.L7Event, reqDto *datastore.Request, hostHeader string) error {
 	// find pod info
 	a.clusterInfo.mu.RLock() // lock for reading
 	podUid, ok := a.clusterInfo.PodIPToPodUid[skInfo.Saddr]
 	a.clusterInfo.mu.RUnlock() // unlock for reading
 	if !ok {
-		log.Logger.Debug().Str("Saddr", skInfo.Saddr).
-			Int("pid", int(d.Pid)).
-			Uint64("fd", d.Fd).
-			Msg("error finding pod with sockets saddr")
 		return fmt.Errorf("error finding pod with sockets saddr")
 	}
 
@@ -585,18 +657,37 @@ func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
 	// other protocols events come as whole, but http2 events come as frames
 	// we need to aggregate frames to get the whole request
 	if d.Protocol == l7_req.L7_PROTOCOL_HTTP2 {
-		if _, ok := a.h2Ch[d.Pid]; !ok {
-			a.h2Ch[d.Pid] = make(chan *l7_req.L7Event, 1000)
+		var ch chan *l7_req.L7Event
+		a.h2ChMu.Lock()
+		key := fmt.Sprintf("%d-%d", d.Pid, d.Fd)
+		if _, ok := a.h2Ch[key]; !ok {
+			a.h2Ch[key] = make(chan *l7_req.L7Event) // TODO: make this configurable
+			ch = a.h2Ch[key]
+			go a.processHttp2Frames(ch) // worker per connection, will be called once
+		} else {
+			ch = a.h2Ch[key]
 		}
-		a.h2Ch[d.Pid] <- &d
-		go a.processHttp2Frames(d.Pid)
+		a.h2ChMu.Unlock()
+
+		ch <- &d
 		return
+	}
+
+	// myapp-client-deployment-7b9c6785cb-hpq55 on node 228
+	if d.Pid == 985 && d.Protocol == l7_req.L7_PROTOCOL_HTTP {
+		log.Logger.Info().Msg("myapp-client-deployment-7b9c6785cb-hpq55 L7 event came")
 	}
 
 	skInfo := a.findRelatedSocket(ctx, &d)
 	if skInfo == nil {
-		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("related socket info not found")
+		if d.Pid == 985 && d.Protocol == l7_req.L7_PROTOCOL_HTTP {
+			log.Logger.Info().Msg("myapp-client-deployment-7b9c6785cb-hpq55 skInfo not found")
+		}
 		return
+	}
+
+	if d.Pid == 985 && d.Protocol == l7_req.L7_PROTOCOL_HTTP {
+		log.Logger.Info().Msg("myapp-client-deployment-7b9c6785cb-hpq55 skInfo found")
 	}
 
 	// Since we process events concurrently
@@ -620,16 +711,20 @@ func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
 		// path = sql command
 		// method = sql message type
 		reqDto.Path = parseSqlCommand(d.Payload[0:d.PayloadSize])
-		log.Logger.Debug().Str("path", reqDto.Path).Msg("path extracted from postgres payload")
 	}
 	var reqHostHeader string
 	// parse http payload, extract path, query params, headers
 	if d.Protocol == l7_req.L7_PROTOCOL_HTTP {
 		_, reqDto.Path, _, reqHostHeader = parseHttpPayload(string(d.Payload[0:d.PayloadSize]))
-		log.Logger.Debug().Str("path", reqDto.Path).Msg("path extracted from http payload")
 	}
 
-	a.setFromTo(skInfo, &d, &reqDto, reqHostHeader)
+	err := a.setFromTo(skInfo, &d, &reqDto, reqHostHeader)
+	if err != nil {
+		if d.Pid == 985 && d.Protocol == l7_req.L7_PROTOCOL_HTTP {
+			log.Logger.Info().Msg("myapp-client-deployment-7b9c6785cb-hpq55 error on setTo")
+		}
+		return
+	}
 
 	reqDto.Completed = !d.Failed
 
@@ -649,6 +744,9 @@ func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
 	}
 
 	go func() {
+		if d.Pid == 985 && d.Protocol == l7_req.L7_PROTOCOL_HTTP {
+			log.Logger.Info().Msg("myapp-client-deployment-7b9c6785cb-hpq55 persisting req")
+		}
 		err := a.ds.PersistRequest(&reqDto)
 		if err != nil {
 			log.Logger.Error().Err(err).Msg("error persisting request")
@@ -702,6 +800,8 @@ func (a *Aggregator) fetchSkInfo(ctx context.Context, skLine *SocketLine, d *l7_
 	var skInfo *SockInfo
 	var err error
 
+	// skInfo, _ = skLine.GetValue(d.WriteTimeNs)
+
 	for {
 		skInfo, err = skLine.GetValue(d.WriteTimeNs)
 		if err == nil && skInfo != nil {
@@ -713,8 +813,6 @@ func (a *Aggregator) fetchSkInfo(ctx context.Context, skLine *SocketLine, d *l7_
 		}
 		time.Sleep(rt)
 		rt *= 2 // exponential backoff
-		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Uint64("writeTimeNs", d.WriteTimeNs).
-			Msg("retrying getting socket info from skLine")
 
 		select {
 		case <-ctx.Done():
@@ -756,9 +854,10 @@ func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) *
 	skInfo := a.fetchSkInfo(ctx, skLine, d)
 
 	if skInfo == nil {
-		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("related socket info not found")
 		return nil
 	}
+
+	// TODO: zero IP address check ??
 
 	return skInfo
 

@@ -141,7 +141,7 @@ struct {
     __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
     __uint(key_size, sizeof(int));
     __uint(value_size, sizeof(int));
-    __uint(max_entries, 10240);
+    // __uint(max_entries, 10240);
 } l7_events SEC(".maps");
 
 // when given with __type macro below
@@ -223,7 +223,39 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
         if (method != -1){
             req->protocol = PROTOCOL_HTTP;
             req-> method = method;
-        }else if (is_rabbitmq_publish(buf,count)){
+        }else if (is_http2_frame(buf, count)){
+            struct l7_event *e = bpf_map_lookup_elem(&l7_event_heap, &zero);
+            if (!e) {
+                return 0;
+            }
+
+            e->protocol = PROTOCOL_HTTP2;
+            e->write_time_ns = timestamp;
+            e->fd = k.fd;
+            e->pid = k.pid;
+            e->method = CLIENT_FRAME;
+            e->status = 0;
+            e->failed = 0; // success
+            e->duration = 0; // total write time
+            e->is_tls = 1;
+            bpf_probe_read(e->payload, MAX_PAYLOAD_SIZE, buf);
+            if(count > MAX_PAYLOAD_SIZE){
+                // will not be able to copy all of it
+                e->payload_size = MAX_PAYLOAD_SIZE;
+                e->payload_read_complete = 0;
+            }else{
+                e->payload_size = count;
+                e->payload_read_complete = 1;
+            }
+            
+            long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
+            if (r < 0) {
+                unsigned char log_msg[] = "failed write to l7_events -- res|fd|psize";
+                log_to_userspace(ctx, WARN, func_name, log_msg, r, e->fd, e->payload_size);        
+            }
+            return 0;
+        }
+        else if (is_rabbitmq_publish(buf,count)){
             req->protocol = PROTOCOL_AMQP;
             req->method = METHOD_PUBLISH;
             struct write_args args = {};
@@ -432,6 +464,36 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
         return 0;
     }
     e->is_tls = is_tls;
+
+    // if http2, send directly to userspace
+    if(is_http2_frame(read_info->buf,ret)){
+        e->protocol = PROTOCOL_HTTP2;
+        e->write_time_ns = timestamp;
+        e->fd = read_info->fd;
+        e->pid = k.pid;
+        e->method = SERVER_FRAME;
+        e->status = 0;
+        e->failed = 0; // success
+        e->duration = 0; // total write time
+        e->is_tls = 1;
+        bpf_probe_read(e->payload, MAX_PAYLOAD_SIZE, read_info->buf);
+        if(ret > MAX_PAYLOAD_SIZE){
+            // will not be able to copy all of it
+            e->payload_size = MAX_PAYLOAD_SIZE;
+            e->payload_read_complete = 0;
+        }else{
+            e->payload_size = ret;
+            e->payload_read_complete = 1;
+        }
+
+        long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
+        if (r < 0) {
+            unsigned char log_msg[] = "failed write to l7_events -- res|fd|psize";
+            log_to_userspace(ctx, WARN, func_name, log_msg, r, e->fd, e->payload_size);        
+        }
+        bpf_map_delete_elem(&go_active_reads, &k);
+        return 0;
+    }
 
     // For a amqp consume, there will be no write, so we will not have a request in active_l7_requests
     // Process amqp consume first, if it is not amqp consume, look for a request in active_l7_requests

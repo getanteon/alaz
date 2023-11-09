@@ -335,7 +335,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	}()
 
 	// initialize perf event readers
-	l7Events, err := perf.NewReader(L7BpfProgsAndMaps.L7Events, 64*os.Getpagesize())
+	l7Events, err := perf.NewReader(L7BpfProgsAndMaps.L7Events, 100*os.Getpagesize())
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
 	}
@@ -344,7 +344,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		l7Events.Close()
 	}()
 
-	logs, err := perf.NewReader(L7BpfProgsAndMaps.LogMap, 64*os.Getpagesize())
+	logs, err := perf.NewReader(L7BpfProgsAndMaps.LogMap, 4*os.Getpagesize())
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
 	}

@@ -22,6 +22,7 @@ import (
 )
 
 type PidLocks struct {
+	mu    sync.RWMutex
 	locks map[uint32]*sync.Mutex
 }
 
