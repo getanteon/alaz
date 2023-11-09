@@ -386,7 +386,8 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 		// parse frame
 		// https://httpwg.org/specs/rfc7540.html#rfc.section.4.1
 		if d.Method == l7_req.CLIENT_FRAME {
-			for {
+			loop := true
+			for loop {
 				// can be multiple frames in the payload
 				// check golang.org/x/net/http2/frame.go:1587 for handling of CONTINUATION frames
 				f, err := framer.ReadFrame()
@@ -396,6 +397,8 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 
 				switch f := f.(type) {
 				case *http2.HeadersFrame:
+					log.Logger.Info().Uint32("streamId", f.Header().StreamID).Msg("http2 client headers frame")
+
 					streamId := f.Header().StreamID
 					mu.Lock()
 					if _, ok := activeReqs[streamId]; !ok {
@@ -433,14 +436,15 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 					h2Parser.clientHpackDecoder.SetEmitFunc(reqHeaderSet(req))
 					h2Parser.clientHpackDecoder.Write(f.HeaderBlockFragment())
 
-					break // only process the first header frame for now ?
+					loop = false // only process the first header frame for now ?
 					// if f.HeadersEnded() { // if not a CONTINUATION frame will come
 					// 	break
 					// }
 				}
 			}
 		} else if d.Method == l7_req.SERVER_FRAME {
-			for {
+			loop := true
+			for loop {
 				// can be multiple frames in the payload
 				f, err := framer.ReadFrame()
 				if err != nil {
@@ -449,9 +453,11 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 
 				switch f := f.(type) {
 				case *http2.HeadersFrame:
+					log.Logger.Info().Uint32("streamId", f.Header().StreamID).Msg("http2 server headers frame")
 					streamId := f.Header().StreamID
 					mu.RLock()
 					if _, ok := activeReqs[streamId]; !ok {
+						mu.RUnlock()
 						break
 					}
 					req := activeReqs[streamId]
@@ -470,30 +476,35 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 					h2Parser.serverHpackDecoder.SetEmitFunc(respHeaderSet(req))
 					h2Parser.serverHpackDecoder.Write(f.HeaderBlockFragment())
 				case *http2.DataFrame:
+					log.Logger.Info().Uint32("streamId", f.Header().StreamID).Msg("http2 server data frame")
 					// send to persist in a goroutine
 					// it may take a while to find the related socket info
 					// and we don't want to block the main loop
 					streamId := f.Header().StreamID
 					mu.RLock()
 					if _, ok := activeReqs[streamId]; !ok {
+						mu.RUnlock()
 						break
 					}
 					req := activeReqs[streamId]
 					mu.RUnlock()
-					go func() {
+					dd := d
+					go func(d *l7_req.L7Event, req *datastore.Request) {
 						// request completed, server sent response
 						// TODO: case where server doesn't send a data frame ?
 						// only headers frame ? is it possible ?
 
 						skInfo := a.findRelatedSocket(a.ctx, d)
 						if skInfo == nil {
-							log.Logger.Info().Uint32("pid", d.Pid).Uint64("fd", d.Fd).
-								Uint32("streamId", streamId).Msg("related socket info not found for h2 req")
+							// log.Logger.Info().Uint32("pid", d.Pid).Uint64("fd", d.Fd).
+							// 	Uint32("streamId", streamId).Msg("related socket info not found for h2 req")
 							// continue
 							return
 						}
 
 						req.StartTime = time.Now().UnixMilli()
+						log.Logger.Info().Uint32("streamId", streamId).Uint64("d.WriteTimeNs", d.WriteTimeNs).
+							Uint64("req.Latency", req.Latency).Msg("latency calculated")
 						req.Latency = d.WriteTimeNs - req.Latency
 						req.Completed = true
 						req.FromIP = skInfo.Saddr
@@ -530,13 +541,16 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 							Str("protocol", req.Protocol).
 							Bool("tls", req.Tls).
 							Bool("completed", req.Completed).
+							Uint64("latency", req.Latency).
 							Msg("http2 request persisting")
 
 						a.ds.PersistRequest(req)
-						mu.Lock()
-						delete(activeReqs, streamId)
-						mu.Unlock()
-					}()
+					}(dd, req)
+					mu.Lock()
+					delete(activeReqs, streamId)
+					mu.Unlock()
+					loop = false // only process the first data frame for now ?
+
 				}
 			}
 		} else {
