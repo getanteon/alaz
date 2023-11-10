@@ -61,9 +61,6 @@ int is_http2_magic_2(char *buf){
 
 static __always_inline    
 int is_http2_frame(char *buf, __u64 size) {
-
-    // return 0;
-
     // magic message is not a frame 
     if (is_http2_magic_2(buf)){
         return 1;

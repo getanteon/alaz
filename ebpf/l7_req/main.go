@@ -507,59 +507,6 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 					method = "Unknown"
 				}
 
-				// if protocol == L7_PROTOCOL_HTTP2 {
-				// 	log.Logger.Warn().Uint16("fd", uint16(l7Event.Fd)).Uint32("pid", l7Event.Pid).
-				// 		Uint32("psize", l7Event.PayloadSize).Str("method", method).Str("protocol", protocol).Uint32("status", l7Event.Status).Msg("http2 event")
-				// 	// Uints8("payload", (l7Event.Payload[:l7Event.PayloadSize]))
-				// 	//│ panic: runtime error: slice bounds out of range [:1232] with length 512                                                                                                     │
-
-				// 	decoder := bytes.NewReader(l7Event.Payload[:l7Event.PayloadSize])
-				// 	framer := http2.NewFramer(nil, decoder)
-				// 	frame, err := framer.ReadFrame()
-				// 	if err != nil {
-				// 		log.Logger.Error().Err(err).Msg("error reading frame")
-				// 		return
-				// 	}
-
-				// 	fmt.Println("LENGTH: ", frame.Header().Length)
-				// 	fmt.Println("TYPE: ", frame.Header().Type)
-				// 	fmt.Println("FLAGS: ", frame.Header().Flags)
-				// 	fmt.Println("STREAMID: ", frame.Header().StreamID)
-
-				// 	fmt.Println("FLAGS SETTINGSACK: ", frame.Header().Flags.Has(http2.FlagSettingsAck))
-				// 	fmt.Println("FLAGS DATAENDSTREAM: ", frame.Header().Flags.Has(http2.FlagDataEndStream))
-				// 	fmt.Println("FLAGS ENDHEADERS : ", frame.Header().Flags.Has(http2.FlagHeadersEndHeaders))
-
-				// 	if frame.Header().Type == http2.FrameHeaders {
-				// 		// decode headers
-
-				// 		headerFrame := frame.(*http2.HeadersFrame)
-				// 		fmt.Println("Headers stream ID", headerFrame.StreamID)
-				// 		fmt.Println("Headers END_HEADERS", headerFrame.HeadersEnded())
-
-				// 		framePayload := headerFrame.HeaderBlockFragment()
-				// 		fmt.Println("Headers Payload", framePayload)
-
-				// 		// decode h2 headers with hpack
-
-				// 		if method == CLIENT_FRAME {
-				// 			clientHpackDecoder.Write(framePayload)
-				// 		} else if method == SERVER_FRAME {
-				// 			serverHpackDecoder.Write(framePayload)
-				// 		}
-
-				// 	} else if frame.Header().Type == http2.FrameData {
-
-				// 		dataFrame := frame.(*http2.DataFrame)
-				// 		fmt.Println("Data stream ID", dataFrame.StreamID)
-				// 		fmt.Println("Data END_STREAM", dataFrame.StreamEnded())
-				// 		fmt.Println("Data Payload", string(dataFrame.Data()))
-				// 	}
-
-				// 	// log.Logger.Debug().Uint16("fd", uint16(l7Event.Fd)).Uint32("pid", l7Event.Pid).
-				// 	// 	Str("payload", string(l7Event.Payload[:])).Str("method", method).Str("protocol", protocol).Uint32("status", l7Event.Status).Msg("l7tls event")
-				// }
-
 				ch <- L7Event{
 					Fd:                  l7Event.Fd,
 					Pid:                 l7Event.Pid,

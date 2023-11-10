@@ -63,7 +63,6 @@ type SockInfo struct {
 	Daddr string `json:"daddr"`
 	Dport uint16 `json:"dport"`
 
-	// http2Parser
 	h2parser *http2Parser
 }
 
@@ -417,11 +416,12 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 							return
 						}
 
+						// TODO: set protocol
 						// if d.Tls {
 						// 	req.Protocol = "HTTPS"
 						// }
 
-						log.Logger.Info().
+						log.Logger.Debug().
 							Uint32("streamId", streamId).
 							Str("path", req.Path).
 							Str("method", req.Method).
@@ -466,9 +466,6 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 
 				switch f := f.(type) {
 				case *http2.HeadersFrame:
-					log.Logger.Info().Uint32("streamId", f.Header().StreamID).
-						Uint64("kernelTime", d.WriteTimeNs).Msg("http2 client headers frame")
-
 					streamId := f.Header().StreamID
 					mu.Lock()
 					if _, ok := frames[streamId]; !ok {
@@ -521,8 +518,6 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 
 				switch f := f.(type) {
 				case *http2.HeadersFrame:
-					log.Logger.Info().Uint32("streamId", f.Header().StreamID).Uint64("kernelTime", d.WriteTimeNs).
-						Msg("http2 server headers frame")
 					streamId := f.Header().StreamID
 					mu.Lock()
 					if _, ok := frames[streamId]; !ok {
@@ -549,8 +544,6 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 					h2Parser.serverHpackDecoder.Write(f.HeaderBlockFragment())
 
 				case *http2.DataFrame:
-					log.Logger.Info().Uint64("kernelTime", d.WriteTimeNs).
-						Uint32("streamId", f.Header().StreamID).Msg("http2 server data frame")
 					streamId := f.Header().StreamID
 					mu.Lock()
 					if _, ok := frames[streamId]; !ok {
