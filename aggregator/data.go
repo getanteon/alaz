@@ -360,24 +360,94 @@ func parseHttpPayload(request string) (method string, path string, httpVersion s
 	return method, path, httpVersion, hostHeader
 }
 
+type FrameArriaval struct {
+	ClientHeadersFrameArrived bool
+	ServerHeadersFrameArrived bool
+	ServerDataFrameArrived    bool
+	event                     *l7_req.L7Event // l7 event that carries server data frame
+	req                       *datastore.Request
+}
+
 // called once per socket
 // TODO: must close on process close
 func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
-	// socket-streamID -> RequestDto
-	// fmt.Sprintf("%d-%d-%d", pid, fd, streamId)
-
 	mu := sync.RWMutex{}
-	// by streamID
-	activeReqs := make(map[uint32]*datastore.Request)
-
-	// h2 parser per connection
-	// fmt.Sprintf("%d-%d", pid, fd)
-	// connectionH2Parsers := make(map[string]*http2Parser)
-
 	h2Parser := &http2Parser{
 		clientHpackDecoder: hpack.NewDecoder(4096, nil),
 		serverHpackDecoder: hpack.NewDecoder(4096, nil),
 	}
+
+	// streamId -> frame
+	frames := make(map[uint32]*FrameArriaval)
+
+	t := time.NewTicker(1 * time.Second)
+	// http2 frames order can be in any order
+	// if server data frame comes first, we need to wait for the server headers frame
+	// before sending the request to persist
+	go func() {
+		for range t.C {
+			mu.Lock()
+			for streamId, st := range frames {
+				if st.ClientHeadersFrameArrived && st.ServerHeadersFrameArrived && st.ServerDataFrameArrived {
+					// request completed, server sent response
+					// Process server data frame, send L7 event to persist
+					go func(d *l7_req.L7Event, req *datastore.Request) {
+						skInfo := a.findRelatedSocket(a.ctx, d)
+						if skInfo == nil {
+							return
+						}
+
+						req.StartTime = time.Now().UnixMilli()
+						log.Logger.Info().Uint32("streamId", streamId).Uint64("d.WriteTimeNs", d.WriteTimeNs).
+							Uint64("req.Latency", req.Latency).Msg("latency calculated")
+						req.Latency = d.WriteTimeNs - req.Latency
+						req.Completed = true
+						req.FromIP = skInfo.Saddr
+						req.ToIP = skInfo.Daddr
+						req.Protocol = "HTTP2"
+						req.Tls = d.Tls
+						req.FromPort = skInfo.Sport
+						req.ToPort = skInfo.Dport
+						req.FailReason = ""
+
+						// toUID is set to :authority header in client frame
+						err := a.setFromTo2(skInfo, d, req, req.ToUID)
+						if err != nil {
+							// log.Logger.Error().Err(err).Msg("error setting from/to")
+							return
+						}
+
+						// if d.Tls {
+						// 	req.Protocol = "HTTPS"
+						// }
+
+						log.Logger.Info().
+							Uint32("streamId", streamId).
+							Str("path", req.Path).
+							Str("method", req.Method).
+							Uint32("statusCode", req.StatusCode).
+							Str("fromUID", req.FromUID).
+							Str("toUID", req.ToUID).
+							Str("fromIP", req.FromIP).
+							Uint16("fromPort", req.FromPort).
+							Str("toIP", req.ToIP).
+							Uint16("toPort", req.ToPort).
+							Str("fromType", req.FromType).
+							Str("toType", req.ToType).
+							Str("protocol", req.Protocol).
+							Bool("tls", req.Tls).
+							Bool("completed", req.Completed).
+							Uint64("latency", req.Latency).
+							Msg("http2 request persisting")
+
+						a.ds.PersistRequest(req)
+					}(st.event, st.req)
+					delete(frames, streamId)
+				}
+			}
+			mu.Unlock()
+		}
+	}()
 
 	for d := range ch {
 		// TODO: payload size check, PayloadSize could be higher than the actual payload size ?
@@ -397,17 +467,24 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 
 				switch f := f.(type) {
 				case *http2.HeadersFrame:
-					log.Logger.Info().Uint32("streamId", f.Header().StreamID).Msg("http2 client headers frame")
+					log.Logger.Info().Uint32("streamId", f.Header().StreamID).
+						Uint64("kernelTime", d.WriteTimeNs).Msg("http2 client headers frame")
 
 					streamId := f.Header().StreamID
 					mu.Lock()
-					if _, ok := activeReqs[streamId]; !ok {
-						activeReqs[streamId] = &datastore.Request{}
+					if _, ok := frames[streamId]; !ok {
+						frames[streamId] = &FrameArriaval{
+							ClientHeadersFrameArrived: true,
+							req:                       &datastore.Request{},
+						}
 					}
-					req := activeReqs[streamId]
+					// req := activeReqs[streamId]
+					fa := frames[streamId]
+					fa.ClientHeadersFrameArrived = true
+					fa.req.Latency = d.WriteTimeNs // set latency to write time here, will be updated later
 					mu.Unlock()
-					req.Latency = d.WriteTimeNs // set latency to write time here, will be updated later
 
+					// Process client headers frame
 					reqHeaderSet := func(req *datastore.Request) func(hf hpack.HeaderField) {
 						return func(hf hpack.HeaderField) {
 							switch hf.Name {
@@ -432,8 +509,7 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 							}
 						}
 					}
-
-					h2Parser.clientHpackDecoder.SetEmitFunc(reqHeaderSet(req))
+					h2Parser.clientHpackDecoder.SetEmitFunc(reqHeaderSet(fa.req))
 					h2Parser.clientHpackDecoder.Write(f.HeaderBlockFragment())
 
 					loop = false // only process the first header frame for now ?
@@ -453,16 +529,22 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 
 				switch f := f.(type) {
 				case *http2.HeadersFrame:
-					log.Logger.Info().Uint32("streamId", f.Header().StreamID).Msg("http2 server headers frame")
+					log.Logger.Info().Uint32("streamId", f.Header().StreamID).Uint64("kernelTime", d.WriteTimeNs).
+						Msg("http2 server headers frame")
 					streamId := f.Header().StreamID
-					mu.RLock()
-					if _, ok := activeReqs[streamId]; !ok {
-						mu.RUnlock()
-						break
+					mu.Lock()
+					if _, ok := frames[streamId]; !ok {
+						// mu.RUnlock()
+						frames[streamId] = &FrameArriaval{
+							ServerHeadersFrameArrived: true,
+							req:                       &datastore.Request{},
+						}
+						// break
 					}
-					req := activeReqs[streamId]
-					mu.RUnlock()
+					fa := frames[streamId]
+					fa.ServerHeadersFrameArrived = true
 
+					// Process server headers frame
 					respHeaderSet := func(req *datastore.Request) func(hf hpack.HeaderField) {
 						return func(hf hpack.HeaderField) {
 							switch hf.Name {
@@ -473,83 +555,32 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 						}
 					}
 
-					h2Parser.serverHpackDecoder.SetEmitFunc(respHeaderSet(req))
+					h2Parser.serverHpackDecoder.SetEmitFunc(respHeaderSet(fa.req))
 					h2Parser.serverHpackDecoder.Write(f.HeaderBlockFragment())
+
+					// req := activeReqs[streamId]
+					mu.Unlock()
 				case *http2.DataFrame:
-					log.Logger.Info().Uint32("streamId", f.Header().StreamID).Msg("http2 server data frame")
+					log.Logger.Info().Uint64("kernelTime", d.WriteTimeNs).
+						Uint32("streamId", f.Header().StreamID).Msg("http2 server data frame")
 					// send to persist in a goroutine
 					// it may take a while to find the related socket info
 					// and we don't want to block the main loop
 					streamId := f.Header().StreamID
-					mu.RLock()
-					if _, ok := activeReqs[streamId]; !ok {
-						mu.RUnlock()
-						break
-					}
-					req := activeReqs[streamId]
-					mu.RUnlock()
-					dd := d
-					go func(d *l7_req.L7Event, req *datastore.Request) {
-						// request completed, server sent response
-						// TODO: case where server doesn't send a data frame ?
-						// only headers frame ? is it possible ?
-
-						skInfo := a.findRelatedSocket(a.ctx, d)
-						if skInfo == nil {
-							// log.Logger.Info().Uint32("pid", d.Pid).Uint64("fd", d.Fd).
-							// 	Uint32("streamId", streamId).Msg("related socket info not found for h2 req")
-							// continue
-							return
-						}
-
-						req.StartTime = time.Now().UnixMilli()
-						log.Logger.Info().Uint32("streamId", streamId).Uint64("d.WriteTimeNs", d.WriteTimeNs).
-							Uint64("req.Latency", req.Latency).Msg("latency calculated")
-						req.Latency = d.WriteTimeNs - req.Latency
-						req.Completed = true
-						req.FromIP = skInfo.Saddr
-						req.ToIP = skInfo.Daddr
-						req.Protocol = "HTTP2"
-						req.Tls = d.Tls
-						req.FromPort = skInfo.Sport
-						req.ToPort = skInfo.Dport
-						req.FailReason = ""
-
-						// toUID is set to :authority header in client frame
-						err = a.setFromTo2(skInfo, d, req, req.ToUID)
-						if err != nil {
-							// log.Logger.Error().Err(err).Msg("error setting from/to")
-							return
-						}
-
-						// if d.Tls {
-						// 	req.Protocol = "HTTPS"
-						// }
-
-						log.Logger.Info().
-							Str("path", req.Path).
-							Str("method", req.Method).
-							Uint32("statusCode", req.StatusCode).
-							Str("fromUID", req.FromUID).
-							Str("toUID", req.ToUID).
-							Str("fromIP", req.FromIP).
-							Uint16("fromPort", req.FromPort).
-							Str("toIP", req.ToIP).
-							Uint16("toPort", req.ToPort).
-							Str("fromType", req.FromType).
-							Str("toType", req.ToType).
-							Str("protocol", req.Protocol).
-							Bool("tls", req.Tls).
-							Bool("completed", req.Completed).
-							Uint64("latency", req.Latency).
-							Msg("http2 request persisting")
-
-						a.ds.PersistRequest(req)
-					}(dd, req)
 					mu.Lock()
-					delete(activeReqs, streamId)
+					if _, ok := frames[streamId]; !ok {
+						frames[streamId] = &FrameArriaval{
+							ServerDataFrameArrived: true,
+							req:                    &datastore.Request{},
+						}
+					}
+
+					fa := frames[streamId]
+					fa.ServerDataFrameArrived = true
+					fa.event = d
 					mu.Unlock()
-					loop = false // only process the first data frame for now ?
+
+					loop = false // only process the first data frame for now
 
 				}
 			}
