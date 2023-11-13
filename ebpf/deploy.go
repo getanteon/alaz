@@ -21,34 +21,6 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-type PidLocks struct {
-	mu    sync.RWMutex
-	locks map[uint32]*sync.Mutex
-}
-
-func NewPidLocks() *PidLocks {
-	return &PidLocks{
-		locks: make(map[uint32]*sync.Mutex),
-	}
-}
-
-func (p *PidLocks) Lock(pid uint32) {
-	lock, ok := p.locks[pid]
-	if !ok {
-		lock = &sync.Mutex{}
-		p.locks[pid] = lock
-	}
-	lock.Lock()
-}
-
-func (p *PidLocks) Release(pid uint32) {
-	lock, ok := p.locks[pid]
-	if !ok {
-		return
-	}
-	lock.Unlock()
-}
-
 const (
 	goTlsWriteSymbol = "crypto/tls.(*Conn).Write"
 	goTlsReadSymbol  = "crypto/tls.(*Conn).Read"
@@ -77,7 +49,6 @@ type EbpfCollector struct {
 	goTlsReadUretprobes map[uint32][]link.Link // uprobes for ret instructions
 
 	tlsPidMap map[uint32]struct{}
-	pidLocks  *PidLocks
 }
 
 func NewEbpfCollector(parentCtx context.Context) *EbpfCollector {
@@ -95,7 +66,6 @@ func NewEbpfCollector(parentCtx context.Context) *EbpfCollector {
 		goTlsReadUprobes:    make(map[uint32]link.Link),
 		goTlsReadUretprobes: make(map[uint32][]link.Link),
 		tlsAttachQueue:      make(chan uint32, 10),
-		pidLocks:            NewPidLocks(),
 	}
 }
 
@@ -164,29 +134,24 @@ func (e *EbpfCollector) close() {
 // in order to prevent the memory peak at the beginning
 // we'll attach to processes one by one
 func (e *EbpfCollector) ListenForEncryptedReqs(pid uint32) {
-	// one process can have only one item in the queue at all times
-	e.pidLocks.Lock(pid)
-	// defer e.pidLocks.Release(pid)
-
-	if _, ok := e.tlsPidMap[pid]; ok {
-		e.pidLocks.Release(pid)
-		return
-	}
-
-	// pid sent to queue, no need to check again
-	e.tlsPidMap[pid] = struct{}{}
-	e.pidLocks.Release(pid)
-
 	e.tlsAttachQueue <- pid
 }
 
 // we check the size of the executable before reading it into memory
 // because it can be very large
 // otherwise we can get stuck to memory limit defined in k8s
+
+// runs as one goroutine
 func (e *EbpfCollector) AttachUprobesForEncrypted() {
 	for pid := range e.tlsAttachQueue {
+		// check duplicate
+		if _, ok := e.tlsPidMap[pid]; ok {
+			continue
+		}
+		e.tlsPidMap[pid] = struct{}{}
+
 		// to avoid memory peak
-		time.Sleep(5 * time.Second)
+		time.Sleep(3 * time.Second)
 
 		// attach to libssl uprobes if process is using libssl
 		errors := e.AttachSslUprobesOnProcess("/proc", pid)
