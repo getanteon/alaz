@@ -143,8 +143,7 @@ func (nl *SocketLine) GetAlreadyExistingSockets() {
 
 		ss, err := readSockets(sockPath)
 		if err != nil {
-			log.Logger.Warn().Err(err).Msgf("failed to read sockets from %s", sockPath)
-			return
+			continue
 		}
 
 		for _, s := range ss {
@@ -234,7 +233,6 @@ func readSockets(src string) ([]TcpSocket, error) {
 			continue
 		}
 
-		//
 		line := scanner.Text()
 		fields := strings.Fields(line)
 
@@ -254,24 +252,33 @@ func readSockets(src string) ([]TcpSocket, error) {
 			continue
 		}
 
-		res = append(res, TcpSocket{SAddr: decodeAddr([]byte(localX)), DAddr: decodeAddr([]byte(remoteX)), Listen: stateX == stateListen, Inode: inodeX})
+		saddr, err := decodeAddr([]byte(localX))
+		if err != nil {
+			continue
+		}
+		daddr, _ := decodeAddr([]byte(remoteX))
+		if err != nil {
+			continue
+		}
+
+		res = append(res, TcpSocket{SAddr: saddr, DAddr: daddr, Listen: stateX == stateListen, Inode: inodeX})
 	}
 	return res, nil
 }
 
-func decodeAddr(src []byte) netaddr.IPPort {
+func decodeAddr(src []byte) (netaddr.IPPort, error) {
 	col := bytes.IndexByte(src, ':')
 	if col == -1 || (col != 8 && col != 32) {
-		return netaddr.IPPort{}
+		return netaddr.IPPort{}, fmt.Errorf("invalid address %q", src)
 	}
 
 	ip := make([]byte, col/2)
 	if _, err := hex.Decode(ip, src[:col]); err != nil {
-		return netaddr.IPPort{}
+		return netaddr.IPPort{}, fmt.Errorf("invalid address %q: %v", src, err)
 	}
 	port := make([]byte, 2)
 	if _, err := hex.Decode(port, src[col+1:]); err != nil {
-		return netaddr.IPPort{}
+		return netaddr.IPPort{}, fmt.Errorf("invalid address %q: %v", src, err)
 	}
 
 	var v uint32
@@ -282,9 +289,9 @@ func decodeAddr(src []byte) netaddr.IPPort {
 
 	ipp, ok := netaddr.FromStdIP(net.IP(ip))
 	if !ok {
-		return netaddr.IPPort{}
+		return netaddr.IPPort{}, fmt.Errorf("invalid address %q", src)
 	}
-	return netaddr.IPPortFrom(ipp, binary.BigEndian.Uint16(port))
+	return netaddr.IPPortFrom(ipp, binary.BigEndian.Uint16(port)), nil
 }
 
 type Fd struct {

@@ -320,9 +320,7 @@ func (b *BackendDS) DoRequest(req *http.Request) error {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("not success: %d, %s", resp.StatusCode, string(body))
-	} else {
-		log.Logger.Info().Str("reqHostPath", req.URL.Host+req.URL.Path).Msg("success on request")
+		return fmt.Errorf("req failed: %d, %s", resp.StatusCode, string(body))
 	}
 
 	return nil
@@ -353,7 +351,7 @@ func (b *BackendDS) sendToBackend(method string, payload interface{}, endpoint s
 		return
 	}
 
-	log.Logger.Debug().Str("endpoint", endpoint).Any("payload", payload).Msg("sending batch to backend")
+	log.Logger.Info().Str("endpoint", endpoint).Any("payload", payload).Msg("sending batch to backend")
 	err = b.DoRequest(httpReq)
 	if err != nil {
 		log.Logger.Error().Msgf("backend persist error at ep %s : %v", endpoint, err)

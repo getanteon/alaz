@@ -22,6 +22,7 @@ import (
 )
 
 type PidLocks struct {
+	mu    sync.RWMutex
 	locks map[uint32]*sync.Mutex
 }
 
@@ -168,7 +169,6 @@ func (e *EbpfCollector) ListenForEncryptedReqs(pid uint32) {
 	// defer e.pidLocks.Release(pid)
 
 	if _, ok := e.tlsPidMap[pid]; ok {
-		log.Logger.Debug().Msgf("tls attachment effort was made before for pid: %d ", pid)
 		e.pidLocks.Release(pid)
 		return
 	}
