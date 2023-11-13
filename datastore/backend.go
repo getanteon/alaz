@@ -529,20 +529,22 @@ func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool) {
 	t := time.NewTicker(10 * time.Second)
 	defer t.Stop()
 
-	payload := HealthCheckPayload{
-		Metadata: Metadata{
-			MonitoringID:   MonitoringID,
-			IdempotencyKey: string(uuid.NewUUID()),
-			NodeID:         NodeID,
-			AlazVersion:    tag,
-		},
-		Info: struct {
-			EbpfEnabled    bool `json:"ebpf"`
-			MetricsEnabled bool `json:"metrics"`
-		}{
-			EbpfEnabled:    ebpf,
-			MetricsEnabled: metrics,
-		},
+	createHealthCheckPayload := func() HealthCheckPayload {
+		return HealthCheckPayload{
+			Metadata: Metadata{
+				MonitoringID:   MonitoringID,
+				IdempotencyKey: string(uuid.NewUUID()),
+				NodeID:         NodeID,
+				AlazVersion:    tag,
+			},
+			Info: struct {
+				EbpfEnabled    bool `json:"ebpf"`
+				MetricsEnabled bool `json:"metrics"`
+			}{
+				EbpfEnabled:    ebpf,
+				MetricsEnabled: metrics,
+			},
+		}
 	}
 
 	for {
@@ -551,7 +553,7 @@ func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool) {
 			log.Logger.Info().Msg("stopping sending health check")
 			return
 		case <-t.C:
-			b.sendToBackend(http.MethodPut, payload, healthCheckEndpoint)
+			b.sendToBackend(http.MethodPut, createHealthCheckPayload(), healthCheckEndpoint)
 		}
 	}
 }
