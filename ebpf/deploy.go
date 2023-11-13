@@ -4,8 +4,10 @@ import (
 	"context"
 	"debug/buildinfo"
 	"debug/elf"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"sync"
 	"time"
@@ -154,9 +156,15 @@ func (e *EbpfCollector) AttachUprobesForEncrypted() {
 		time.Sleep(3 * time.Second)
 
 		// attach to libssl uprobes if process is using libssl
-		errors := e.AttachSslUprobesOnProcess("/proc", pid)
-		if errors != nil && len(errors) > 0 {
-			for _, err := range errors {
+		errs := e.AttachSslUprobesOnProcess("/proc", pid)
+		if errs != nil && len(errs) > 0 {
+			for _, err := range errs {
+				if errors.Is(err, fs.ErrNotExist) {
+					// no such file or directory error
+					// executable is not found,
+					// it's probably a kernel thread, or a very short lived process
+					continue
+				}
 				log.Logger.Error().Err(err).Uint32("pid", pid).
 					Msgf("error attaching ssl lib for pid: %d", pid)
 			}
@@ -165,6 +173,12 @@ func (e *EbpfCollector) AttachUprobesForEncrypted() {
 		go_errs := e.AttachGoTlsUprobesOnProcess("/proc", pid)
 		if go_errs != nil && len(go_errs) > 0 {
 			for _, err := range go_errs {
+				if errors.Is(err, fs.ErrNotExist) {
+					// no such file or directory error
+					// executable is not found,
+					// it's probably a kernel thread, or a very short lived process
+					continue
+				}
 				log.Logger.Error().Err(err).Uint32("pid", pid).
 					Msgf("error attaching go tls for pid: %d", pid)
 			}
@@ -210,6 +224,7 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 	// read build info of a go executable
 	bi, err := buildinfo.ReadFile(path)
 	if err != nil {
+		// TODO: check if error is "not a Go executable"
 		log.Logger.Debug().Err(err).Uint32("pid", pid).Msg("error reading build info")
 		errors = append(errors, err)
 		return errors
@@ -235,7 +250,7 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 	// nm command can be used to get the symbols as well
 	symbols, err := ef.Symbols()
 	if err != nil {
-		log.Logger.Debug().Err(err).Uint32("pid", pid).Msg("error reading symbols")
+		log.Logger.Warn().Err(err).Uint32("pid", pid).Msg("error reading symbols")
 		errors = append(errors, err)
 		return errors
 	}
@@ -371,7 +386,6 @@ func (t *EbpfCollector) AttachSslUprobesOnProcess(procfs string, pid uint32) []e
 	for _, sslLib := range sslLibs {
 		err = t.AttachSSlUprobes(pid, sslLib.path, sslLib.version)
 		if err != nil {
-			log.Logger.Error().Err(err).Str("path", sslLib.path).Str("version", sslLib.version).Msgf("error attaching ssl uprobes")
 			errors = append(errors, err)
 		}
 	}

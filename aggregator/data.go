@@ -614,14 +614,10 @@ func (a *Aggregator) setFromTo(skInfo *SockInfo, d *l7_req.L7Event, reqDto *data
 				} else {
 					reqDto.ToUID = skInfo.Daddr
 					reqDto.ToType = "outbound"
-					log.Logger.Warn().Err(err).Str("Daddr", skInfo.Daddr).Msg("error getting hostname from ip")
 				}
 			}
 		}
 	}
-
-	log.Logger.Info().Str("reqDto.ToType", reqDto.ToType).Str("reqDto.ToUID", reqDto.ToUID).
-		Str("skInfo.Daddr", skInfo.Daddr).Str("skInfo.Saddr", skInfo.Saddr).Msg("setFromTo2")
 
 	return nil
 }
