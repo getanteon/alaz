@@ -397,8 +397,6 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 						}
 
 						req.StartTime = time.Now().UnixMilli()
-						log.Logger.Info().Uint32("streamId", streamId).Uint64("d.WriteTimeNs", d.WriteTimeNs).
-							Uint64("req.Latency", req.Latency).Msg("latency calculated")
 						req.Latency = d.WriteTimeNs - req.Latency
 						req.Completed = true
 						req.FromIP = skInfo.Saddr
@@ -410,7 +408,7 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 						req.FailReason = ""
 
 						// toUID is set to :authority header in client frame
-						err := a.setFromTo2(skInfo, d, req, req.ToUID)
+						err := a.setFromTo(skInfo, d, req, req.ToUID)
 						if err != nil {
 							// log.Logger.Error().Err(err).Msg("error setting from/to")
 							return
@@ -496,7 +494,12 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 								if req.ToUID == "" {
 									req.ToUID = hf.Value
 								}
+							case "content-type":
+								log.Logger.Info().Str("content-type", hf.Value).Msg("content-type")
+							case ":content-type":
+								log.Logger.Info().Str("content-type", hf.Value).Msg("content-type")
 							}
+
 						}
 					}
 					h2Parser.clientHpackDecoder.SetEmitFunc(reqHeaderSet(fa.req))
@@ -567,7 +570,7 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 	}
 }
 
-func (a *Aggregator) setFromTo2(skInfo *SockInfo, d *l7_req.L7Event, reqDto *datastore.Request, hostHeader string) error {
+func (a *Aggregator) setFromTo(skInfo *SockInfo, d *l7_req.L7Event, reqDto *datastore.Request, hostHeader string) error {
 	// find pod info
 	a.clusterInfo.mu.RLock() // lock for reading
 	podUid, ok := a.clusterInfo.PodIPToPodUid[skInfo.Saddr]
@@ -623,57 +626,6 @@ func (a *Aggregator) setFromTo2(skInfo *SockInfo, d *l7_req.L7Event, reqDto *dat
 	return nil
 }
 
-func (a *Aggregator) setFromTo(skInfo *SockInfo, d *l7_req.L7Event, reqDto *datastore.Request, hostHeader string) error {
-	// find pod info
-	a.clusterInfo.mu.RLock() // lock for reading
-	podUid, ok := a.clusterInfo.PodIPToPodUid[skInfo.Saddr]
-	a.clusterInfo.mu.RUnlock() // unlock for reading
-	if !ok {
-		return fmt.Errorf("error finding pod with sockets saddr")
-	}
-
-	reqDto.FromUID = string(podUid)
-	reqDto.FromType = "pod"
-	reqDto.FromPort = skInfo.Sport
-	reqDto.ToPort = skInfo.Dport
-
-	// find service info
-	a.clusterInfo.mu.RLock() // lock for reading
-	svcUid, ok := a.clusterInfo.ServiceIPToServiceUid[skInfo.Daddr]
-	a.clusterInfo.mu.RUnlock() // unlock for reading
-
-	if ok {
-		reqDto.ToUID = string(svcUid)
-		reqDto.ToType = "service"
-	} else {
-		a.clusterInfo.mu.RLock() // lock for reading
-		podUid, ok := a.clusterInfo.PodIPToPodUid[skInfo.Daddr]
-		a.clusterInfo.mu.RUnlock() // unlock for reading
-
-		if ok {
-			reqDto.ToUID = string(podUid)
-			reqDto.ToType = "pod"
-		} else {
-			// 3rd party url
-			if hostHeader != "" {
-				reqDto.ToUID = hostHeader
-				reqDto.ToType = "outbound"
-			} else {
-				remoteDnsHost, err := getHostnameFromIP(skInfo.Daddr)
-				if err == nil {
-					// dns lookup successful
-					reqDto.ToUID = remoteDnsHost
-					reqDto.ToType = "outbound"
-				} else {
-					log.Logger.Warn().Err(err).Str("Daddr", skInfo.Daddr).Msg("error getting hostname from ip")
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
 func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
 	// other protocols events come as whole, but http2 events come as frames
 	// we need to aggregate frames to get the whole request
@@ -694,21 +646,9 @@ func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
 		return
 	}
 
-	// myapp-client-deployment-7b9c6785cb-hpq55 on node 228
-	if d.Pid == 985 && d.Protocol == l7_req.L7_PROTOCOL_HTTP {
-		log.Logger.Info().Msg("myapp-client-deployment-7b9c6785cb-hpq55 L7 event came")
-	}
-
 	skInfo := a.findRelatedSocket(ctx, &d)
 	if skInfo == nil {
-		if d.Pid == 985 && d.Protocol == l7_req.L7_PROTOCOL_HTTP {
-			log.Logger.Info().Msg("myapp-client-deployment-7b9c6785cb-hpq55 skInfo not found")
-		}
 		return
-	}
-
-	if d.Pid == 985 && d.Protocol == l7_req.L7_PROTOCOL_HTTP {
-		log.Logger.Info().Msg("myapp-client-deployment-7b9c6785cb-hpq55 skInfo found")
 	}
 
 	// Since we process events concurrently
@@ -741,9 +681,6 @@ func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
 
 	err := a.setFromTo(skInfo, &d, &reqDto, reqHostHeader)
 	if err != nil {
-		if d.Pid == 985 && d.Protocol == l7_req.L7_PROTOCOL_HTTP {
-			log.Logger.Info().Msg("myapp-client-deployment-7b9c6785cb-hpq55 error on setTo")
-		}
 		return
 	}
 
@@ -765,9 +702,6 @@ func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
 	}
 
 	go func() {
-		if d.Pid == 985 && d.Protocol == l7_req.L7_PROTOCOL_HTTP {
-			log.Logger.Info().Msg("myapp-client-deployment-7b9c6785cb-hpq55 persisting req")
-		}
 		err := a.ds.PersistRequest(&reqDto)
 		if err != nil {
 			log.Logger.Error().Err(err).Msg("error persisting request")
