@@ -283,7 +283,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 
 							return
 						} else {
-							log.Logger.Info().Msg("metrics sent successfully")
+							log.Logger.Debug().Msg("metrics sent successfully")
 						}
 					}()
 				}
@@ -351,7 +351,7 @@ func (b *BackendDS) sendToBackend(method string, payload interface{}, endpoint s
 		return
 	}
 
-	log.Logger.Info().Str("endpoint", endpoint).Any("payload", payload).Msg("sending batch to backend")
+	log.Logger.Debug().Str("endpoint", endpoint).Any("payload", payload).Msg("sending batch to backend")
 	err = b.DoRequest(httpReq)
 	if err != nil {
 		log.Logger.Error().Msgf("backend persist error at ep %s : %v", endpoint, err)
@@ -529,20 +529,22 @@ func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool) {
 	t := time.NewTicker(10 * time.Second)
 	defer t.Stop()
 
-	payload := HealthCheckPayload{
-		Metadata: Metadata{
-			MonitoringID:   MonitoringID,
-			IdempotencyKey: string(uuid.NewUUID()),
-			NodeID:         NodeID,
-			AlazVersion:    tag,
-		},
-		Info: struct {
-			EbpfEnabled    bool `json:"ebpf"`
-			MetricsEnabled bool `json:"metrics"`
-		}{
-			EbpfEnabled:    ebpf,
-			MetricsEnabled: metrics,
-		},
+	createHealthCheckPayload := func() HealthCheckPayload {
+		return HealthCheckPayload{
+			Metadata: Metadata{
+				MonitoringID:   MonitoringID,
+				IdempotencyKey: string(uuid.NewUUID()),
+				NodeID:         NodeID,
+				AlazVersion:    tag,
+			},
+			Info: struct {
+				EbpfEnabled    bool `json:"ebpf"`
+				MetricsEnabled bool `json:"metrics"`
+			}{
+				EbpfEnabled:    ebpf,
+				MetricsEnabled: metrics,
+			},
+		}
 	}
 
 	for {
@@ -551,7 +553,7 @@ func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool) {
 			log.Logger.Info().Msg("stopping sending health check")
 			return
 		case <-t.C:
-			b.sendToBackend(http.MethodPut, payload, healthCheckEndpoint)
+			b.sendToBackend(http.MethodPut, createHealthCheckPayload(), healthCheckEndpoint)
 		}
 	}
 }
