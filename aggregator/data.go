@@ -494,10 +494,6 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 								if req.ToUID == "" {
 									req.ToUID = hf.Value
 								}
-							case "content-type":
-								log.Logger.Info().Str("content-type", hf.Value).Msg("content-type")
-							case ":content-type":
-								log.Logger.Info().Str("content-type", hf.Value).Msg("content-type")
 							}
 
 						}
