@@ -48,7 +48,12 @@ type Aggregator struct {
 
 	// http2 ch
 	h2ChMu sync.RWMutex
-	h2Ch   map[string]chan *l7_req.L7Event // pid-fd -> ch
+	h2Ch   map[string]*h2ChClose // pid-fd -> ch
+}
+
+type h2ChClose struct {
+	ch     chan *l7_req.L7Event
+	closed bool
 }
 
 // We need to keep track of the following
@@ -141,7 +146,7 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, ec *eb
 		ec:          ec,
 		clusterInfo: clusterInfo,
 		ds:          ds,
-		h2Ch:        make(map[string]chan *l7_req.L7Event),
+		h2Ch:        make(map[string]*h2ChClose),
 	}
 }
 
@@ -323,13 +328,16 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 		)
 
 		// close h2 channel on connection close if exists
-		// a.h2ChMu.Lock()
-		// key := fmt.Sprintf("%d-%d", d.Pid, d.Fd)
-		// if _, ok := a.h2Ch[key]; ok {
-		// 	// close(a.h2Ch[key])
-		// 	delete(a.h2Ch, key)
-		// }
-		// a.h2ChMu.Unlock()
+		a.h2ChMu.Lock()
+		key := fmt.Sprintf("%d-%d", d.Pid, d.Fd)
+		if h2chc, ok := a.h2Ch[key]; ok {
+			if !h2chc.closed {
+				close(a.h2Ch[key].ch)
+				a.h2Ch[key].closed = true
+			}
+			// delete(a.h2Ch, key)
+		}
+		a.h2ChMu.Unlock()
 
 	}
 }
@@ -368,7 +376,6 @@ type FrameArrival struct {
 }
 
 // called once per socket
-// TODO: must close on process close
 func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 	mu := sync.RWMutex{}
 	h2Parser := &http2Parser{
@@ -380,6 +387,7 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 	frames := make(map[uint32]*FrameArrival)
 
 	t := time.NewTicker(1 * time.Second)
+	defer t.Stop()
 	// http2 frames order can be in any order
 	// if server data frame comes first, we need to wait for the server headers frame
 	// before sending the request to persist
@@ -401,7 +409,9 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 						req.Completed = true
 						req.FromIP = skInfo.Saddr
 						req.ToIP = skInfo.Daddr
-						req.Protocol = "HTTP2"
+						if req.Protocol == "" {
+							req.Protocol = "HTTP2"
+						}
 						req.Tls = d.Tls
 						req.FromPort = skInfo.Sport
 						req.ToPort = skInfo.Dport
@@ -410,14 +420,8 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 						// toUID is set to :authority header in client frame
 						err := a.setFromTo(skInfo, d, req, req.ToUID)
 						if err != nil {
-							// log.Logger.Error().Err(err).Msg("error setting from/to")
 							return
 						}
-
-						// TODO: set protocol
-						// if d.Tls {
-						// 	req.Protocol = "HTTPS"
-						// }
 
 						log.Logger.Debug().
 							Uint32("streamId", streamId).
@@ -493,6 +497,10 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 							case ":authority":
 								if req.ToUID == "" {
 									req.ToUID = hf.Value
+								}
+							case "content-type":
+								if strings.HasPrefix(hf.Value, "application/grpc") {
+									req.Protocol = "gRPC"
 								}
 							}
 
@@ -622,19 +630,29 @@ func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
 	// other protocols events come as whole, but http2 events come as frames
 	// we need to aggregate frames to get the whole request
 	if d.Protocol == l7_req.L7_PROTOCOL_HTTP2 {
-		var ch chan *l7_req.L7Event
+		var ch *h2ChClose
 		a.h2ChMu.Lock()
 		key := fmt.Sprintf("%d-%d", d.Pid, d.Fd)
 		if _, ok := a.h2Ch[key]; !ok {
-			a.h2Ch[key] = make(chan *l7_req.L7Event) // TODO: make this configurable
+			a.h2Ch[key] = &h2ChClose{
+				ch:     make(chan *l7_req.L7Event),
+				closed: false,
+			}
 			ch = a.h2Ch[key]
-			go a.processHttp2Frames(ch) // worker per connection, will be called once
+			go a.processHttp2Frames(ch.ch) // worker per connection, will be called once
 		} else {
 			ch = a.h2Ch[key]
 		}
-		a.h2ChMu.Unlock()
 
-		ch <- &d
+		// prevent sending to closed channel
+		if ch.closed {
+			a.h2ChMu.Unlock()
+			return
+		}
+
+		ch.ch <- &d
+
+		a.h2ChMu.Unlock()
 		return
 	}
 

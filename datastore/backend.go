@@ -140,7 +140,9 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 				if err != nil {
 					log.Logger.Warn().Msgf("error reading response body: %v", err)
 				}
-				log.Logger.Warn().Int("statusCode", resp.StatusCode).Str("respBody", string(rb)).Msgf("will retry...")
+				log.Logger.Warn().Int("statusCode", resp.StatusCode).
+					Str("path", resp.Request.URL.Path).
+					Str("respBody", string(rb)).Msgf("will retry...")
 			} else if resp.StatusCode == http.StatusOK {
 				shouldRetry = false
 				rb, err := io.ReadAll(resp.Body)

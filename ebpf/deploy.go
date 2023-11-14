@@ -152,37 +152,38 @@ func (e *EbpfCollector) AttachUprobesForEncrypted() {
 		}
 		e.tlsPidMap[pid] = struct{}{}
 
-		// to avoid memory peak
-		time.Sleep(3 * time.Second)
-
-		// attach to libssl uprobes if process is using libssl
-		errs := e.AttachSslUprobesOnProcess("/proc", pid)
-		if errs != nil && len(errs) > 0 {
-			for _, err := range errs {
-				if errors.Is(err, fs.ErrNotExist) {
-					// no such file or directory error
-					// executable is not found,
-					// it's probably a kernel thread, or a very short lived process
-					continue
+		go func() {
+			// attach to libssl uprobes if process is using libssl
+			errs := e.AttachSslUprobesOnProcess("/proc", pid)
+			if errs != nil && len(errs) > 0 {
+				for _, err := range errs {
+					if errors.Is(err, fs.ErrNotExist) {
+						// no such file or directory error
+						// executable is not found,
+						// it's probably a kernel thread, or a very short lived process
+						continue
+					}
+					log.Logger.Error().Err(err).Uint32("pid", pid).
+						Msgf("error attaching ssl lib for pid: %d", pid)
 				}
-				log.Logger.Error().Err(err).Uint32("pid", pid).
-					Msgf("error attaching ssl lib for pid: %d", pid)
 			}
-		}
 
-		go_errs := e.AttachGoTlsUprobesOnProcess("/proc", pid)
-		if go_errs != nil && len(go_errs) > 0 {
-			for _, err := range go_errs {
-				if errors.Is(err, fs.ErrNotExist) {
-					// no such file or directory error
-					// executable is not found,
-					// it's probably a kernel thread, or a very short lived process
-					continue
+			go_errs := e.AttachGoTlsUprobesOnProcess("/proc", pid)
+			if go_errs != nil && len(go_errs) > 0 {
+				for _, err := range go_errs {
+					if errors.Is(err, fs.ErrNotExist) {
+						// no such file or directory error
+						// executable is not found,
+						// it's probably a kernel thread, or a very short lived process
+						continue
+					}
+					log.Logger.Error().Err(err).Uint32("pid", pid).
+						Msgf("error attaching go tls for pid: %d", pid)
 				}
-				log.Logger.Error().Err(err).Uint32("pid", pid).
-					Msgf("error attaching go tls for pid: %d", pid)
 			}
-		}
+
+		}()
+
 	}
 }
 
