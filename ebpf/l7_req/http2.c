@@ -98,8 +98,8 @@ int is_http2_frame(char *buf, __u64 size) {
     //     return 0;
     // }
 
-    // only care about data and headers
-    if (type != 0x00 && type != 0x01) {
+    // only care about data and headers, and settings
+    if (type != 0x00 && type != 0x01 && type != 0x04) {
         return 0;
     }
 
