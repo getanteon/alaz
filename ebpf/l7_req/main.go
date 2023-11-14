@@ -335,7 +335,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	}()
 
 	// initialize perf event readers
-	l7Events, err := perf.NewReader(L7BpfProgsAndMaps.L7Events, 100*os.Getpagesize())
+	l7Events, err := perf.NewReader(L7BpfProgsAndMaps.L7Events, 1000*os.Getpagesize())
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
 	}
@@ -464,14 +464,6 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	}()
 
 	go func() {
-
-		// clientHpackDecoder := hpack.NewDecoder(4096, func(hf hpack.HeaderField) {
-		// 	fmt.Printf("Header field: %+v\n", hf)
-		// })
-		// serverHpackDecoder := hpack.NewDecoder(4096, func(hf hpack.HeaderField) {
-		// 	fmt.Printf("Header field: %+v\n", hf)
-		// })
-
 		read := func() {
 			record, err := l7Events.Read()
 			if err != nil {
@@ -491,7 +483,6 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 			l7Event := (*bpfL7Event)(unsafe.Pointer(&record.RawSample[0]))
 
 			go func() {
-
 				protocol := L7ProtocolConversion(l7Event.Protocol).String()
 				var method string
 				switch protocol {
@@ -530,7 +521,6 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 			default:
 				read()
 			}
-
 		}
 	}()
 

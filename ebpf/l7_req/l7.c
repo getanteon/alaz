@@ -141,7 +141,6 @@ struct {
     __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
     __uint(key_size, sizeof(int));
     __uint(value_size, sizeof(int));
-    // __uint(max_entries, 10240);
 } l7_events SEC(".maps");
 
 // when given with __type macro below
@@ -488,7 +487,7 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
 
         long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
         if (r < 0) {
-            unsigned char log_msg[] = "failed write to l7_events -- res|fd|psize";
+            unsigned char log_msg[] = "failed write to l7_events h2 -- res|fd|psize";
             log_to_userspace(ctx, WARN, func_name, log_msg, r, e->fd, e->payload_size);        
         }
         bpf_map_delete_elem(&go_active_reads, &k);
