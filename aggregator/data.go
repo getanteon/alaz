@@ -20,6 +20,7 @@ import (
 	"github.com/ddosify/alaz/datastore"
 	"github.com/ddosify/alaz/ebpf"
 	"github.com/ddosify/alaz/ebpf/l7_req"
+	"github.com/ddosify/alaz/ebpf/proc"
 	"github.com/ddosify/alaz/ebpf/tcp_state"
 	"github.com/ddosify/alaz/log"
 	"golang.org/x/net/http2"
@@ -48,12 +49,7 @@ type Aggregator struct {
 
 	// http2 ch
 	h2ChMu sync.RWMutex
-	h2Ch   map[string]*h2ChClose // pid-fd -> ch
-}
-
-type h2ChClose struct {
-	ch     chan *l7_req.L7Event
-	closed bool
+	h2Ch   map[uint32]chan *l7_req.L7Event // pid -> ch
 }
 
 // We need to keep track of the following
@@ -146,7 +142,7 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, ec *eb
 		ec:          ec,
 		clusterInfo: clusterInfo,
 		ds:          ds,
-		h2Ch:        make(map[string]*h2ChClose),
+		h2Ch:        make(map[uint32]chan *l7_req.L7Event),
 	}
 }
 
@@ -237,8 +233,24 @@ func (a *Aggregator) processEbpf(ctx context.Context) {
 					WriteTimeNs:         d.WriteTimeNs,
 				}
 				go a.processL7(ctx, l7Event)
+			case proc.PEXIT_EVENT:
+				d := data.(proc.PExitEvent) // copy data's value
+				// on process exit
+				// clear http2 frame workers
+				// TODO: clear socket lines
+				go a.stopHttp2Worker(d.Pid)
 			}
+
 		}
+	}
+}
+
+func (a *Aggregator) stopHttp2Worker(pid uint32) {
+	a.h2ChMu.Lock()
+	defer a.h2ChMu.Unlock()
+	if ch, ok := a.h2Ch[pid]; ok {
+		close(ch)
+		delete(a.h2Ch, pid)
 	}
 }
 
@@ -327,18 +339,6 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 			nil,         // closed
 		)
 
-		// close h2 channel on connection close if exists
-		a.h2ChMu.Lock()
-		key := fmt.Sprintf("%d-%d", d.Pid, d.Fd)
-		if h2chc, ok := a.h2Ch[key]; ok {
-			if !h2chc.closed {
-				close(a.h2Ch[key].ch)
-				a.h2Ch[key].closed = true
-			}
-			// delete(a.h2Ch, key)
-		}
-		a.h2ChMu.Unlock()
-
 	}
 }
 
@@ -375,7 +375,7 @@ type FrameArrival struct {
 	req                       *datastore.Request
 }
 
-// called once per socket
+// called once per pid
 func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 	mu := sync.RWMutex{}
 	h2Parser := &http2Parser{
@@ -383,8 +383,8 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 		serverHpackDecoder: hpack.NewDecoder(4096, nil),
 	}
 
-	// streamId -> frame
-	frames := make(map[uint32]*FrameArrival)
+	// fd-streamId -> frame
+	frames := make(map[string]*FrameArrival)
 
 	t := time.NewTicker(1 * time.Second)
 
@@ -393,6 +393,10 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 		t.Stop()
 		cancel()
 	}()
+
+	createFrameKey := func(fd uint64, streamId uint32) string {
+		return fmt.Sprintf("%d-%d", fd, streamId)
+	}
 
 	// http2 frames order can be in any order
 	// if server data frame comes first, we need to wait for the server headers frame
@@ -405,11 +409,13 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 				return
 			case <-t.C:
 				mu.Lock()
-				for streamId, st := range frames {
+				for fkey, st := range frames {
 					if st.ClientHeadersFrameArrived && st.ServerHeadersFrameArrived && st.ServerDataFrameArrived {
 						// request completed, server sent response
 						// Process server data frame, send L7 event to persist
 						go func(d *l7_req.L7Event, req *datastore.Request) {
+							// d is server data frame event
+
 							skInfo := a.findRelatedSocket(a.ctx, d)
 							if skInfo == nil {
 								return
@@ -435,7 +441,7 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 							}
 
 							log.Logger.Debug().
-								Uint32("streamId", streamId).
+								Str("fd-streamId", fkey).
 								Str("path", req.Path).
 								Str("method", req.Method).
 								Uint32("statusCode", req.StatusCode).
@@ -455,7 +461,7 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 
 							a.ds.PersistRequest(req)
 						}(st.event, st.req)
-						delete(frames, streamId)
+						delete(frames, fkey)
 					}
 				}
 				mu.Unlock()
@@ -474,7 +480,7 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 		}
 	}
 
-	// this channel is closed when connection is closed
+	// this channel gets closed when process exits
 	for d := range ch {
 		// Normally we tried to use http2.Framer to parse frames but
 		// http2.Framer spends too much memory and cpu reading frames
@@ -488,6 +494,7 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 		// framer.SetReuseFrames()
 
 		buf := d.Payload[:d.PayloadSize]
+		fd := d.Fd
 		var offset uint32 = 0
 
 		// parse frame
@@ -522,15 +529,16 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 				}
 
 				streamId := fh.StreamID
+				key := createFrameKey(fd, streamId)
 				mu.Lock()
-				if _, ok := frames[streamId]; !ok {
-					frames[streamId] = &FrameArrival{
+				if _, ok := frames[key]; !ok {
+					frames[key] = &FrameArrival{
 						ClientHeadersFrameArrived: true,
 						req:                       &datastore.Request{},
 					}
 				}
 
-				fa := frames[streamId]
+				fa := frames[key]
 				mu.Unlock()
 				fa.ClientHeadersFrameArrived = true
 				fa.req.Latency = d.WriteTimeNs // set latency to write time here, will be updated later
@@ -552,11 +560,12 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 								req.ToUID = hf.Value
 							}
 						case "content-type":
-							if strings.HasPrefix(hf.Value, "application/grpc") {
-								req.Protocol = "gRPC"
+							if req.Protocol == "" {
+								if strings.HasPrefix(hf.Value, "application/grpc") {
+									req.Protocol = "gRPC"
+								}
 							}
 						}
-
 					}
 				}
 				h2Parser.clientHpackDecoder.SetEmitFunc(reqHeaderSet(fa.req))
@@ -591,15 +600,16 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 				}
 
 				streamId := fh.StreamID
+				key := createFrameKey(fd, streamId)
 				if fh.Type == http2.FrameHeaders {
 					mu.Lock()
-					if _, ok := frames[streamId]; !ok {
-						frames[streamId] = &FrameArrival{
+					if _, ok := frames[key]; !ok {
+						frames[key] = &FrameArrival{
 							ServerHeadersFrameArrived: true,
 							req:                       &datastore.Request{},
 						}
 					}
-					fa := frames[streamId]
+					fa := frames[key]
 					mu.Unlock()
 					fa.ServerHeadersFrameArrived = true
 					// Process server headers frame
@@ -616,13 +626,13 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 					h2Parser.serverHpackDecoder.Write(buf[offset:endOfFrame])
 				} else if fh.Type == http2.FrameData {
 					mu.Lock()
-					if _, ok := frames[streamId]; !ok {
-						frames[streamId] = &FrameArrival{
+					if _, ok := frames[key]; !ok {
+						frames[key] = &FrameArrival{
 							ServerDataFrameArrived: true,
 							req:                    &datastore.Request{},
 						}
 					}
-					fa := frames[streamId]
+					fa := frames[key]
 					mu.Unlock()
 					fa.ServerDataFrameArrived = true
 					fa.event = d
@@ -691,30 +701,30 @@ func (a *Aggregator) setFromTo(skInfo *SockInfo, d *l7_req.L7Event, reqDto *data
 func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
 	// other protocols events come as whole, but http2 events come as frames
 	// we need to aggregate frames to get the whole request
+	defer func() {
+		if r := recover(); r != nil {
+			log.Logger.Error().Msgf("processL7 panic, probably a http2 frame sent on a closed chan: %v", r)
+		}
+	}()
+
 	if d.Protocol == l7_req.L7_PROTOCOL_HTTP2 {
-		var ch *h2ChClose
-		a.h2ChMu.Lock()
-		key := fmt.Sprintf("%d-%d", d.Pid, d.Fd)
-		if _, ok := a.h2Ch[key]; !ok {
-			a.h2Ch[key] = &h2ChClose{
-				ch:     make(chan *l7_req.L7Event),
-				closed: false,
-			}
-			ch = a.h2Ch[key]
-			go a.processHttp2Frames(ch.ch) // worker per connection, will be called once
-		} else {
-			ch = a.h2Ch[key]
-		}
-
-		// prevent sending to closed channel
-		if ch.closed {
+		var ch chan *l7_req.L7Event
+		var ok bool
+		// key := fmt.Sprintf("%d-%d", d.Pid, d.Fd)
+		a.h2ChMu.RLock()
+		ch, ok = a.h2Ch[d.Pid]
+		a.h2ChMu.RUnlock()
+		if !ok {
+			// initialize channel
+			h2ChPid := make(chan *l7_req.L7Event)
+			a.h2ChMu.Lock()
+			a.h2Ch[d.Pid] = h2ChPid
+			ch = h2ChPid
 			a.h2ChMu.Unlock()
-			return
+			go a.processHttp2Frames(ch) // worker per connection, will be called once
 		}
 
-		ch.ch <- &d
-
-		a.h2ChMu.Unlock()
+		ch <- &d
 		return
 	}
 
