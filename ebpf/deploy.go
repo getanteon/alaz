@@ -15,6 +15,7 @@ import (
 
 	"github.com/cilium/ebpf/link"
 	"github.com/ddosify/alaz/ebpf/l7_req"
+	"github.com/ddosify/alaz/ebpf/proc"
 	"github.com/ddosify/alaz/ebpf/tcp_state"
 	"github.com/ddosify/alaz/log"
 
@@ -85,11 +86,12 @@ func (e *EbpfCollector) Deploy() {
 
 	tcp_state.LoadBpfObjects()
 	l7_req.LoadBpfObjects()
+	proc.LoadBpfObjects()
 
 	// function to version to program
 
 	wg := sync.WaitGroup{}
-	wg.Add(2)
+	wg.Add(3)
 	go func() {
 		defer wg.Done()
 		tcp_state.DeployAndWait(e.ctx, e.ebpfEvents)
@@ -97,6 +99,10 @@ func (e *EbpfCollector) Deploy() {
 	go func() {
 		defer wg.Done()
 		l7_req.DeployAndWait(e.ctx, e.ebpfEvents)
+	}()
+	go func() {
+		defer wg.Done()
+		proc.DeployAndWait(e.ctx, e.ebpfEvents)
 	}()
 	wg.Wait()
 
