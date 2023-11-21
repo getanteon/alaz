@@ -52,6 +52,7 @@ type EbpfCollector struct {
 	goTlsReadUretprobes map[uint32][]link.Link // uprobes for ret instructions
 
 	tlsPidMap map[uint32]struct{}
+	mu        sync.Mutex
 }
 
 func NewEbpfCollector(parentCtx context.Context) *EbpfCollector {
@@ -153,10 +154,12 @@ func (e *EbpfCollector) ListenForEncryptedReqs(pid uint32) {
 func (e *EbpfCollector) AttachUprobesForEncrypted() {
 	for pid := range e.tlsAttachQueue {
 		// check duplicate
+		e.mu.Lock()
 		if _, ok := e.tlsPidMap[pid]; ok {
 			continue
 		}
 		e.tlsPidMap[pid] = struct{}{}
+		e.mu.Unlock()
 
 		go func() {
 			// attach to libssl uprobes if process is using libssl
