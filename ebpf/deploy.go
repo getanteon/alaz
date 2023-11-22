@@ -4,7 +4,7 @@ import (
 	"context"
 	"debug/buildinfo"
 	"debug/elf"
-	"errors"
+	errorspkg "errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -15,6 +15,7 @@ import (
 
 	"github.com/cilium/ebpf/link"
 	"github.com/ddosify/alaz/ebpf/l7_req"
+	"github.com/ddosify/alaz/ebpf/proc"
 	"github.com/ddosify/alaz/ebpf/tcp_state"
 	"github.com/ddosify/alaz/log"
 
@@ -51,6 +52,7 @@ type EbpfCollector struct {
 	goTlsReadUretprobes map[uint32][]link.Link // uprobes for ret instructions
 
 	tlsPidMap map[uint32]struct{}
+	mu        sync.Mutex
 }
 
 func NewEbpfCollector(parentCtx context.Context) *EbpfCollector {
@@ -85,11 +87,12 @@ func (e *EbpfCollector) Deploy() {
 
 	tcp_state.LoadBpfObjects()
 	l7_req.LoadBpfObjects()
+	proc.LoadBpfObjects()
 
 	// function to version to program
 
 	wg := sync.WaitGroup{}
-	wg.Add(2)
+	wg.Add(3)
 	go func() {
 		defer wg.Done()
 		tcp_state.DeployAndWait(e.ctx, e.ebpfEvents)
@@ -97,6 +100,10 @@ func (e *EbpfCollector) Deploy() {
 	go func() {
 		defer wg.Done()
 		l7_req.DeployAndWait(e.ctx, e.ebpfEvents)
+	}()
+	go func() {
+		defer wg.Done()
+		proc.DeployAndWait(e.ctx, e.ebpfEvents)
 	}()
 	wg.Wait()
 
@@ -147,42 +154,46 @@ func (e *EbpfCollector) ListenForEncryptedReqs(pid uint32) {
 func (e *EbpfCollector) AttachUprobesForEncrypted() {
 	for pid := range e.tlsAttachQueue {
 		// check duplicate
+		e.mu.Lock()
 		if _, ok := e.tlsPidMap[pid]; ok {
+			e.mu.Unlock()
 			continue
 		}
 		e.tlsPidMap[pid] = struct{}{}
+		e.mu.Unlock()
 
-		// to avoid memory peak
-		time.Sleep(3 * time.Second)
-
-		// attach to libssl uprobes if process is using libssl
-		errs := e.AttachSslUprobesOnProcess("/proc", pid)
-		if errs != nil && len(errs) > 0 {
-			for _, err := range errs {
-				if errors.Is(err, fs.ErrNotExist) {
-					// no such file or directory error
-					// executable is not found,
-					// it's probably a kernel thread, or a very short lived process
-					continue
+		go func() {
+			// attach to libssl uprobes if process is using libssl
+			errs := e.AttachSslUprobesOnProcess("/proc", pid)
+			if errs != nil && len(errs) > 0 {
+				for _, err := range errs {
+					if errorspkg.Is(err, fs.ErrNotExist) {
+						// no such file or directory error
+						// executable is not found,
+						// it's probably a kernel thread, or a very short lived process
+						continue
+					}
+					log.Logger.Error().Err(err).Uint32("pid", pid).
+						Msgf("error attaching ssl lib for pid: %d", pid)
 				}
-				log.Logger.Error().Err(err).Uint32("pid", pid).
-					Msgf("error attaching ssl lib for pid: %d", pid)
 			}
-		}
 
-		go_errs := e.AttachGoTlsUprobesOnProcess("/proc", pid)
-		if go_errs != nil && len(go_errs) > 0 {
-			for _, err := range go_errs {
-				if errors.Is(err, fs.ErrNotExist) {
-					// no such file or directory error
-					// executable is not found,
-					// it's probably a kernel thread, or a very short lived process
-					continue
+			go_errs := e.AttachGoTlsUprobesOnProcess("/proc", pid)
+			if go_errs != nil && len(go_errs) > 0 {
+				for _, err := range go_errs {
+					if errorspkg.Is(err, fs.ErrNotExist) {
+						// no such file or directory error
+						// executable is not found,
+						// it's probably a kernel thread, or a very short lived process
+						continue
+					}
+					log.Logger.Error().Err(err).Uint32("pid", pid).
+						Msgf("error attaching go tls for pid: %d", pid)
 				}
-				log.Logger.Error().Err(err).Uint32("pid", pid).
-					Msgf("error attaching go tls for pid: %d", pid)
 			}
-		}
+
+		}()
+
 	}
 }
 
@@ -250,7 +261,10 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 	// nm command can be used to get the symbols as well
 	symbols, err := ef.Symbols()
 	if err != nil {
-		log.Logger.Warn().Err(err).Uint32("pid", pid).Msg("error reading symbols")
+		if errorspkg.Is(err, elf.ErrNoSymbols) {
+			log.Logger.Debug().Uint32("pid", pid).Msg("no symbols found")
+			return errors
+		}
 		errors = append(errors, err)
 		return errors
 	}

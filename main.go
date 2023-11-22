@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strconv"
 	"syscall"
 
@@ -21,6 +22,7 @@ import (
 )
 
 func main() {
+	debug.SetGCPercent(80)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	c := make(chan os.Signal, 1)
