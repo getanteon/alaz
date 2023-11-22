@@ -94,16 +94,22 @@ int is_http2_frame(char *buf, __u64 size) {
     // 0x07 GOAWAY
     // 0x08 WINDOW_UPDATE
     // 0x09 CONTINUATION
-    // if (type > 0x09) {
-    //     return 0;
-    // }
 
-    // only care about data and headers, and settings
+    // only care about payloads starting with data and headers, and settings
     if (type != 0x00 && type != 0x01 && type != 0x04) {
         return 0;
     }
 
     __u32 stream_id; // 4 bytes
     bpf_read_into_from(stream_id,buf+5);
-    return 1;
+    stream_id = bpf_htonl(stream_id);
+
+    // odd stream ids are client initiated
+    // even stream ids are server initiated
+    
+    // only track client initiated streams
+    if (stream_id % 2 == 1) {
+        return 1;
+    }
+    return 0;
 }
