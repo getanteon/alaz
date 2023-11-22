@@ -296,7 +296,6 @@ func (a *Aggregator) processExit(d proc.ProcEvent) {
 func (a *Aggregator) stopHttp2Worker(pid uint32) {
 	a.h2ChMu.Lock()
 	defer a.h2ChMu.Unlock()
-	log.Logger.Info().Str("h2worker", "close").Uint32("pid", pid).Msg("http2 worker closing")
 	if ch, ok := a.h2Ch[pid]; ok {
 		close(ch)
 		delete(a.h2Ch, pid)
@@ -712,22 +711,6 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 		}
 	}
 
-	// go func() {
-	// 	for {
-	// 		select {
-	// 		case <-ctx.Done():
-	// 			log.Logger.Info().Msg("processHttp2Frames pq consumer exiting...")
-	// 			// TODO: consume all frames left in pq
-	// 			return
-	// 		default:
-	// 			// wait for packets to arrive and be sorted on heap
-	// 			for sf.Len() > 10 { // at least 10 frames are sorted
-	// 				d := sf.Pop().(*l7_req.L7Event)
-
-	// 		}
-	// 	}
-	// }()
-
 	log.Logger.Info().Msg("processHttp2Frames main gor exiting...")
 }
 
@@ -822,7 +805,6 @@ func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
 			_, ok = a.liveProcesses[d.Pid]
 			a.liveProcessesMu.RUnlock()
 			if !ok {
-				log.Logger.Info().Uint32("pid", d.Pid).Msg("http2 worker not opened, late event")
 				return // if a late event comes, we do not open a new worker to avoid memory leak
 			}
 
@@ -832,7 +814,6 @@ func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
 			a.h2Ch[d.Pid] = h2ChPid
 			ch = h2ChPid
 			a.h2ChMu.Unlock()
-			log.Logger.Info().Str("h2worker", "open").Uint32("pid", d.Pid).Msg("http2 worker opened")
 			go a.processHttp2Frames(ch) // worker per pid, will be called once
 		}
 
