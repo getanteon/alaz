@@ -174,7 +174,6 @@ func (a *Aggregator) Run() {
 						log.Logger.Error().Err(err).Msgf("error converting pid to int %s", pid)
 						continue
 					}
-					log.Logger.Info().Msgf("adding pid %d to liveProcesses", pidInt)
 					a.liveProcesses[uint32(pidInt)] = struct{}{}
 				}
 			}
@@ -755,11 +754,6 @@ func (a *Aggregator) getConnKey(pid uint32, fd uint64) string {
 func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
 	// other protocols events come as whole, but http2 events come as frames
 	// we need to aggregate frames to get the whole request
-	defer func() {
-		if r := recover(); r != nil {
-			log.Logger.Error().Msgf("processL7 panic, probably a http2 frame sent on a closed chan: %v", r)
-		}
-	}()
 
 	if d.Protocol == l7_req.L7_PROTOCOL_HTTP2 {
 		var ok bool

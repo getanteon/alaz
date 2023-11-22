@@ -9,8 +9,6 @@ int is_http2_magic(char *buf) {
     long r = bpf_probe_read(&buf_prefix, sizeof(buf_prefix), (void *)(buf)) ;
     
     if (r < 0) {
-        char msg[] = "not enough characters to parse http2 magic message - %ld";
-        bpf_trace_printk(msg, sizeof(msg), r);
         return 0;
     }
 
@@ -37,15 +35,9 @@ SM
 static __always_inline
 int is_http2_magic_2(char *buf){
     char buf_prefix[MAGIC_MESSAGE_LEN];
-    
-    char msg[] = "is_http2_magic_2 -";
-    bpf_trace_printk(msg, sizeof(msg));
-
     long r = bpf_probe_read(&buf_prefix, sizeof(buf_prefix), (void *)(buf)) ;
 
     if (r < 0) {
-        char msg[] = "not enough characters to parse http2 magic message - %ld";
-        bpf_trace_printk(msg, sizeof(msg), r);
         return 0;
     }
 
