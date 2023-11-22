@@ -53,6 +53,7 @@ type bpfSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfProgramSpecs struct {
+	SchedProcessExec *ebpf.ProgramSpec `ebpf:"sched_process_exec"`
 	SchedProcessExit *ebpf.ProgramSpec `ebpf:"sched_process_exit"`
 }
 
@@ -95,11 +96,13 @@ func (m *bpfMaps) Close() error {
 //
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfPrograms struct {
+	SchedProcessExec *ebpf.Program `ebpf:"sched_process_exec"`
 	SchedProcessExit *ebpf.Program `ebpf:"sched_process_exit"`
 }
 
 func (p *bpfPrograms) Close() error {
 	return _BpfClose(
+		p.SchedProcessExec,
 		p.SchedProcessExit,
 	)
 }

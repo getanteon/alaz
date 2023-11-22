@@ -156,6 +156,7 @@ func (e *EbpfCollector) AttachUprobesForEncrypted() {
 		// check duplicate
 		e.mu.Lock()
 		if _, ok := e.tlsPidMap[pid]; ok {
+			e.mu.Unlock()
 			continue
 		}
 		e.tlsPidMap[pid] = struct{}{}

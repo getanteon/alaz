@@ -12,6 +12,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -53,6 +54,9 @@ type Aggregator struct {
 
 	h2ParserMu sync.RWMutex
 	h2Parsers  map[string]*http2Parser // pid-fd -> http2Parser
+
+	liveProcessesMu sync.RWMutex
+	liveProcesses   map[uint32]struct{} // pid -> struct{}
 }
 
 // We need to keep track of the following
@@ -137,18 +141,46 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, ec *eb
 	go clearSocketLines(ctx, clusterInfo.PidToSocketMap)
 
 	return &Aggregator{
-		ctx:         ctx,
-		k8sChan:     k8sChan,
-		ebpfChan:    ec.EbpfEvents(),
-		ec:          ec,
-		clusterInfo: clusterInfo,
-		ds:          ds,
-		h2Ch:        make(map[uint32]chan *l7_req.L7Event),
-		h2Parsers:   make(map[string]*http2Parser),
+		ctx:           ctx,
+		k8sChan:       k8sChan,
+		ebpfChan:      ec.EbpfEvents(),
+		ec:            ec,
+		clusterInfo:   clusterInfo,
+		ds:            ds,
+		h2Ch:          make(map[uint32]chan *l7_req.L7Event),
+		h2Parsers:     make(map[string]*http2Parser),
+		liveProcesses: make(map[uint32]struct{}),
 	}
 }
 
 func (a *Aggregator) Run() {
+	go func() {
+		// get all alive processes, populate liveProcesses
+		cmd := exec.Command("ps", "-e", "-o", "pid=")
+		output, err := cmd.Output()
+		if err != nil {
+			log.Logger.Fatal().Err(err).Msg("error getting all alive processes")
+		}
+
+		lines := strings.Split(string(output), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line != "" {
+				fields := strings.Fields(line)
+				if len(fields) > 0 {
+					pid := fields[0]
+					pidInt, err := strconv.Atoi(pid)
+					if err != nil {
+						log.Logger.Error().Err(err).Msgf("error converting pid to int %s", pid)
+						continue
+					}
+					log.Logger.Info().Msgf("adding pid %d to liveProcesses", pidInt)
+					a.liveProcesses[uint32(pidInt)] = struct{}{}
+				}
+			}
+		}
+
+	}()
 	go a.processk8s()
 
 	numWorker := 100
@@ -235,20 +267,36 @@ func (a *Aggregator) processEbpf(ctx context.Context) {
 					WriteTimeNs:         d.WriteTimeNs,
 				}
 				go a.processL7(ctx, l7Event)
-			case proc.PEXIT_EVENT:
-				d := data.(proc.PExitEvent) // copy data's value
-				// on process exit
-				// clear http2 frame workers
-				go a.stopHttp2Worker(d.Pid)
+			case proc.PROC_EVENT:
+				d := data.(proc.ProcEvent) // copy data's value
+				if d.Type_ == proc.EVENT_PROC_EXEC {
+					go a.processExec(d)
+				} else if d.Type_ == proc.EVENT_PROC_EXIT {
+					go a.processExit(d)
+					go a.stopHttp2Worker(d.Pid)
+				}
 			}
 
 		}
 	}
 }
 
+func (a *Aggregator) processExec(d proc.ProcEvent) {
+	a.liveProcessesMu.Lock()
+	a.liveProcesses[d.Pid] = struct{}{}
+	a.liveProcessesMu.Unlock()
+}
+
+func (a *Aggregator) processExit(d proc.ProcEvent) {
+	a.liveProcessesMu.Lock()
+	delete(a.liveProcesses, d.Pid)
+	a.liveProcessesMu.Unlock()
+}
+
 func (a *Aggregator) stopHttp2Worker(pid uint32) {
 	a.h2ChMu.Lock()
 	defer a.h2ChMu.Unlock()
+	log.Logger.Info().Str("h2worker", "close").Uint32("pid", pid).Msg("http2 worker closing")
 	if ch, ok := a.h2Ch[pid]; ok {
 		close(ch)
 		delete(a.h2Ch, pid)
@@ -749,8 +797,8 @@ func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
 	}()
 
 	if d.Protocol == l7_req.L7_PROTOCOL_HTTP2 {
-		var ch chan *l7_req.L7Event
 		var ok bool
+		var ch chan *l7_req.L7Event
 
 		connKey := a.getConnKey(d.Pid, d.Fd)
 		a.h2ParserMu.RLock()
@@ -770,12 +818,21 @@ func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
 		ch, ok = a.h2Ch[d.Pid]
 		a.h2ChMu.RUnlock()
 		if !ok {
+			a.liveProcessesMu.RLock()
+			_, ok = a.liveProcesses[d.Pid]
+			a.liveProcessesMu.RUnlock()
+			if !ok {
+				log.Logger.Info().Uint32("pid", d.Pid).Msg("http2 worker not opened, late event")
+				return // if a late event comes, we do not open a new worker to avoid memory leak
+			}
+
 			// initialize channel
 			h2ChPid := make(chan *l7_req.L7Event, 1000)
 			a.h2ChMu.Lock()
 			a.h2Ch[d.Pid] = h2ChPid
 			ch = h2ChPid
 			a.h2ChMu.Unlock()
+			log.Logger.Info().Str("h2worker", "open").Uint32("pid", d.Pid).Msg("http2 worker opened")
 			go a.processHttp2Frames(ch) // worker per pid, will be called once
 		}
 

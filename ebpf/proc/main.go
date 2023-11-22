@@ -12,17 +12,49 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 )
 
+const (
+	BPF_EVENT_PROC_EXEC = iota + 1
+	BPF_EVENT_PROC_EXIT
+)
+
+const (
+	EVENT_PROC_EXEC = "EVENT_PROC_EXEC"
+	EVENT_PROC_EXIT = "EVENT_PROC_EXIT"
+)
+
+// Custom type for the enumeration
+type ProcEventConversion uint32
+
+// String representation of the enumeration values
+func (e ProcEventConversion) String() string {
+	switch e {
+	case BPF_EVENT_PROC_EXEC:
+		return EVENT_PROC_EXEC
+	case BPF_EVENT_PROC_EXIT:
+		return EVENT_PROC_EXIT
+	default:
+		return "Unknown"
+	}
+}
+
 // $BPF_CLANG and $BPF_CFLAGS are set by the Makefile.
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc $BPF_CLANG -cflags $BPF_CFLAGS bpf proc.c -- -I../headers
 
-type PExitEvent struct {
-	Pid uint32
+// for both ebpf and userspace
+type PEvent struct {
+	Pid   uint32
+	Type_ uint8
 }
 
-const PEXIT_EVENT = "process_exit_event"
+type ProcEvent struct {
+	Pid   uint32
+	Type_ string
+}
 
-func (e PExitEvent) Type() string {
-	return PEXIT_EVENT
+const PROC_EVENT = "proc_event"
+
+func (e PEvent) Type() string {
+	return PROC_EVENT
 }
 
 var objs bpfObjects
@@ -56,13 +88,22 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		l.Close()
 	}()
 
-	pExitEvents, err := ringbuf.NewReader(objs.Rb)
+	l1, err := link.Tracepoint("sched", "sched_process_exec", objs.bpfPrograms.SchedProcessExec, nil)
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("link sched_process_exec tracepoint")
+	}
+	defer func() {
+		log.Logger.Info().Msg("closing sched_process_exec tracepoint")
+		l1.Close()
+	}()
+
+	pEvents, err := ringbuf.NewReader(objs.Rb)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("error creating ringbuf reader")
 	}
 	defer func() {
 		log.Logger.Info().Msg("closing pExitEvents ringbuf reader")
-		pExitEvents.Close()
+		pEvents.Close()
 	}()
 
 	// go listenDebugMsgs()
@@ -71,16 +112,20 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	go func() {
 		for {
 			read := func() {
-				record, err := pExitEvents.Read()
+				record, err := pEvents.Read()
 				if err != nil {
 					log.Logger.Warn().Err(err).Msg("error reading from pExitEvents")
 				}
 
-				bpfEvent := (*PExitEvent)(unsafe.Pointer(&record.RawSample[0]))
+				bpfEvent := (*PEvent)(unsafe.Pointer(&record.RawSample[0]))
 
 				go func() {
-					// log.Logger.Warn().Msgf("pid %d exited", bpfEvent.Pid)
-					ch <- *bpfEvent
+					log.Logger.Info().Msgf("pid: %d, type: %s", bpfEvent.Pid, ProcEventConversion(bpfEvent.Type_).String())
+
+					ch <- ProcEvent{
+						Pid:   bpfEvent.Pid,
+						Type_: ProcEventConversion(bpfEvent.Type_).String(),
+					}
 				}()
 			}
 
