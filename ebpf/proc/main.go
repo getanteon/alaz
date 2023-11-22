@@ -53,7 +53,7 @@ type ProcEvent struct {
 
 const PROC_EVENT = "proc_event"
 
-func (e PEvent) Type() string {
+func (e ProcEvent) Type() string {
 	return PROC_EVENT
 }
 
@@ -120,8 +120,6 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 				bpfEvent := (*PEvent)(unsafe.Pointer(&record.RawSample[0]))
 
 				go func() {
-					log.Logger.Info().Msgf("pid: %d, type: %s", bpfEvent.Pid, ProcEventConversion(bpfEvent.Type_).String())
-
 					ch <- ProcEvent{
 						Pid:   bpfEvent.Pid,
 						Type_: ProcEventConversion(bpfEvent.Type_).String(),
