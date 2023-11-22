@@ -426,6 +426,9 @@ type FrameArrival struct {
 	ServerDataFrameArrived    bool
 	event                     *l7_req.L7Event // l7 event that carries server data frame
 	req                       *datastore.Request
+
+	statusCode uint32
+	grpcStatus uint32
 }
 
 // called once per pid
@@ -438,11 +441,19 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 	// fd-streamId -> frame
 	frames := make(map[string]*FrameArrival)
 
-	persistReq := func(d *l7_req.L7Event, req *datastore.Request) {
-		// d is server data frame event
-
+	persistReq := func(d *l7_req.L7Event, req *datastore.Request, statusCode uint32, grpcStatus uint32) {
 		skInfo := a.findRelatedSocket(a.ctx, d)
 		if skInfo == nil {
+			return
+		}
+
+		if req.Method == "" || req.Path == "" {
+			// if we couldn't parse the request, discard
+			// this is possible because of hpack dynamic table, we can't parse the request until a new connection is established
+
+			// TODO: check if duplicate processing happens for the same request at some point on processing
+			// magic message can be used to identify the connection on ebpf side
+			// when adjustment is made on ebpf side, we can remove this check
 			return
 		}
 
@@ -451,38 +462,25 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 		req.Completed = true
 		req.FromIP = skInfo.Saddr
 		req.ToIP = skInfo.Daddr
-		if req.Protocol == "" {
-			req.Protocol = "HTTP2"
-		}
 		req.Tls = d.Tls
 		req.FromPort = skInfo.Sport
 		req.ToPort = skInfo.Dport
 		req.FailReason = ""
+		if req.Protocol == "" {
+			req.Protocol = "HTTP2"
+			if req.Tls {
+				req.Protocol = "HTTPS"
+			}
+			req.StatusCode = statusCode
+		} else if req.Protocol == "gRPC" {
+			req.StatusCode = grpcStatus
+		}
 
 		// toUID is set to :authority header in client frame
 		err := a.setFromTo(skInfo, d, req, req.ToUID)
 		if err != nil {
 			return
 		}
-
-		log.Logger.Debug().
-			// Str("fd-streamId", fkey).
-			Str("path", req.Path).
-			Str("method", req.Method).
-			Uint32("statusCode", req.StatusCode).
-			Str("fromUID", req.FromUID).
-			Str("toUID", req.ToUID).
-			Str("fromIP", req.FromIP).
-			Uint16("fromPort", req.FromPort).
-			Str("toIP", req.ToIP).
-			Uint16("toPort", req.ToPort).
-			Str("fromType", req.FromType).
-			Str("toType", req.ToType).
-			Str("protocol", req.Protocol).
-			Bool("tls", req.Tls).
-			Bool("completed", req.Completed).
-			Uint64("latency", req.Latency).
-			Msg("http2 request persisting")
 
 		a.ds.PersistRequest(req)
 	}
@@ -498,19 +496,6 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 		}
 	}
 
-	// http2 frames order can be in any order
-	// if server data frame comes first, we need to wait for the server headers frame
-	// before sending the request to persist
-
-	// two different requests frames can be interleaved that has the same fd-streamId
-	// process frames by kernel timestamp
-
-	// ctx, cancel := context.WithCancel(a.ctx)
-	// defer func() {
-	// 	cancel()
-	// }()
-
-	// consumer for pq
 	for d := range ch {
 		// Normally we tried to use http2.Framer to parse frames but
 		// http2.Framer spends too much memory and cpu reading frames
@@ -661,7 +646,10 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 							switch hf.Name {
 							case ":status":
 								s, _ := strconv.Atoi(hf.Value)
-								req.StatusCode = uint32(s)
+								fa.statusCode = uint32(s)
+							case "grpc-status":
+								s, _ := strconv.Atoi(hf.Value)
+								fa.grpcStatus = uint32(s)
 							}
 						}
 					}
@@ -669,13 +657,10 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 					h2Parser.serverHpackDecoder.Write(buf[offset:endOfFrame])
 
 					if fa.ClientHeadersFrameArrived && fa.ServerHeadersFrameArrived {
-						// request completed, server sent response
-						// Process server data frame, send L7 event to persist
-
 						mu.Lock()
 						req := *fa.req
+						go persistReq(d, &req, fa.statusCode, fa.grpcStatus)
 						delete(frames, key)
-						go persistReq(d, &req)
 						mu.Unlock()
 					}
 
@@ -693,12 +678,10 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 					fa.event = d
 
 					if fa.ClientHeadersFrameArrived && fa.ServerHeadersFrameArrived {
-						// request completed, server sent response
-						// Process server data frame, send L7 event to persist
 						mu.Lock()
 						req := *fa.req // copy
+						go persistReq(d, &req, fa.statusCode, fa.grpcStatus)
 						delete(frames, key)
-						go persistReq(d, &req)
 						mu.Unlock()
 					}
 
@@ -711,7 +694,6 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 		}
 	}
 
-	log.Logger.Info().Msg("processHttp2Frames main gor exiting...")
 }
 
 func (a *Aggregator) setFromTo(skInfo *SockInfo, d *l7_req.L7Event, reqDto *datastore.Request, hostHeader string) error {
