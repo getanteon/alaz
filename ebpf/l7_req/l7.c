@@ -579,9 +579,6 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
             }
         }
     }else{
-        unsigned char log_msg[] = "read buffer is null or too small -- ||";
-        log_to_userspace(ctx, DEBUG, func_name, log_msg, 0, 0, 0);
-
         bpf_map_delete_elem(&active_reads, &id);
         return 0;
     }
@@ -1234,9 +1231,6 @@ int BPF_UPROBE(go_tls_conn_read_exit) {
             return 0;
         }
     }else{
-        unsigned char log_msg[] = "read buffer is null or too small -- |goid|method";
-        log_to_userspace(ctx, DEBUG, func_name, log_msg, 0, k.goid, e->method);
-
         bpf_map_delete_elem(&go_active_reads, &k);
         return 0;
     }

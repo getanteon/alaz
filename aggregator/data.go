@@ -756,6 +756,7 @@ func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
 	// we need to aggregate frames to get the whole request
 	defer func() {
 		if r := recover(); r != nil {
+			// TODO: we need to fix this properly
 			log.Logger.Debug().Msgf("probably a http2 frame sent on a closed chan: %v", r)
 		}
 	}()
