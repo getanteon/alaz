@@ -1,16 +1,41 @@
-# Alaz - Ddosify eBPF Agent
 
-<h1 align="center">
-    <img src="https://imagedelivery.net/jnIqn6NB1gbMLXIvlYKo5A/172d2843-4868-40e9-1bb0-1176d477d600/public" alt="Alaz Ddosify Usage" width="777px" /><br />
-</h1>
+<h1 align="center">Alaz - Ddosify eBPF Agent for Kubernetes Monitoring</h1>
+
 <p align="center">
     <a href="https://github.com/ddosify/alaz/blob/master/LICENSE" target="_blank"><img src="https://img.shields.io/badge/LICENSE-AGPL--3.0-orange?style=for-the-badge&logo=none" alt="alaz license" /></a>
     <a href="https://discord.gg/9KdnrSUZQg" target="_blank"><img src="https://img.shields.io/discord/898523141788287017?style=for-the-badge&logo=discord&label=DISCORD" alt="ddosify discord server" /></a>
     <a href="https://hub.docker.com/r/ddosify/alaz" target="_blank"><img src="https://img.shields.io/docker/v/ddosify/alaz?style=for-the-badge&logo=docker&label=docker&sort=semver" alt="alaz docker image" /></a>
 </p>
 
+<p align="center">
+<img src="assets/ddosify_service_map.png" alt="Ddosify Kubernetes Monitoring Service Map" />
+<i>Ddosify automatically generates Service Map of your K8s cluster without code instrumentation or sidecars with eBPF Agent Alaz. So you can easily find the bottlenecks in your system. Red lines indicate the high latency between services.</i>
+</p>
 
-[Alaz](https://github.com/ddosify/alaz) is an open-source Ddosify eBPF agent that can inspect and collect Kubernetes (K8s) service traffic without the need for code instrumentation, sidecars, or service restarts. This is possible due to its use of eBPF technology. Alaz can create a Service Map that helps identify golden signals and problems like high latencies, 5xx errors, zombie services, SQL queries. Additionally, it can gather system information and resources via the Prometheus Node Exporter, which is readily available on the agent. Alaz Docker image is available on [Docker Hub](https://hub.docker.com/r/ddosify/alaz).
+<h2 align="center">
+    <a href="https://demo.ddosify.com/" target="_blank">Live Demo</a> •
+    <a href="https://docs.ddosify.com/" target="_blank">Documentation</a> •
+    <a href="https://docs.ddosify.com/ddosify/deployment" target="_blank">Deployment</a> •
+    <a href="https://docs.ddosify.com/ddosify/deployment" target="_blank">Discord</a>
+</h2>
+
+
+## What is Alaz?
+
+[Alaz](https://github.com/ddosify/alaz) is an open-source Ddosify eBPF agent that can inspect and collect Kubernetes (K8s) service traffic without the need for code instrumentation, sidecars, or service restarts. This is possible due to its use of eBPF technology. 
+
+Alaz can create a **Service Map** that helps identify golden signals and problems like:
+- High latencies between K8s services
+- Detect 5xx HTTP status codes 
+- Detect Idle / Zombie services
+- Detect slow SQL queries
+
+Additionally, Ddosify tracks and displays live data on your cluster instances CPU, memory, disk, and network usage. All of the dashboards are generated out-of-box and you can create alerts based on these metrics values. Check out the [docs](https://docs.ddosify.com/) for more. 
+
+<p align="center">
+<img src="assets/ddosify_metrics.png" alt="Ddosify Kubernetes Monitoring Metrics" />
+<i>Ddosify tracks and displays live data on your cluster instances CPU, memory, disk, and network usage.</i>
+</p>
 
 
 ➡️ For more information about Ddosify, see [Ddosify](https://github.com/ddosify/ddosify).
@@ -36,6 +61,8 @@ Export metrics to [Ddosify Cloud](https://ddosify.com), or install the [Ddosify 
 ✅ **Test & Observe:** 
 
 Ddosify Performance Testing and Alaz can work collaboratively. You can start a load test and monitor your system simultaneously. This will help you spot performance issues instantly. Check out the [Ddosify GitHub Repository](https://github.com/ddosify/ddosify) for more information about Ddosify Stack.
+
+✅ **Alerts for Anomalies:** If something unusual, like a sudden increase in CPU usage, happens in your Kubernetes (K8s) cluster, Ddosify immediately sends alerts to your Slack.
 
 ✅ Works on both Arm64 and x86_64 architectures.
 
