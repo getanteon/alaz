@@ -19,11 +19,13 @@ const (
 	BPF_L7_PROTOCOL_HTTP
 	BPF_L7_PROTOCOL_AMQP
 	BPF_L7_PROTOCOL_POSTGRES
+	BPF_L7_PROTOCOL_HTTP2
 )
 
 // for user space
 const (
 	L7_PROTOCOL_HTTP     = "HTTP"
+	L7_PROTOCOL_HTTP2    = "HTTP2"
 	L7_PROTOCOL_AMQP     = "AMQP"
 	L7_PROTOCOL_POSTGRES = "POSTGRES"
 	L7_PROTOCOL_UNKNOWN  = "UNKNOWN"
@@ -41,6 +43,8 @@ func (e L7ProtocolConversion) String() string {
 		return L7_PROTOCOL_AMQP
 	case BPF_L7_PROTOCOL_POSTGRES:
 		return L7_PROTOCOL_POSTGRES
+	case BPF_L7_PROTOCOL_HTTP2:
+		return L7_PROTOCOL_HTTP2
 	case BPF_L7_PROTOCOL_UNKNOWN:
 		return L7_PROTOCOL_UNKNOWN
 	default:
@@ -60,6 +64,12 @@ const (
 	BPF_METHOD_CONNECT
 	BPF_METHOD_OPTIONS
 	BPF_METHOD_TRACE
+)
+
+const (
+	BPF_HTTP2_METHOD_UNKNOWN = iota
+	BPF_HTTP2_METHOD_CLIENT
+	BPF_HTTP2_METHOD_SERVER
 )
 
 // match with values in l7_req.c, order is important
@@ -114,6 +124,12 @@ const (
 const (
 	CLOSE_OR_TERMINATE = "CLOSE_OR_TERMINATE"
 	SIMPLE_QUERY       = "SIMPLE_QUERY"
+)
+
+// for http2, user space
+const (
+	CLIENT_FRAME = "CLIENT_FRAME"
+	SERVER_FRAME = "SERVER_FRAME"
 )
 
 // Custom type for the enumeration
@@ -175,6 +191,21 @@ func (e PostgresMethodConversion) String() string {
 	}
 }
 
+// Custom type for the enumeration
+type Http2MethodConversion uint32
+
+// String representation of the enumeration values
+func (e Http2MethodConversion) String() string {
+	switch e {
+	case BPF_HTTP2_METHOD_CLIENT:
+		return CLIENT_FRAME
+	case BPF_HTTP2_METHOD_SERVER:
+		return SERVER_FRAME
+	default:
+		return "Unknown"
+	}
+}
+
 // $BPF_CLANG and $BPF_CFLAGS are set by the Makefile.
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc $BPF_CLANG -cflags $BPF_CFLAGS bpf l7.c -- -I../headers
 
@@ -189,7 +220,7 @@ type L7Event struct {
 	Protocol            string // L7_PROTOCOL_HTTP
 	Tls                 bool   // Whether request was encrypted
 	Method              string
-	Payload             [512]uint8
+	Payload             [1024]uint8
 	PayloadSize         uint32 // How much of the payload was copied
 	PayloadReadComplete bool   // Whether the payload was copied completely
 	Failed              bool   // Request failed
@@ -304,7 +335,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	}()
 
 	// initialize perf event readers
-	l7Events, err := perf.NewReader(L7BpfProgsAndMaps.L7Events, 64*os.Getpagesize())
+	l7Events, err := perf.NewReader(L7BpfProgsAndMaps.L7Events, 1000*os.Getpagesize())
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
 	}
@@ -313,7 +344,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		l7Events.Close()
 	}()
 
-	logs, err := perf.NewReader(L7BpfProgsAndMaps.LogMap, 64*os.Getpagesize())
+	logs, err := perf.NewReader(L7BpfProgsAndMaps.LogMap, 4*os.Getpagesize())
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
 	}
@@ -452,7 +483,6 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 			l7Event := (*bpfL7Event)(unsafe.Pointer(&record.RawSample[0]))
 
 			go func() {
-
 				protocol := L7ProtocolConversion(l7Event.Protocol).String()
 				var method string
 				switch protocol {
@@ -462,13 +492,10 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 					method = RabbitMQMethodConversion(l7Event.Method).String()
 				case L7_PROTOCOL_POSTGRES:
 					method = PostgresMethodConversion(l7Event.Method).String()
+				case L7_PROTOCOL_HTTP2:
+					method = Http2MethodConversion(l7Event.Method).String()
 				default:
 					method = "Unknown"
-				}
-
-				if uint8ToBool(l7Event.IsTls) {
-					log.Logger.Debug().Uint16("fd", uint16(l7Event.Fd)).Uint32("pid", l7Event.Pid).
-						Str("payload", string(l7Event.Payload[:])).Str("method", method).Str("protocol", protocol).Uint32("status", l7Event.Status).Msg("l7tls event")
 				}
 
 				ch <- L7Event{
@@ -494,7 +521,6 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 			default:
 				read()
 			}
-
 		}
 	}()
 

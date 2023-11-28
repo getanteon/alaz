@@ -34,6 +34,11 @@ func (a *Aggregator) processPod(d k8s.K8sResourceMessage) {
 		log.Logger.Debug().Msgf("Pod %s/%s has no owner, event: %s", pod.Namespace, pod.Name, d.EventType)
 	}
 
+	if pod.Status.PodIP == "" {
+		log.Logger.Debug().Msgf("Pod %s/%s has no IP, event: %s", pod.Namespace, pod.Name, d.EventType)
+		return
+	}
+
 	dtoPod := datastore.Pod{
 		UID:       string(pod.UID),
 		Name:      pod.Name,

@@ -136,8 +136,10 @@ Alaz supports the following protocols:
 
 - HTTP
 - HTTPS (OpenSSL and Go TLS)
+- HTTP2
 - Postgres
 - RabbitMQ
+- gRPC
 
 Other protocols will be supported soon.
 

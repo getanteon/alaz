@@ -140,7 +140,9 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 				if err != nil {
 					log.Logger.Warn().Msgf("error reading response body: %v", err)
 				}
-				log.Logger.Warn().Int("statusCode", resp.StatusCode).Str("respBody", string(rb)).Msgf("will retry...")
+				log.Logger.Warn().Int("statusCode", resp.StatusCode).
+					Str("path", resp.Request.URL.Path).
+					Str("respBody", string(rb)).Msgf("will retry...")
 			} else if resp.StatusCode == http.StatusOK {
 				shouldRetry = false
 				rb, err := io.ReadAll(resp.Body)
@@ -283,7 +285,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 
 							return
 						} else {
-							log.Logger.Info().Msg("metrics sent successfully")
+							log.Logger.Debug().Msg("metrics sent successfully")
 						}
 					}()
 				}
@@ -320,9 +322,7 @@ func (b *BackendDS) DoRequest(req *http.Request) error {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("not success: %d, %s", resp.StatusCode, string(body))
-	} else {
-		log.Logger.Info().Str("reqHostPath", req.URL.Host+req.URL.Path).Msg("success on request")
+		return fmt.Errorf("req failed: %d, %s", resp.StatusCode, string(body))
 	}
 
 	return nil
@@ -531,20 +531,22 @@ func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool) {
 	t := time.NewTicker(10 * time.Second)
 	defer t.Stop()
 
-	payload := HealthCheckPayload{
-		Metadata: Metadata{
-			MonitoringID:   MonitoringID,
-			IdempotencyKey: string(uuid.NewUUID()),
-			NodeID:         NodeID,
-			AlazVersion:    tag,
-		},
-		Info: struct {
-			EbpfEnabled    bool `json:"ebpf"`
-			MetricsEnabled bool `json:"metrics"`
-		}{
-			EbpfEnabled:    ebpf,
-			MetricsEnabled: metrics,
-		},
+	createHealthCheckPayload := func() HealthCheckPayload {
+		return HealthCheckPayload{
+			Metadata: Metadata{
+				MonitoringID:   MonitoringID,
+				IdempotencyKey: string(uuid.NewUUID()),
+				NodeID:         NodeID,
+				AlazVersion:    tag,
+			},
+			Info: struct {
+				EbpfEnabled    bool `json:"ebpf"`
+				MetricsEnabled bool `json:"metrics"`
+			}{
+				EbpfEnabled:    ebpf,
+				MetricsEnabled: metrics,
+			},
+		}
 	}
 
 	for {
@@ -553,7 +555,7 @@ func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool) {
 			log.Logger.Info().Msg("stopping sending health check")
 			return
 		case <-t.C:
-			b.sendToBackend(http.MethodPut, payload, healthCheckEndpoint)
+			b.sendToBackend(http.MethodPut, createHealthCheckPayload(), healthCheckEndpoint)
 		}
 	}
 }

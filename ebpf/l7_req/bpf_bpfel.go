@@ -33,7 +33,7 @@ type bpfL7Event struct {
 	Protocol            uint8
 	Method              uint8
 	Padding             uint16
-	Payload             [512]uint8
+	Payload             [1024]uint8
 	PayloadSize         uint32
 	PayloadReadComplete uint8
 	Failed              uint8
@@ -45,7 +45,7 @@ type bpfL7Request struct {
 	WriteTimeNs         uint64
 	Protocol            uint8
 	Method              uint8
-	Payload             [512]uint8
+	Payload             [1024]uint8
 	_                   [2]byte
 	PayloadSize         uint32
 	PayloadReadComplete uint8
