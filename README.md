@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-<img src="assets/ddosify_service_map.png" alt="Ddosify Kubernetes Monitoring Service Map" />
+<img src="https://raw.githubusercontent.com/ddosify/alaz/master/assets/ddosify_service_map.png" alt="Ddosify Kubernetes Monitoring Service Map" />
 <i>Ddosify automatically generates Service Map of your K8s cluster without code instrumentation or sidecars with eBPF Agent Alaz. So you can easily find the bottlenecks in your system. Red lines indicate the high latency between services.</i>
 </p>
 
@@ -33,7 +33,7 @@ Alaz can create a **Service Map** that helps identify golden signals and problem
 Additionally, Ddosify tracks and displays live data on your cluster instances CPU, memory, disk, and network usage. All of the dashboards are generated out-of-box and you can create alerts based on these metrics values. Check out the [docs](https://docs.ddosify.com/) for more. 
 
 <p align="center">
-<img src="assets/ddosify_metrics.png" alt="Ddosify Kubernetes Monitoring Metrics" />
+<img src="https://raw.githubusercontent.com/ddosify/alaz/master/assets/ddosify_metrics.png" alt="Ddosify Kubernetes Monitoring Metrics" />
 <i>Ddosify tracks and displays live data on your cluster instances CPU, memory, disk, and network usage.</i>
 </p>
 
