@@ -41,6 +41,8 @@ const (
 	DELETE = "Delete"
 )
 
+var k8sVersion string
+
 type K8sCollector struct {
 	ctx              context.Context
 	informersFactory informers.SharedInformerFactory
@@ -178,6 +180,13 @@ func NewK8sCollector(parentCtx context.Context) (*K8sCollector, error) {
 		return nil, fmt.Errorf("unable to create clientset: %w", err)
 	}
 
+	version, err := clientset.ServerVersion()
+	if err != nil {
+		return nil, fmt.Errorf("unable to get k8s server version: %w", err)
+	}
+
+	k8sVersion = version.String()
+
 	factory := informers.NewSharedInformerFactory(clientset, 0)
 
 	collector := &K8sCollector{
@@ -194,6 +203,10 @@ func NewK8sCollector(parentCtx context.Context) (*K8sCollector, error) {
 	}(collector)
 
 	return collector, nil
+}
+
+func (k *K8sCollector) GetK8sVersion() string {
+	return k8sVersion
 }
 
 func (k *K8sCollector) close() {
