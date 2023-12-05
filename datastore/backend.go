@@ -595,11 +595,6 @@ func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool, k8sVersion string) 
 	t := time.NewTicker(10 * time.Second)
 	defer t.Stop()
 
-	// TODO: add new fields to health check payload
-	// kernelVersion
-	// k8sVersion
-	// cloudProvider
-
 	createHealthCheckPayload := func() HealthCheckPayload {
 		return HealthCheckPayload{
 			Metadata: Metadata{
@@ -614,6 +609,15 @@ func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool, k8sVersion string) 
 			}{
 				EbpfEnabled:    ebpf,
 				MetricsEnabled: metrics,
+			},
+			Telemetry: struct {
+				KernelVersion string `json:"kernel_version"`
+				K8sVersion    string `json:"k8s_version"`
+				CloudProvider string `json:"cloud_provider"`
+			}{
+				KernelVersion: kernelVersion,
+				K8sVersion:    k8sVersion,
+				CloudProvider: string(cloudProvider),
 			},
 		}
 	}
