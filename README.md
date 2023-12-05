@@ -157,3 +157,4 @@ You can join our [Discord Server](https://discord.gg/9KdnrSUZQg) for issues, fea
 
 Alaz is licensed under the AGPLv3: https://www.gnu.org/licenses/agpl-3.0.html
 
+test
