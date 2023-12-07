@@ -35,6 +35,7 @@ func main() {
 
 	var k8sCollector *k8s.K8sCollector
 	kubeEvents := make(chan interface{}, 1000)
+	var k8sVersion string
 	if os.Getenv("K8S_COLLECTOR_ENABLED") != "false" {
 		// k8s collector
 		var err error
@@ -42,6 +43,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
+		k8sVersion = k8sCollector.GetK8sVersion()
 		go k8sCollector.Init(kubeEvents)
 	}
 
@@ -55,7 +57,7 @@ func main() {
 		MetricsExport:         metricsEnabled,
 		MetricsExportInterval: 10,
 	})
-	go dsBackend.SendHealthCheck(ebpfEnabled, metricsEnabled)
+	go dsBackend.SendHealthCheck(ebpfEnabled, metricsEnabled, k8sVersion)
 
 	// deploy ebpf programs
 	var ec *ebpf.EbpfCollector
