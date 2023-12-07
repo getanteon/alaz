@@ -11,6 +11,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ddosify/alaz/config"
@@ -36,6 +37,8 @@ var NodeID string
 
 // set from ldflags
 var tag string
+var kernelVersion string
+var cloudProvider CloudProvider
 
 func init() {
 	MonitoringID = os.Getenv("MONITORING_ID")
@@ -52,6 +55,67 @@ func init() {
 		log.Logger.Fatal().Msg("tag is not set")
 	}
 	log.Logger.Info().Str("tag", tag).Msg("alaz tag")
+
+	kernelVersion = extractKernelVersion()
+	cloudProvider = getCloudProvider()
+}
+
+func extractKernelVersion() string {
+	// Path to the /proc/version file
+	filePath := "/proc/version"
+	file, err := os.Open(filePath)
+	if err != nil {
+		log.Logger.Fatal().AnErr("error", err).Msgf("Unable to open file %s", filePath)
+	}
+
+	// Read the content of the file
+	content, err := io.ReadAll(file)
+	if err != nil {
+		log.Logger.Fatal().AnErr("error", err).Msgf("Unable to read file %s", filePath)
+	}
+
+	// Convert the content to a string
+	versionInfo := string(content)
+
+	// Split the versionInfo string into lines
+	lines := strings.Split(versionInfo, "\n")
+
+	// Extract the kernel version from the first line
+	// Assuming the kernel version is the first word in the first line
+	if len(lines) > 0 {
+		fields := strings.Fields(lines[0])
+		if len(fields) > 2 {
+			return fields[2]
+		}
+	}
+
+	return "Unable to extract kernel version"
+}
+
+type CloudProvider string
+
+const (
+	CloudProviderAWS          CloudProvider = "AWS"
+	CloudProviderGCP          CloudProvider = "GCP"
+	CloudProviderAzure        CloudProvider = "Azure"
+	CloudProviderDigitalOcean CloudProvider = "DigitalOcean"
+	CloudProviderUnknown      CloudProvider = ""
+)
+
+func getCloudProvider() CloudProvider {
+	if vendor, err := os.ReadFile("/sys/class/dmi/id/board_vendor"); err == nil {
+		switch strings.TrimSpace(string(vendor)) {
+		case "Amazon EC2":
+			return CloudProviderAWS
+		case "Google":
+			return CloudProviderGCP
+		case "Microsoft Corporation":
+			return CloudProviderAzure
+		case "DigitalOcean":
+			return CloudProviderDigitalOcean
+		}
+	}
+	return CloudProviderUnknown
 }
 
 var resourceBatchSize int64 = 50
@@ -527,7 +591,7 @@ func (b *BackendDS) PersistContainer(c Container, eventType string) error {
 	return nil
 }
 
-func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool) {
+func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool, k8sVersion string) {
 	t := time.NewTicker(10 * time.Second)
 	defer t.Stop()
 
@@ -545,6 +609,15 @@ func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool) {
 			}{
 				EbpfEnabled:    ebpf,
 				MetricsEnabled: metrics,
+			},
+			Telemetry: struct {
+				KernelVersion string `json:"kernel_version"`
+				K8sVersion    string `json:"k8s_version"`
+				CloudProvider string `json:"cloud_provider"`
+			}{
+				KernelVersion: kernelVersion,
+				K8sVersion:    k8sVersion,
+				CloudProvider: string(cloudProvider),
 			},
 		}
 	}

@@ -13,6 +13,11 @@ type HealthCheckPayload struct {
 		EbpfEnabled    bool `json:"ebpf"`
 		MetricsEnabled bool `json:"metrics"`
 	} `json:"alaz_info"`
+	Telemetry struct {
+		KernelVersion string `json:"kernel_version"`
+		K8sVersion    string `json:"k8s_version"`
+		CloudProvider string `json:"cloud_provider"`
+	} `json:"telemetry"`
 }
 
 type EventPayload struct {
