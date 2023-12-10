@@ -222,6 +222,26 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
         if (method != -1){
             req->protocol = PROTOCOL_HTTP;
             req-> method = method;
+        }else if (parse_client_postgres_data(buf, count, &req->request_type)){
+            // TODO: should wait for CloseComplete message in case of statement close 
+            if (req->request_type == POSTGRES_MESSAGE_CLOSE || req->request_type == POSTGRES_MESSAGE_TERMINATE){
+                req->protocol = PROTOCOL_POSTGRES;
+                req->method = METHOD_STATEMENT_CLOSE_OR_CONN_TERMINATE;
+                struct write_args args = {};
+                args.fd = fd;
+                args.write_start_ns = timestamp;
+                bpf_map_update_elem(&active_writes, &id, &args, BPF_ANY);
+            }
+            unsigned char log_msg[] = "parse_client_postgres_data -- count||";
+            log_to_userspace(ctx, DEBUG, func_name, log_msg, count, 0, 0);
+            req->protocol = PROTOCOL_POSTGRES;
+        }else if (is_rabbitmq_publish(buf,count)){
+            req->protocol = PROTOCOL_AMQP;
+            req->method = METHOD_PUBLISH;
+            struct write_args args = {};
+            args.fd = fd;
+            args.write_start_ns = timestamp;
+            bpf_map_update_elem(&active_writes, &id, &args, BPF_ANY);
         }else if (is_http2_frame(buf, count)){
             struct l7_event *e = bpf_map_lookup_elem(&l7_event_heap, &zero);
             if (!e) {
@@ -253,25 +273,6 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
                 log_to_userspace(ctx, WARN, func_name, log_msg, r, e->fd, e->payload_size);        
             }
             return 0;
-        }
-        else if (is_rabbitmq_publish(buf,count)){
-            req->protocol = PROTOCOL_AMQP;
-            req->method = METHOD_PUBLISH;
-            struct write_args args = {};
-            args.fd = fd;
-            args.write_start_ns = timestamp;
-            bpf_map_update_elem(&active_writes, &id, &args, BPF_ANY);
-        }else if (parse_client_postgres_data(buf, count, &req->request_type)){
-            // TODO: should wait for CloseComplete message in case of statement close 
-            if (req->request_type == POSTGRES_MESSAGE_CLOSE || req->request_type == POSTGRES_MESSAGE_TERMINATE){
-                req->protocol = PROTOCOL_POSTGRES;
-                req->method = METHOD_STATEMENT_CLOSE_OR_CONN_TERMINATE;
-                struct write_args args = {};
-                args.fd = fd;
-                args.write_start_ns = timestamp;
-                bpf_map_update_elem(&active_writes, &id, &args, BPF_ANY);
-            }
-            req->protocol = PROTOCOL_POSTGRES;
         }else{
             req->protocol = PROTOCOL_UNKNOWN;
             req->method = METHOD_UNKNOWN;
@@ -464,36 +465,6 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
     }
     e->is_tls = is_tls;
 
-    // if http2, send directly to userspace
-    if(is_http2_frame(read_info->buf,ret)){
-        e->protocol = PROTOCOL_HTTP2;
-        e->write_time_ns = timestamp;
-        e->fd = read_info->fd;
-        e->pid = k.pid;
-        e->method = SERVER_FRAME;
-        e->status = 0;
-        e->failed = 0; // success
-        e->duration = 0; // total write time
-        e->is_tls = 1;
-        bpf_probe_read(e->payload, MAX_PAYLOAD_SIZE, read_info->buf);
-        if(ret > MAX_PAYLOAD_SIZE){
-            // will not be able to copy all of it
-            e->payload_size = MAX_PAYLOAD_SIZE;
-            e->payload_read_complete = 0;
-        }else{
-            e->payload_size = ret;
-            e->payload_read_complete = 1;
-        }
-
-        long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
-        if (r < 0) {
-            unsigned char log_msg[] = "failed write to l7_events h2 -- res|fd|psize";
-            log_to_userspace(ctx, WARN, func_name, log_msg, r, e->fd, e->payload_size);        
-        }
-        bpf_map_delete_elem(&go_active_reads, &k);
-        return 0;
-    }
-
     // For a amqp consume, there will be no write, so we will not have a request in active_l7_requests
     // Process amqp consume first, if it is not amqp consume, look for a request in active_l7_requests
 
@@ -521,6 +492,36 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
 
     struct l7_request *active_req = bpf_map_lookup_elem(&active_l7_requests, &k);
     if (!active_req) {
+        // if http2 server frame, send directly to userspace
+        if(is_http2_frame(read_info->buf,ret)){
+            e->protocol = PROTOCOL_HTTP2;
+            e->write_time_ns = timestamp;
+            e->fd = read_info->fd;
+            e->pid = k.pid;
+            e->method = SERVER_FRAME;
+            e->status = 0;
+            e->failed = 0; // success
+            e->duration = 0; // total write time
+            e->is_tls = 1;
+            bpf_probe_read(e->payload, MAX_PAYLOAD_SIZE, read_info->buf);
+            if(ret > MAX_PAYLOAD_SIZE){
+                // will not be able to copy all of it
+                e->payload_size = MAX_PAYLOAD_SIZE;
+                e->payload_read_complete = 0;
+            }else{
+                e->payload_size = ret;
+                e->payload_read_complete = 1;
+            }
+
+            long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
+            if (r < 0) {
+                unsigned char log_msg[] = "failed write to l7_events h2 -- res|fd|psize";
+                log_to_userspace(ctx, WARN, func_name, log_msg, r, e->fd, e->payload_size);        
+            }
+            bpf_map_delete_elem(&go_active_reads, &k);
+            return 0;
+        }
+
         bpf_map_delete_elem(&active_reads, &id);
         return 0;
     }
