@@ -117,8 +117,12 @@ int parse_client_postgres_data(char *buf, int buf_size, __u8 *request_type) {
         return 1;
     }
 
-    // len + 1 byte of identifier  == buf_size
-    if ((identifier == POSTGRES_MESSAGE_SIMPLE_QUERY || identifier == POSTGRES_MESSAGE_CLOSE) && len+1 == buf_size) {
+    
+    // long queries can be split into multiple packets
+    // therefore specified length can exceed the buf_size 
+    // normally (len + 1 byte of identifier  == buf_size) should be true
+
+    if ((identifier == POSTGRES_MESSAGE_SIMPLE_QUERY || identifier == POSTGRES_MESSAGE_CLOSE)) {
         *request_type = identifier;
         return 1;
     }
