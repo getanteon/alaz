@@ -155,7 +155,6 @@ func (nl *SocketLine) GetAlreadyExistingSockets() {
 	fdDir := strings.Join([]string{"/proc", fmt.Sprint(nl.pid), "fd"}, "/")
 	fdEntries, err := os.ReadDir(fdDir)
 	if err != nil {
-		log.Logger.Warn().Err(err).Msgf("failed to read directory %s", fdDir)
 		return
 	}
 

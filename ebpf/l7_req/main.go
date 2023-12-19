@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"time"
 	"unsafe"
 
 	"github.com/ddosify/alaz/log"
 
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/perf"
+	"github.com/cilium/ebpf/ringbuf"
 	"github.com/cilium/ebpf/rlimit"
 )
 
@@ -211,6 +213,30 @@ func (e Http2MethodConversion) String() string {
 
 const mapKey uint32 = 0
 
+// bpf
+type bpfTraceEvent struct {
+	Pid   uint32
+	Tid   uint32
+	Tx    uint64
+	Type_ uint8
+	_     [3]byte
+	Seq   uint32
+}
+
+type TraceEvent struct {
+	Pid   uint32
+	Tid   uint32
+	Tx    int64
+	Type_ uint8
+	Seq   uint32
+}
+
+const TRACE_EVENT = "trace_event"
+
+func (e TraceEvent) Type() string {
+	return TRACE_EVENT
+}
+
 // for user space
 type L7Event struct {
 	Fd                  uint64
@@ -225,6 +251,8 @@ type L7Event struct {
 	PayloadReadComplete bool   // Whether the payload was copied completely
 	Failed              bool   // Request failed
 	WriteTimeNs         uint64 // start time of write syscall
+	Tid                 uint32
+	Seq                 uint32 // tcp seq num
 }
 
 const L7_EVENT = "l7_event"
@@ -353,8 +381,18 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		logs.Close()
 	}()
 
+	distTraceCalls, err := ringbuf.NewReader(L7BpfProgsAndMaps.IngressEgressCalls)
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("error creating ringbuf reader")
+	}
+	defer func() {
+		log.Logger.Info().Msg("closing distTraceCalls ringbuf reader")
+		distTraceCalls.Close()
+	}()
+
 	logsDone := make(chan struct{}, 1)
 	readDone := make(chan struct{})
+	read2Done := make(chan struct{})
 
 	go func() {
 		var logMessage []byte
@@ -498,6 +536,14 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 					method = "Unknown"
 				}
 
+				if protocol == L7_PROTOCOL_POSTGRES {
+					if method == SIMPLE_QUERY {
+						log.Logger.Info().Uint32("pid", l7Event.Pid).
+							Str("protocol", protocol).Str("method", method).
+							Str("payload", string(l7Event.Payload[:l7Event.PayloadSize])).Msg("pg-log sql command")
+					}
+				}
+
 				ch <- L7Event{
 					Fd:                  l7Event.Fd,
 					Pid:                 l7Event.Pid,
@@ -511,6 +557,8 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 					PayloadReadComplete: uint8ToBool(l7Event.PayloadReadComplete),
 					Failed:              uint8ToBool(l7Event.Failed),
 					WriteTimeNs:         l7Event.WriteTimeNs,
+					Tid:                 l7Event.Tid,
+					Seq:                 l7Event.Seq,
 				}
 			}()
 		}
@@ -524,8 +572,44 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		}
 	}()
 
+	go func() {
+		read := func() {
+			record, err := distTraceCalls.Read()
+			if err != nil {
+				log.Logger.Warn().Err(err).Msg("error reading from dist trace calls")
+			}
+
+			// TODO
+			bpfTraceEvent := (*bpfTraceEvent)(unsafe.Pointer(&record.RawSample[0]))
+
+			// log.Logger.Info().
+			// 	Uint32("pid", callEvent.Pid).Uint32("tid", callEvent.Tid).
+			// 	Uint64("tx", callEvent.Tx).Uint8("type", callEvent.Type).
+			// 	Uint32("seq", callEvent.Seq).Msg("dist-trace-call")
+
+			traceEvent := TraceEvent{
+				Pid:   bpfTraceEvent.Pid,
+				Tid:   bpfTraceEvent.Tid,
+				Tx:    time.Now().UnixMilli(),
+				Type_: bpfTraceEvent.Type_,
+				Seq:   bpfTraceEvent.Seq,
+			}
+			ch <- &traceEvent
+
+		}
+		for {
+			select {
+			case <-read2Done:
+				return
+			default:
+				read()
+			}
+		}
+	}()
+
 	<-ctx.Done() // wait for context to be cancelled
 	readDone <- struct{}{}
+	read2Done <- struct{}{}
 	logsDone <- struct{}{}
 	// defers will clean up
 }

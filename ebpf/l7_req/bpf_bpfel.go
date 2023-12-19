@@ -38,7 +38,10 @@ type bpfL7Event struct {
 	PayloadReadComplete uint8
 	Failed              uint8
 	IsTls               uint8
-	_                   [5]byte
+	_                   [1]byte
+	Seq                 uint32
+	Tid                 uint32
+	_                   [4]byte
 }
 
 type bpfL7Request struct {
@@ -50,7 +53,10 @@ type bpfL7Request struct {
 	PayloadSize         uint32
 	PayloadReadComplete uint8
 	RequestType         uint8
-	_                   [6]byte
+	_                   [2]byte
+	Seq                 uint32
+	Tid                 uint32
+	_                   [4]byte
 }
 
 type bpfLogMessage struct {
@@ -141,6 +147,7 @@ type bpfMapSpecs struct {
 	GoActiveL7Requests *ebpf.MapSpec `ebpf:"go_active_l7_requests"`
 	GoActiveReads      *ebpf.MapSpec `ebpf:"go_active_reads"`
 	GoL7RequestHeap    *ebpf.MapSpec `ebpf:"go_l7_request_heap"`
+	IngressEgressCalls *ebpf.MapSpec `ebpf:"ingress_egress_calls"`
 	L7EventHeap        *ebpf.MapSpec `ebpf:"l7_event_heap"`
 	L7Events           *ebpf.MapSpec `ebpf:"l7_events"`
 	L7RequestHeap      *ebpf.MapSpec `ebpf:"l7_request_heap"`
@@ -173,6 +180,7 @@ type bpfMaps struct {
 	GoActiveL7Requests *ebpf.Map `ebpf:"go_active_l7_requests"`
 	GoActiveReads      *ebpf.Map `ebpf:"go_active_reads"`
 	GoL7RequestHeap    *ebpf.Map `ebpf:"go_l7_request_heap"`
+	IngressEgressCalls *ebpf.Map `ebpf:"ingress_egress_calls"`
 	L7EventHeap        *ebpf.Map `ebpf:"l7_event_heap"`
 	L7Events           *ebpf.Map `ebpf:"l7_events"`
 	L7RequestHeap      *ebpf.Map `ebpf:"l7_request_heap"`
@@ -188,6 +196,7 @@ func (m *bpfMaps) Close() error {
 		m.GoActiveL7Requests,
 		m.GoActiveReads,
 		m.GoL7RequestHeap,
+		m.IngressEgressCalls,
 		m.L7EventHeap,
 		m.L7Events,
 		m.L7RequestHeap,

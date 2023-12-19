@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ddosify/alaz/config"
+	"github.com/ddosify/alaz/ebpf/l7_req"
 	"github.com/ddosify/alaz/log"
 
 	"github.com/alecthomas/kingpin/v2"
@@ -132,6 +133,8 @@ type BackendDS struct {
 	reqChanBuffer chan *ReqInfo
 	reqInfoPool   *poolutil.Pool[*ReqInfo]
 
+	traceEventChan chan *TraceInfo
+
 	podEventChan       chan interface{} // *PodEvent
 	svcEventChan       chan interface{} // *SvcEvent
 	depEventChan       chan interface{} // *DepEvent
@@ -155,6 +158,8 @@ const (
 	containerEndpoint = "/alaz/k8s/container/"
 	dsEndpoint        = "/alaz/k8s/daemonset/"
 	reqEndpoint       = "/alaz/"
+
+	traceEventEndpoint = "/dist_tracing/traffic/"
 
 	healthCheckEndpoint = "/alaz/healthcheck/"
 )
@@ -272,9 +277,11 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 		epEventChan:        make(chan interface{}, 100),
 		containerEventChan: make(chan interface{}, 100),
 		dsEventChan:        make(chan interface{}, 20),
+		traceEventChan:     make(chan *TraceInfo, 1000),
 	}
 
 	go ds.sendReqsInBatch()
+	go ds.sendTraceEventsInBatch()
 
 	eventsInterval := 10 * time.Second
 	go ds.sendEventsInBatch(ds.podEventChan, podEndpoint, eventsInterval)
@@ -404,6 +411,18 @@ func convertReqsToPayload(batch []*ReqInfo) RequestsPayload {
 	}
 }
 
+func convertTraceEventsToPayload(batch []*TraceInfo) TracePayload {
+	return TracePayload{
+		Metadata: Metadata{
+			MonitoringID:   MonitoringID,
+			IdempotencyKey: string(uuid.NewUUID()),
+			NodeID:         NodeID,
+			AlazVersion:    tag,
+		},
+		Traces: batch,
+	}
+}
+
 func (b *BackendDS) sendToBackend(method string, payload interface{}, endpoint string) {
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -422,6 +441,43 @@ func (b *BackendDS) sendToBackend(method string, payload interface{}, endpoint s
 	if err != nil {
 		log.Logger.Error().Msgf("backend persist error at ep %s : %v", endpoint, err)
 	}
+}
+
+func (b *BackendDS) sendTraceEventsInBatch() {
+	t := time.NewTicker(1 * time.Second)
+	defer t.Stop()
+
+	send := func() {
+		batch := make([]*TraceInfo, 0, b.batchSize)
+		loop := true
+
+		for i := 0; (i < int(b.batchSize)) && loop; i++ {
+			select {
+			case trace := <-b.traceEventChan:
+				batch = append(batch, trace)
+			case <-time.After(200 * time.Millisecond):
+				loop = false
+			}
+		}
+
+		if len(batch) == 0 {
+			return
+		}
+
+		tracePayload := convertTraceEventsToPayload(batch)
+		b.sendToBackend(http.MethodPost, tracePayload, traceEventEndpoint)
+	}
+
+	for {
+		select {
+		case <-b.ctx.Done():
+			log.Logger.Info().Msg("stopping sending trace events to backend")
+			return
+		case <-t.C:
+			send()
+		}
+	}
+
 }
 
 func (b *BackendDS) sendReqsInBatch() {
@@ -543,9 +599,28 @@ func (b *BackendDS) PersistRequest(request *Request) error {
 	reqInfo[13] = request.Method
 	reqInfo[14] = request.Path
 	reqInfo[15] = request.Tls
+	reqInfo[16] = request.Seq
+	reqInfo[17] = request.Tid
 
 	b.reqChanBuffer <- reqInfo
 
+	return nil
+}
+
+func (b *BackendDS) PersistTraceEvent(trace *l7_req.TraceEvent) error {
+	t := TraceInfo{}
+	t[0] = trace.Tx
+	t[1] = trace.Seq
+	t[2] = trace.Tid
+
+	ingress := false      // EGRESS
+	if trace.Type_ == 0 { // INGRESS
+		ingress = true
+	}
+
+	t[3] = ingress
+
+	b.traceEventChan <- &t
 	return nil
 }
 

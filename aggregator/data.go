@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -126,8 +127,20 @@ var usePgDs bool = false
 var useBackendDs bool = true // default to true
 var reverseDnsCache *cache.Cache
 
+var re *regexp.Regexp
+
 func init() {
 	reverseDnsCache = cache.New(defaultExpiration, purgeTime)
+
+	keywords := []string{"SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "FROM", "WHERE", "JOIN", "INNER", "OUTER", "LEFT", "RIGHT", "GROUP", "BY", "ORDER", "HAVING", "UNION", "ALL"}
+
+	// Case-insensitive matching
+	re = regexp.MustCompile(strings.Join(keywords, "|"))
+}
+
+// Check if a string contains SQL keywords
+func containsSQLKeywords(input string) bool {
+	return re.MatchString(strings.ToUpper(input))
 }
 
 func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, ec *ebpf.EbpfCollector, ds datastore.DataStore) *Aggregator {
@@ -264,6 +277,8 @@ func (a *Aggregator) processEbpf(ctx context.Context) {
 					PayloadReadComplete: d.PayloadReadComplete,
 					Failed:              d.Failed,
 					WriteTimeNs:         d.WriteTimeNs,
+					Tid:                 d.Tid,
+					Seq:                 d.Seq,
 				}
 				go a.processL7(ctx, l7Event)
 			case proc.PROC_EVENT:
@@ -274,6 +289,9 @@ func (a *Aggregator) processEbpf(ctx context.Context) {
 					go a.processExit(d)
 					go a.stopHttp2Worker(d.Pid)
 				}
+			case l7_req.TRACE_EVENT:
+				d := data.(*l7_req.TraceEvent)
+				a.ds.PersistTraceEvent(d)
 			}
 
 		}
@@ -822,13 +840,21 @@ func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
 		StatusCode: d.Status,
 		FailReason: "",
 		Method:     d.Method,
+		Tid:        d.Tid,
+		Seq:        d.Seq,
 	}
 
 	if d.Protocol == l7_req.L7_PROTOCOL_POSTGRES && d.Method == l7_req.SIMPLE_QUERY {
 		// parse sql command from payload
 		// path = sql command
 		// method = sql message type
-		reqDto.Path = parseSqlCommand(d.Payload[0:d.PayloadSize])
+		var err error
+		reqDto.Path, err = parseSqlCommand(d.Payload[0:d.PayloadSize])
+		if err != nil {
+			log.Logger.Error().AnErr("err", err)
+			return
+		}
+
 	}
 	var reqHostHeader string
 	// parse http payload, extract path, query params, headers
@@ -973,7 +999,8 @@ func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) *
 	return skInfo
 
 }
-func parseSqlCommand(r []uint8) string {
+
+func parseSqlCommand(r []uint8) (string, error) {
 	// Q, 4 bytes of length, sql command
 
 	// skip Q, (simple query)
@@ -985,7 +1012,14 @@ func parseSqlCommand(r []uint8) string {
 	// get sql command
 	sqlStatement := string(r)
 
-	return sqlStatement
+	// garbage data can come for postgres, we need to filter out
+	// search statement for sql keywords like
+	if containsSQLKeywords(sqlStatement) {
+		return sqlStatement, nil
+	} else {
+		return "", fmt.Errorf("no sql command found")
+	}
+
 }
 
 func clearSocketLines(ctx context.Context, pidToSocketMap map[uint32]*SocketMap) {

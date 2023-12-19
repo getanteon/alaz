@@ -27,6 +27,9 @@
 #define MAX_PAYLOAD_SIZE 1024
 #define PAYLOAD_PREFIX_SIZE 16
 
+#define INGRESS 0
+#define EGRESS 1
+
 // for rabbitmq methods
 #define METHOD_PUBLISH           1
 #define METHOD_DELIVER           2
@@ -49,6 +52,9 @@ struct l7_event {
     __u8 payload_read_complete;
     __u8 failed;
     __u8 is_tls;
+    
+    __u32 seq; // tcp sequence number
+    __u32 tid;
 };
 
 struct l7_request {
@@ -59,6 +65,8 @@ struct l7_request {
     __u32 payload_size;
     __u8 payload_read_complete;
     __u8 request_type;
+    __u32 seq;
+    __u32 tid;
 };
 
 struct socket_key {
@@ -70,6 +78,14 @@ struct socket_key {
 struct go_req_key {
     __u32 pid;
     __u64 fd;
+};
+
+struct call_event {
+    __u32 pid;
+    __u32 tid;
+    __u64 tx; // timestamp
+    __u8 type; // INGRESS or EGRESS
+    __u32 seq; // tcp sequence number
 };
 
 struct go_read_key {
@@ -84,6 +100,22 @@ struct read_enter_args {
     char* buf;
     __u64 size;
     __u64 time;
+};
+
+struct go_read_args {
+    __u64 fd;
+    char* buf;
+    __u64 size;
+    __u64 read_start_ns;  
+};
+
+// when given with __type macro below
+// type *btf.Pointer not supported
+struct read_args {
+    __u64 fd;
+    char* buf;
+    __u64 size;
+    __u64 read_start_ns;  
 };
 
 // Instead of allocating on bpf stack, we allocate on a per-CPU array map
@@ -122,12 +154,6 @@ struct {
     __type(value, struct l7_request);
 } go_active_l7_requests SEC(".maps");
 
-struct go_read_args {
-    __u64 fd;
-    char* buf;
-    __u64 size;
-    __u64 read_start_ns;  
-};
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
@@ -143,14 +169,6 @@ struct {
     __uint(value_size, sizeof(int));
 } l7_events SEC(".maps");
 
-// when given with __type macro below
-// type *btf.Pointer not supported
-struct read_args {
-    __u64 fd;
-    char* buf;
-    __u64 size;
-    __u64 read_start_ns;  
-};
 
 // used for cases in which we don't have a read event
 // we are only tracking write events.
@@ -178,12 +196,220 @@ struct {
     __uint(max_entries, 10240);
 } active_writes SEC(".maps");
 
+struct {
+    __uint(type, BPF_MAP_TYPE_RINGBUF);
+    __uint(max_entries, 256 * 1024);
+} ingress_egress_calls SEC(".maps");
+
+struct file {
+    void *private_data;
+};
+
+struct fdtable {
+	unsigned int max_fds;
+	struct file **fd;    /* current fd array, struct file *  */
+};
+
+typedef struct {
+	int counter;
+} atomic_t;
+
+struct files_struct {
+    atomic_t count; // atomic_t count;
+    struct fdtable *fdt; 
+};
+
+struct task_struct {
+    __u32 pid; // equals to POSIX tid
+    __u32 tgid; // equals to POSIX pid
+    struct files_struct *files;
+};
+
+struct socket {
+	short int type;
+	long unsigned int flags;
+	struct file *file;
+	struct sock *sk;
+	const struct proto_ops *ops;
+};
+struct tcp_sock {
+	__u32 write_seq;
+    __u32 copied_seq;
+};
+
+
+static __always_inline
+struct tcp_sock * get_tcp_sock(__u32 fd_num){
+    struct task_struct *task = (struct task_struct *)bpf_get_current_task();
+    __u32 pid = BPF_CORE_READ(task, pid);
+    __u32 tgid = BPF_CORE_READ(task, tgid);
+
+    char msgPid [] = "pid %d tgid %d\n";
+    bpf_trace_printk(msgPid, sizeof(msgPid), pid, tgid);
+
+    atomic_t count = BPF_CORE_READ(task, files, count);
+    
+    char msgFiles [] = "files count %d\n";
+    bpf_trace_printk(msgFiles, sizeof(msgFiles), count.counter);
+
+    struct file **fdarray = NULL;
+    fdarray = BPF_CORE_READ(task, files, fdt, fd);
+
+    if(fdarray == NULL){
+        char msg[] = "fdarray is null";
+        bpf_trace_printk(msg, sizeof(msg));
+        return 0;
+    }else{
+        struct file *file = NULL;
+        long r = bpf_probe_read_kernel(&file, sizeof(file), fdarray + fd_num);
+        if(r <0){
+            char msg[] = "could not read file %d/n";
+            bpf_trace_printk(msg, sizeof(msg), r);
+            return 0;
+        }
+
+        char msg[] = "file %d\n";
+        bpf_trace_printk(msg, sizeof(msg), file);
+
+        void * private_data = NULL;
+        private_data = BPF_CORE_READ(file, private_data);
+       
+        if(private_data == NULL){
+            char msg2[] = "private data is null";
+            bpf_trace_printk(msg2, sizeof(msg2));
+        }else{
+            char msg2[] = "private data is NOT null";
+            bpf_trace_printk(msg2, sizeof(msg2));
+
+            struct socket *socket = private_data;
+            short int socket_type = BPF_CORE_READ(socket,type);
+
+            void * __file = BPF_CORE_READ(socket,file);
+
+            char msg3[] = "socket_type %d\n";
+            bpf_trace_printk(msg3, sizeof(msg3), socket_type);
+
+            if(socket_type == SOCK_STREAM && file == __file ){
+                char msg4[] = "socket_type is stream\n";
+                bpf_trace_printk(msg4, sizeof(msg4));
+
+                struct sock *sk = NULL;
+                sk = BPF_CORE_READ(socket,sk);
+                
+
+                if(sk != NULL){
+                    struct tcp_sock * __tcp_sock = (struct tcp_sock *)sk;
+                    
+                    return __tcp_sock;
+                }
+            }
+        }
+    }
+
+    return  NULL;
+}
+
+
+static __always_inline
+__u32 get_tcp_write_seq_from_fd(__u32 fd_num){
+  struct tcp_sock * __tcp_sock =  (struct tcp_sock *) get_tcp_sock(fd_num);
+  if(__tcp_sock == NULL){
+    char msg[] = "tcp_sock is null";
+    bpf_trace_printk(msg, sizeof(msg));
+    return 0;
+  }
+
+  __u32 tcp_seq = 0;
+  tcp_seq = BPF_CORE_READ(__tcp_sock,write_seq);
+
+  char msg5[] = "write_seq %u\n";
+  bpf_trace_printk(msg5, sizeof(msg5), tcp_seq);
+
+  return tcp_seq;
+}
+
+
+static __always_inline
+__u32 get_tcp_copied_seq_from_fd(__u32 fd_num){
+    struct tcp_sock * __tcp_sock =  (struct tcp_sock *) get_tcp_sock(fd_num);
+    if(__tcp_sock == NULL){
+        char msg[] = "tcp_sock is null";
+        bpf_trace_printk(msg, sizeof(msg));
+        return 0;
+    }
+
+   __u32 tcp_seq = 0;
+    tcp_seq = BPF_CORE_READ(__tcp_sock,copied_seq);
+
+    char msg5[] = "copied_seq %u\n";
+    bpf_trace_printk(msg5, sizeof(msg5), tcp_seq);
+    
+    return tcp_seq;    
+}
+
+static __always_inline
+__u64 process_for_dist_trace_write(__u64 fd){
+  struct call_event *e;
+  __u32 pid, tid;
+  __u64 id = 0;
+
+  /* get PID and TID of exiting thread/process */
+  id = bpf_get_current_pid_tgid();
+  pid = id >> 32;
+  tid = (__u32)id;
+
+  // TODO
+  __u32 seq = get_tcp_write_seq_from_fd(fd);
+
+  /* reserve sample from BPF ringbuf */
+  e = bpf_ringbuf_reserve(&ingress_egress_calls, sizeof(*e), 0);
+  if (!e)
+    return 0;
+  e->pid = pid;
+  e->tid = tid;
+  e->seq = seq;
+  e->tx = bpf_ktime_get_ns();
+  e->type = EGRESS;
+
+  bpf_ringbuf_submit(e, 0);
+
+  return seq;
+}
+
+static __always_inline
+void process_for_dist_trace_read(__u32 fd){
+    struct call_event *e;
+    __u32 pid, tid;
+    __u64 id = 0;
+
+    /* get PID and TID of exiting thread/process */
+    id = bpf_get_current_pid_tgid();
+    pid = id >> 32;
+    tid = (__u32)id;
+
+    __u32 seq = get_tcp_copied_seq_from_fd(fd);
+
+    /* reserve sample from BPF ringbuf */
+    e = bpf_ringbuf_reserve(&ingress_egress_calls, sizeof(*e), 0);
+    if (!e)
+        return;
+    e->pid = pid;
+    e->tid = tid;
+    e->seq = seq;
+    e->tx = bpf_ktime_get_ns();
+    e->type = INGRESS;
+
+    bpf_ringbuf_submit(e, 0);
+}
+
 // Processing enter of write and sendto syscalls
 static __always_inline
 int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, char* buf, __u64 count){
     __u64 timestamp = bpf_ktime_get_ns();
     unsigned char func_name[] = "process_enter_of_syscalls_write_sendto";
     __u64 id = bpf_get_current_pid_tgid();
+    __u32 tid = id & 0xFFFFFFFF;
+    __u32 seq = process_for_dist_trace_write(fd);
     
     int zero = 0;
     struct l7_request *req = bpf_map_lookup_elem(&l7_request_heap, &zero);
@@ -294,6 +520,10 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
         req->payload_read_complete = 1;
     }
 
+    // for distributed tracing
+    req->seq = seq;
+    req->tid = tid;
+
     long res = bpf_map_update_elem(&active_l7_requests, &k, req, BPF_ANY);
     if(res < 0)
     {
@@ -323,6 +553,9 @@ int process_enter_of_syscalls_read_recvfrom(void *ctx, struct read_enter_args * 
     // {
     //     return 0;
     // }
+
+    // for distributed tracing
+    process_for_dist_trace_read(params->fd);
 
     
     struct read_args args = {};
@@ -400,6 +633,10 @@ int process_exit_of_syscalls_write_sendto(void* ctx, __s64 ret){
 
         bpf_map_delete_elem(&active_l7_requests, &k);
         bpf_map_delete_elem(&active_writes, &id);
+
+        // for distributed tracing
+        e->seq = active_req->seq;
+        e->tid = active_req->tid;
 
         bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
     }else{
@@ -479,7 +716,11 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
         e->status = 0;
         e->fd = k.fd;
         e->pid = k.pid;
-        
+
+        // for distributed tracing
+        e->seq = 0; // default value , TODO : ?
+        e->tid = bpf_get_current_pid_tgid() & 0xFFFFFFFF;
+
         // reset payload
         for (int i = 0; i < MAX_PAYLOAD_SIZE; i++) {
             e->payload[i] = 0;
@@ -544,6 +785,10 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
     bpf_probe_read(e->payload, MAX_PAYLOAD_SIZE, active_req->payload);
 
     e->failed = 0; // success
+
+    // for distributed tracing
+    e->seq = active_req->seq;
+    e->tid = active_req->tid;
 
     e->status = 0;
     if(read_info->buf && ret > PAYLOAD_PREFIX_SIZE){
@@ -804,183 +1049,8 @@ void ssl_uprobe_read_enter_v3(struct pt_regs *ctx, __u64 id,  __u32 pid, void* s
     process_enter_of_syscalls_read_recvfrom(ctx, &params);            
 }
 
-struct file {
-    void *private_data;
-};
-
-struct fdtable {
-	unsigned int max_fds;
-	struct file **fd;    /* current fd array, struct file *  */
-};
-
-typedef struct {
-	int counter;
-} atomic_t;
-
-struct files_struct {
-    atomic_t count; // atomic_t count;
-    struct fdtable *fdt; 
-};
-
-struct task_struct {
-    __u32 pid; // equals to POSIX tid
-    __u32 tgid; // equals to POSIX pid
-    struct files_struct *files;
-};
-
-struct socket {
-	short int type;
-	long unsigned int flags;
-	struct file *file;
-	struct sock *sk;
-	const struct proto_ops *ops;
-};
-struct tcp_sock {
-	__u32 write_seq;
-    __u32 copied_seq;
-};
-
-static __always_inline
-struct tcp_sock * get_tcp_sock(__u32 fd_num){
-    struct task_struct *task = (struct task_struct *)bpf_get_current_task();
-    __u32 pid = BPF_CORE_READ(task, pid);
-    __u32 tgid = BPF_CORE_READ(task, tgid);
-
-    char msgPid [] = "pid %d tgid %d\n";
-    bpf_trace_printk(msgPid, sizeof(msgPid), pid, tgid);
-
-    atomic_t count = BPF_CORE_READ(task, files, count);
-    
-    char msgFiles [] = "files count %d\n";
-    bpf_trace_printk(msgFiles, sizeof(msgFiles), count.counter);
-
-    struct file **fdarray = NULL;
-    fdarray = BPF_CORE_READ(task, files, fdt, fd);
-
-    if(fdarray == NULL){
-        char msg[] = "fdarray is null";
-        bpf_trace_printk(msg, sizeof(msg));
-        return 0;
-    }else{
-        struct file *file = NULL;
-        long r = bpf_probe_read_kernel(&file, sizeof(file), fdarray + fd_num);
-        if(r <0){
-            char msg[] = "could not read file %d/n";
-            bpf_trace_printk(msg, sizeof(msg), r);
-            return 0;
-        }
-
-        char msg[] = "file %d\n";
-        bpf_trace_printk(msg, sizeof(msg), file);
-
-        void * private_data = NULL;
-        private_data = BPF_CORE_READ(file, private_data);
-       
-        if(private_data == NULL){
-            char msg2[] = "private data is null";
-            bpf_trace_printk(msg2, sizeof(msg2));
-        }else{
-            char msg2[] = "private data is NOT null";
-            bpf_trace_printk(msg2, sizeof(msg2));
-
-            struct socket *socket = private_data;
-            short int socket_type = BPF_CORE_READ(socket,type);
-
-            void * __file = BPF_CORE_READ(socket,file);
-
-            char msg3[] = "socket_type %d\n";
-            bpf_trace_printk(msg3, sizeof(msg3), socket_type);
-
-            if(socket_type == SOCK_STREAM && file == __file ){
-                char msg4[] = "socket_type is stream\n";
-                bpf_trace_printk(msg4, sizeof(msg4));
-
-                struct sock *sk = NULL;
-                sk = BPF_CORE_READ(socket,sk);
-                
-
-                if(sk != NULL){
-                    struct tcp_sock * __tcp_sock = (struct tcp_sock *)sk;
-                    
-                    return __tcp_sock;
-                }
-            }
-        }
-    }
-
-    return  NULL;
-}
-
-
-static __always_inline
-__u32 get_tcp_write_seq_from_fd(__u32 fd_num){
-    struct tcp_sock * __tcp_sock =  (struct tcp_sock *) get_tcp_sock(fd_num);
-    if(__tcp_sock == NULL){
-        char msg[] = "tcp_sock is null";
-        bpf_trace_printk(msg, sizeof(msg));
-        return 0;
-    }
-
-   __u32 tcp_seq = 0;
-    tcp_seq = BPF_CORE_READ(__tcp_sock,write_seq);
-
-    char msg5[] = "write_seq %u\n";
-    bpf_trace_printk(msg5, sizeof(msg5), tcp_seq);
-    
-    return tcp_seq;    
-}
-
-static __always_inline
-__u32 get_tcp_ack_seq_from_fd(__u32 fd_num){
-    struct tcp_sock * __tcp_sock =  (struct tcp_sock *) get_tcp_sock(fd_num);
-    if(__tcp_sock == NULL){
-        char msg[] = "tcp_sock is null";
-        bpf_trace_printk(msg, sizeof(msg));
-        return 0;
-    }
-
-   __u32 tcp_seq = 0;
-    tcp_seq = BPF_CORE_READ(__tcp_sock,copied_seq);
-
-    char msg5[] = "ack_seq %u\n";
-    bpf_trace_printk(msg5, sizeof(msg5), tcp_seq);
-    
-    return tcp_seq;    
-}
-
-
-
-static __always_inline
-void process_for_dist_trace_write(void* ctx, __u64 fd, char* buf){
-
-
-	// TODO
-    get_tcp_write_seq_from_fd(fd);
-
-}
-
-static __always_inline
-void process_for_dist_trace_read(void* ctx, __u64 fd, char* buf){
- 
-	// TODO
-    get_tcp_ack_seq_from_fd(fd);
-
-}
-
 SEC("tracepoint/syscalls/sys_enter_write")
 int sys_enter_write(struct trace_event_raw_sys_enter_write* ctx) {
-    __u64 id = bpf_get_current_pid_tgid();
-    __u32 pid = id >> 32;
-    __u32 tgid = id & 0xFFFFFFFF;
-
-
-    if (pid == 3459545){ // localhost-client
-        char msgPid [] = "Pid %d Tgid %d\n";
-        bpf_trace_printk(msgPid, sizeof(msgPid), pid, tgid);
-
-        process_for_dist_trace_write(ctx,ctx->fd,ctx->buf);
-    }
-   
    return process_enter_of_syscalls_write_sendto(ctx, ctx->fd, 0, ctx->buf, ctx->count);
 }
 
@@ -1010,17 +1080,6 @@ int sys_enter_read(struct trace_event_raw_sys_enter_read* ctx) {
         .size = ctx->count,
         .time = time
     };
-
-    __u32 pid = id >> 32;
-    __u32 tgid = id & 0xFFFFFFFF;
-
-
-    if (pid == 3459795){ // localhost-server
-        char msgPid [] = "Pid %d Tgid %d\n";
-        bpf_trace_printk(msgPid, sizeof(msgPid), pid, tgid);
-
-        process_for_dist_trace_read(ctx,ctx->fd,ctx->buf);
-    }
 
     return process_enter_of_syscalls_read_recvfrom(ctx, &params);
 }
@@ -1142,6 +1201,11 @@ int process_enter_of_go_conn_write(void *ctx, __u32 pid, __u32 fd, char *buf_ptr
     req->payload_read_complete = 0;
     req->write_time_ns = timestamp;
     req->request_type = 0;
+    req->seq = process_for_dist_trace_write(fd);
+   
+    __u32 tid = bpf_get_current_pid_tgid() & 0xFFFFFFFF;
+    req->tid = tid;
+
 
     if(buf_ptr){
         // try to parse only http1.1 for gotls reqs for now.
@@ -1250,6 +1314,7 @@ int BPF_UPROBE(go_tls_conn_read_enter) {
     __u32 fd;
     struct go_interface conn;
 
+
     // X0(arm64) register contains the pointer to the first function argument, c *Conn
     if (bpf_probe_read_user(&conn, sizeof(conn), (void*)GO_PARAM1(ctx))) {
         return 1;
@@ -1261,6 +1326,9 @@ int BPF_UPROBE(go_tls_conn_read_enter) {
     if (bpf_probe_read_user(&fd, sizeof(fd), fd_ptr + 0x10)) {
         return 1;
     }
+
+    // for distributed tracing
+    process_for_dist_trace_read(fd);
 
     // X1(arm64) register contains the byte ptr, pointing to first byte of the slice
     char *buf_ptr = (char*)GO_PARAM2(ctx);
