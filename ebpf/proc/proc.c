@@ -7,20 +7,30 @@
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>
 
+char __license[] SEC("license") = "Dual MIT/GPL";
+
 struct p_event{
     __u32 pid;
     __u8 type;
 };
 
 struct {
-    __uint(type, BPF_MAP_TYPE_RINGBUF);
-    __uint(max_entries, 256 * 1024);
-} rb SEC(".maps");
+     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+     __type(key, __u32);
+     __type(value, struct p_event);
+     __uint(max_entries, 1);
+} proc_event_heap SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
+    __uint(key_size, sizeof(int));
+    __uint(value_size, sizeof(int));
+} proc_events SEC(".maps");
+
 
 SEC("tracepoint/sched/sched_process_exec")
 int sched_process_exec(struct trace_event_raw_sched_process_exec* ctx)
 {
-    struct p_event *e;
     __u32 pid, tid;
     __u64 id = 0;
 
@@ -33,14 +43,16 @@ int sched_process_exec(struct trace_event_raw_sched_process_exec* ctx)
     if (pid != tid)
         return 0;
 
-    /* reserve sample from BPF ringbuf */
-    e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
-    if (!e)
+    int zero = 0;
+    struct p_event *e = bpf_map_lookup_elem(&proc_event_heap, &zero);
+    if (!e) {
         return 0;
+    }
+
     e->pid = pid;
     e->type = PROC_EXEC_EVENT;
     
-    bpf_ringbuf_submit(e, 0);
+    bpf_perf_event_output(ctx, &proc_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
     return 0;
 }
 
@@ -48,7 +60,6 @@ int sched_process_exec(struct trace_event_raw_sched_process_exec* ctx)
 SEC("tracepoint/sched/sched_process_exit")
 int sched_process_exit(struct trace_event_raw_sched_process_exit* ctx)
 {
-    struct p_event *e;
     __u32 pid, tid;
     __u64 id = 0;
 
@@ -60,14 +71,16 @@ int sched_process_exit(struct trace_event_raw_sched_process_exit* ctx)
     /* ignore thread exits */
     if (pid != tid)
         return 0;
-
-    /* reserve sample from BPF ringbuf */
-    e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
-    if (!e)
+    
+    int zero = 0;
+    struct p_event *e = bpf_map_lookup_elem(&proc_event_heap, &zero);
+    if (!e) {
         return 0;
+    }
+
     e->pid = pid;
     e->type = PROC_EXIT_EVENT;
     
-    bpf_ringbuf_submit(e, 0);
+    bpf_perf_event_output(ctx, &proc_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
     return 0;
 }
