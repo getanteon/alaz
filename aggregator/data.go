@@ -279,6 +279,7 @@ func (a *Aggregator) processEbpf(ctx context.Context) {
 					WriteTimeNs:         d.WriteTimeNs,
 					Tid:                 d.Tid,
 					Seq:                 d.Seq,
+					EventReadTime:       d.EventReadTime,
 				}
 				go a.processL7(ctx, l7Event)
 			case proc.PROC_EVENT:
@@ -474,7 +475,7 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 			return
 		}
 
-		req.StartTime = time.Now().UnixMilli()
+		req.StartTime = d.EventReadTime
 		req.Latency = d.WriteTimeNs - req.Latency
 		req.Completed = true
 		req.FromIP = skInfo.Saddr
@@ -830,7 +831,7 @@ func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
 	// TCP events and L7 events can be processed out of order
 
 	reqDto := datastore.Request{
-		StartTime:  time.Now().UnixMilli(),
+		StartTime:  d.EventReadTime,
 		Latency:    d.Duration,
 		FromIP:     skInfo.Saddr,
 		ToIP:       skInfo.Daddr,

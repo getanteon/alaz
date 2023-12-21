@@ -253,6 +253,7 @@ type L7Event struct {
 	WriteTimeNs         uint64 // start time of write syscall
 	Tid                 uint32
 	Seq                 uint32 // tcp seq num
+	EventReadTime       int64
 }
 
 const L7_EVENT = "l7_event"
@@ -559,6 +560,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 					WriteTimeNs:         l7Event.WriteTimeNs,
 					Tid:                 l7Event.Tid,
 					Seq:                 l7Event.Seq,
+					EventReadTime:       time.Now().UnixMilli(),
 				}
 			}()
 		}
