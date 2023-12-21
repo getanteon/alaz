@@ -10,7 +10,7 @@
 #include <stddef.h>
 #include "../headers/pt_regs.h"
 
-#include "log.h"
+#include "../headers/log.h"
 #include "http.c"
 #include "amqp.c"
 #include "postgres.c"
