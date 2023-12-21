@@ -2,13 +2,14 @@ package proc
 
 import (
 	"context"
+	"os"
 	"time"
 	"unsafe"
 
 	"github.com/ddosify/alaz/log"
 
 	"github.com/cilium/ebpf/link"
-	"github.com/cilium/ebpf/ringbuf"
+	"github.com/cilium/ebpf/perf"
 	"github.com/cilium/ebpf/rlimit"
 )
 
@@ -40,10 +41,10 @@ func (e ProcEventConversion) String() string {
 // $BPF_CLANG and $BPF_CFLAGS are set by the Makefile.
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc $BPF_CLANG -cflags $BPF_CFLAGS bpf proc.c -- -I../headers
 
-// for both ebpf and userspace
 type PEvent struct {
 	Pid   uint32
 	Type_ uint8
+	_     [3]byte
 }
 
 type ProcEvent struct {
@@ -97,7 +98,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		l1.Close()
 	}()
 
-	pEvents, err := ringbuf.NewReader(objs.Rb)
+	pEvents, err := perf.NewReader(objs.ProcEvents, 16*os.Getpagesize())
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("error creating ringbuf reader")
 	}
@@ -115,6 +116,11 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 				record, err := pEvents.Read()
 				if err != nil {
 					log.Logger.Warn().Err(err).Msg("error reading from pExitEvents")
+				}
+
+				if record.RawSample == nil || len(record.RawSample) == 0 {
+					log.Logger.Debug().Msgf("read sample l7-event nil or empty")
+					return
 				}
 
 				bpfEvent := (*PEvent)(unsafe.Pointer(&record.RawSample[0]))
