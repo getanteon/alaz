@@ -655,7 +655,7 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 					h2Parser.serverHpackDecoder.SetEmitFunc(respHeaderSet(fa.req))
 					h2Parser.serverHpackDecoder.Write(buf[offset:endOfFrame])
 
-					if fa.ClientHeadersFrameArrived && fa.ServerHeadersFrameArrived {
+					if fa.ClientHeadersFrameArrived && fa.ServerDataFrameArrived {
 						mu.Lock()
 						req := *fa.req
 						go persistReq(d, &req, fa.statusCode, fa.grpcStatus)
