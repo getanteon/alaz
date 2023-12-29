@@ -335,7 +335,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	}()
 
 	// initialize perf event readers
-	l7Events, err := perf.NewReader(L7BpfProgsAndMaps.L7Events, 1000*os.Getpagesize())
+	l7Events, err := perf.NewReader(L7BpfProgsAndMaps.L7Events, 512*os.Getpagesize())
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
 	}
@@ -366,11 +366,11 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 			}
 
 			if record.LostSamples != 0 {
-				log.Logger.Debug().Msgf("lost #%d samples due to ring buffer's full", record.LostSamples)
+				log.Logger.Warn().Msgf("lost #%d samples due to ring buffer's full", record.LostSamples)
 			}
 
 			if record.RawSample == nil || len(record.RawSample) == 0 {
-				log.Logger.Debug().Msgf("read empty record from perf array")
+				log.Logger.Warn().Msgf("read empty record from perf array")
 				return
 			}
 
@@ -471,12 +471,12 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 			}
 
 			if record.LostSamples != 0 {
-				log.Logger.Debug().Msgf("lost samples l7-event %d", record.LostSamples)
+				log.Logger.Warn().Msgf("lost samples l7-event %d", record.LostSamples)
 			}
 
 			// TODO: investigate why this is happening
 			if record.RawSample == nil || len(record.RawSample) == 0 {
-				log.Logger.Debug().Msgf("read sample l7-event nil or empty")
+				log.Logger.Warn().Msgf("read sample l7-event nil or empty")
 				return
 			}
 
@@ -494,6 +494,13 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 					method = PostgresMethodConversion(l7Event.Method).String()
 				case L7_PROTOCOL_HTTP2:
 					method = Http2MethodConversion(l7Event.Method).String()
+					// if l7Event.Pid == 17453 && method == SERVER_FRAME {
+					// 	log.Logger.Warn().
+					// 		Uint32("streamId", l7Event.Status).
+					// 		Msg("emojiweb-server-bpf-read")
+
+					// 	l7Event.Status = 0
+					// }
 				default:
 					method = "Unknown"
 				}
