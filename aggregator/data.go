@@ -431,7 +431,7 @@ type FrameArrival struct {
 }
 
 // called once per pid
-func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
+func (a *Aggregator) processHttp2Frames(pid uint32, ch chan *l7_req.L7Event) {
 	mu := sync.RWMutex{}
 
 	createFrameKey := func(fd uint64, streamId uint32) string {
@@ -439,6 +439,26 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 	}
 	// fd-streamId -> frame
 	frames := make(map[string]*FrameArrival)
+
+	t := time.NewTicker(1 * time.Minute)
+	defer t.Stop()
+
+	go func() {
+		for {
+			select {
+			case <-t.C:
+				mu.Lock()
+				for key, f := range frames {
+					if f.ClientHeadersFrameArrived && !f.ServerHeadersFrameArrived {
+						delete(frames, key)
+					} else if !f.ClientHeadersFrameArrived && f.ServerHeadersFrameArrived {
+						delete(frames, key)
+					}
+				}
+				mu.Unlock()
+			}
+		}
+	}()
 
 	persistReq := func(d *l7_req.L7Event, req *datastore.Request, statusCode uint32, grpcStatus uint32) {
 		skInfo := a.findRelatedSocket(a.ctx, d)
@@ -566,7 +586,6 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 				}
 
 				fa := frames[key]
-				mu.Unlock()
 				fa.ClientHeadersFrameArrived = true
 				fa.req.Latency = d.WriteTimeNs // set latency to write time here, will be updated later
 
@@ -600,10 +619,15 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 				// if ReadFrame were used, f.HeaderBlockFragment()
 				h2Parser.clientHpackDecoder.Write(buf[offset:endOfFrame])
 
-				if fh.Flags.Has(http2.FlagHeadersEndHeaders) {
-					break
-				}
 				offset = endOfFrame
+
+				if fa.ServerHeadersFrameArrived {
+					req := *fa.req
+					go persistReq(d, &req, fa.statusCode, fa.grpcStatus)
+					delete(frames, key)
+				}
+				mu.Unlock()
+				break
 			}
 		} else if d.Method == l7_req.SERVER_FRAME {
 			for {
@@ -621,13 +645,14 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 					break
 				}
 
-				if fh.Type != http2.FrameHeaders && fh.Type != http2.FrameData {
+				streamId := fh.StreamID
+				key := createFrameKey(fd, streamId)
+
+				if fh.Type != http2.FrameHeaders {
 					offset = endOfFrame
 					continue
 				}
 
-				streamId := fh.StreamID
-				key := createFrameKey(fd, streamId)
 				if fh.Type == http2.FrameHeaders {
 					mu.Lock()
 					if _, ok := frames[key]; !ok {
@@ -637,7 +662,6 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 						}
 					}
 					fa := frames[key]
-					mu.Unlock()
 					fa.ServerHeadersFrameArrived = true
 					// Process server headers frame
 					respHeaderSet := func(req *datastore.Request) func(hf hpack.HeaderField) {
@@ -655,36 +679,13 @@ func (a *Aggregator) processHttp2Frames(ch chan *l7_req.L7Event) {
 					h2Parser.serverHpackDecoder.SetEmitFunc(respHeaderSet(fa.req))
 					h2Parser.serverHpackDecoder.Write(buf[offset:endOfFrame])
 
-					if fa.ClientHeadersFrameArrived && fa.ServerDataFrameArrived {
-						mu.Lock()
+					if fa.ClientHeadersFrameArrived {
 						req := *fa.req
 						go persistReq(d, &req, fa.statusCode, fa.grpcStatus)
 						delete(frames, key)
-						mu.Unlock()
 					}
-
-				} else if fh.Type == http2.FrameData {
-					mu.Lock()
-					if _, ok := frames[key]; !ok {
-						frames[key] = &FrameArrival{
-							ServerDataFrameArrived: true,
-							req:                    &datastore.Request{},
-						}
-					}
-					fa := frames[key]
 					mu.Unlock()
-					fa.ServerDataFrameArrived = true
-					fa.event = d
-
-					if fa.ClientHeadersFrameArrived && fa.ServerHeadersFrameArrived {
-						mu.Lock()
-						req := *fa.req // copy
-						go persistReq(d, &req, fa.statusCode, fa.grpcStatus)
-						delete(frames, key)
-						mu.Unlock()
-					}
-
-					break // only process the first data frame for now
+					break
 				}
 			}
 		} else {
@@ -796,7 +797,7 @@ func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
 			a.h2Ch[d.Pid] = h2ChPid
 			ch = h2ChPid
 			a.h2ChMu.Unlock()
-			go a.processHttp2Frames(ch) // worker per pid, will be called once
+			go a.processHttp2Frames(d.Pid, ch) // worker per pid, will be called once
 		}
 
 		ch <- &d
