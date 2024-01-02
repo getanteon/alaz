@@ -46,10 +46,10 @@ type EbpfCollector struct {
 	sslReadEnterUprobes map[uint32]link.Link
 	sslReadURetprobes   map[uint32]link.Link
 
-	goTlsWriteUprobes map[uint32]link.Link
-	goTlsReadUprobes  map[uint32]link.Link
-
+	goTlsWriteUprobes   map[uint32]link.Link
+	goTlsReadUprobes    map[uint32]link.Link
 	goTlsReadUretprobes map[uint32][]link.Link // uprobes for ret instructions
+	probesMu            sync.Mutex
 
 	tlsPidMap map[uint32]struct{}
 	mu        sync.Mutex
@@ -117,6 +117,9 @@ func (e *EbpfCollector) Deploy() {
 func (e *EbpfCollector) close() {
 	log.Logger.Info().Msg("closing ebpf links")
 	close(e.ebpfEvents)
+
+	e.probesMu.Lock()
+	defer e.probesMu.Unlock()
 
 	for pid := range e.sslWriteUprobes {
 		e.sslWriteUprobes[pid].Close()
@@ -204,6 +207,7 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 	defer func() {
 		if len(errors) > 0 {
 			// close any uprobes that were attached
+			e.probesMu.Lock()
 			wr := e.goTlsWriteUprobes[pid]
 			if wr != nil {
 				wr.Close()
@@ -217,6 +221,7 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 			for _, l := range e.goTlsReadUretprobes[pid] {
 				l.Close()
 			}
+			e.probesMu.Unlock()
 		}
 	}()
 
@@ -316,7 +321,9 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 				errors = append(errors, err)
 				return errors
 			}
+			e.probesMu.Lock()
 			e.goTlsWriteUprobes[pid] = l
+			e.probesMu.Unlock()
 		case goTlsReadSymbol:
 			l, err := ex.Uprobe(s.Name, l7_req.L7BpfProgsAndMaps.GoTlsConnReadEnter, &link.UprobeOptions{Address: address})
 			if err != nil {
@@ -324,7 +331,9 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 				errors = append(errors, err)
 				return errors
 			}
+			e.probesMu.Lock()
 			e.goTlsReadUprobes[pid] = l
+			e.probesMu.Unlock()
 
 			// when uretprobe is attached to a function, kernel overrides the return address on stack
 			// with the address of the uretprobe
@@ -366,7 +375,9 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 			}
 
 			returnOffsets := getReturnOffsets(ef.Machine, sBytes) // find all ret instructions in the function according to the architecture
+			e.probesMu.Lock()
 			e.goTlsReadUretprobes[pid] = make([]link.Link, 0)
+			e.probesMu.Unlock()
 			for _, offset := range returnOffsets {
 				l, err := ex.Uprobe(s.Name, l7_req.L7BpfProgsAndMaps.GoTlsConnReadExit, &link.UprobeOptions{Address: address, Offset: uint64(offset)})
 				if err != nil {
@@ -374,7 +385,9 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 					errors = append(errors, err)
 					return errors
 				}
+				e.probesMu.Lock()
 				e.goTlsReadUretprobes[pid] = append(e.goTlsReadUretprobes[pid], l)
+				e.probesMu.Unlock()
 				log.Logger.Debug().Str("reason", "gotls").Uint32("pid", pid).Msgf("attached uretprobe to %s at offset %d", s.Name, offset)
 			}
 		}
@@ -514,9 +527,11 @@ func (e *EbpfCollector) AttachSSlUprobes(pid uint32, executablePath string, vers
 		return fmt.Errorf("unsupported ssl version: %s", version)
 	}
 
+	e.probesMu.Lock()
 	e.sslWriteUprobes[pid] = sslWriteUprobe
 	e.sslReadEnterUprobes[pid] = sslReadEnterUprobe
 	e.sslReadURetprobes[pid] = sslReadURetprobe
+	e.probesMu.Unlock()
 
 	log.Logger.Debug().Str("path", executablePath).Uint32("pid", pid).Msgf("successfully attached ssl uprobes")
 	return nil

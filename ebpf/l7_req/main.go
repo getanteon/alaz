@@ -494,13 +494,6 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 					method = PostgresMethodConversion(l7Event.Method).String()
 				case L7_PROTOCOL_HTTP2:
 					method = Http2MethodConversion(l7Event.Method).String()
-					// if l7Event.Pid == 17453 && method == SERVER_FRAME {
-					// 	log.Logger.Warn().
-					// 		Uint32("streamId", l7Event.Status).
-					// 		Msg("emojiweb-server-bpf-read")
-
-					// 	l7Event.Status = 0
-					// }
 				default:
 					method = "Unknown"
 				}
