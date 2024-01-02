@@ -463,19 +463,16 @@ func (a *Aggregator) processHttp2Frames(pid uint32, ch chan *l7_req.L7Event) {
 	defer t.Stop()
 
 	go func() {
-		for {
-			select {
-			case <-t.C:
-				mu.Lock()
-				for key, f := range frames {
-					if f.ClientHeadersFrameArrived && !f.ServerHeadersFrameArrived {
-						delete(frames, key)
-					} else if !f.ClientHeadersFrameArrived && f.ServerHeadersFrameArrived {
-						delete(frames, key)
-					}
+		for _ = range t.C {
+			mu.Lock()
+			for key, f := range frames {
+				if f.ClientHeadersFrameArrived && !f.ServerHeadersFrameArrived {
+					delete(frames, key)
+				} else if !f.ClientHeadersFrameArrived && f.ServerHeadersFrameArrived {
+					delete(frames, key)
 				}
-				mu.Unlock()
 			}
+			mu.Unlock()
 		}
 	}()
 
