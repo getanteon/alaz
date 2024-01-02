@@ -298,6 +298,19 @@ func (a *Aggregator) stopHttp2Worker(pid uint32) {
 	if ch, ok := a.h2Ch[pid]; ok {
 		close(ch)
 		delete(a.h2Ch, pid)
+
+		a.h2ParserMu.Lock()
+		for key, parser := range a.h2Parsers {
+			// h2Parsers  map[string]*http2Parser // pid-fd -> http2Parser
+			if strings.HasPrefix(key, fmt.Sprint(pid)) {
+				parser.clientHpackDecoder.Close()
+				parser.serverHpackDecoder.Close()
+
+				delete(a.h2Parsers, key)
+			}
+		}
+		a.h2ParserMu.Unlock()
+
 	}
 }
 
@@ -388,7 +401,13 @@ func (a *Aggregator) processTcpConnect(data interface{}) {
 
 		// remove h2Parser if exists
 		a.h2ParserMu.Lock()
-		delete(a.h2Parsers, a.getConnKey(d.Pid, d.Fd))
+		key := a.getConnKey(d.Pid, d.Fd)
+		h2Parser, ok := a.h2Parsers[key]
+		if ok {
+			h2Parser.clientHpackDecoder.Close()
+			h2Parser.serverHpackDecoder.Close()
+		}
+		delete(a.h2Parsers, key)
 		a.h2ParserMu.Unlock()
 
 	}
