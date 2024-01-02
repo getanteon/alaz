@@ -459,29 +459,31 @@ func (a *Aggregator) processHttp2Frames(pid uint32, ch chan *l7_req.L7Event) {
 	// fd-streamId -> frame
 	frames := make(map[string]*FrameArrival)
 
-	t := time.NewTicker(1 * time.Minute)
-	defer t.Stop()
+	done := make(chan bool, 1)
 
 	go func() {
-		for _ = range t.C {
-			mu.Lock()
-			for key, f := range frames {
-				if f.ClientHeadersFrameArrived && !f.ServerHeadersFrameArrived {
-					delete(frames, key)
-				} else if !f.ClientHeadersFrameArrived && f.ServerHeadersFrameArrived {
-					delete(frames, key)
+		t := time.NewTicker(1 * time.Minute)
+		defer t.Stop()
+
+		for {
+			select {
+			case <-t.C:
+				mu.Lock()
+				for key, f := range frames {
+					if f.ClientHeadersFrameArrived && !f.ServerHeadersFrameArrived {
+						delete(frames, key)
+					} else if !f.ClientHeadersFrameArrived && f.ServerHeadersFrameArrived {
+						delete(frames, key)
+					}
 				}
+				mu.Unlock()
+			case <-done:
+				return
 			}
-			mu.Unlock()
 		}
 	}()
 
 	persistReq := func(d *l7_req.L7Event, req *datastore.Request, statusCode uint32, grpcStatus uint32) {
-		skInfo := a.findRelatedSocket(a.ctx, d)
-		if skInfo == nil {
-			return
-		}
-
 		if req.Method == "" || req.Path == "" {
 			// if we couldn't parse the request, discard
 			// this is possible because of hpack dynamic table, we can't parse the request until a new connection is established
@@ -489,6 +491,11 @@ func (a *Aggregator) processHttp2Frames(pid uint32, ch chan *l7_req.L7Event) {
 			// TODO: check if duplicate processing happens for the same request at some point on processing
 			// magic message can be used to identify the connection on ebpf side
 			// when adjustment is made on ebpf side, we can remove this check
+			return
+		}
+
+		skInfo := a.findRelatedSocket(a.ctx, d)
+		if skInfo == nil {
 			return
 		}
 
@@ -710,6 +717,7 @@ func (a *Aggregator) processHttp2Frames(pid uint32, ch chan *l7_req.L7Event) {
 		}
 	}
 
+	done <- true // signal cleaning goroutine
 }
 
 func (a *Aggregator) setFromTo(skInfo *SockInfo, d *l7_req.L7Event, reqDto *datastore.Request, hostHeader string) error {
