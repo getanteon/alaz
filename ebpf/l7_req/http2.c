@@ -43,8 +43,6 @@ int is_http2_magic_2(char *buf){
 
 
     if (buf_prefix[0] == 'P' && buf_prefix[1] == 'R' && buf_prefix[2] == 'I' && buf_prefix[3] == ' ' && buf_prefix[4] == '*' && buf_prefix[5] == ' ' && buf_prefix[6] == 'H' && buf_prefix[7] == 'T' && buf_prefix[8] == 'T' && buf_prefix[9] == 'P' && buf_prefix[10] == '/' && buf_prefix[11] == '2' && buf_prefix[12] == '.' && buf_prefix[13] == '0'){
-        char msg2[] = "parsed http2 client preface";
-        bpf_trace_printk(msg2, sizeof(msg2));
         return 1;
     }
     return 0;
@@ -105,7 +103,7 @@ int is_http2_frame(char *buf, __u64 size) {
     
     // only track client initiated streams
     if (stream_id % 2 == 1) {
-       return stream_id;
+       return 1;
     }
     return 0;
 }
