@@ -258,7 +258,7 @@ type L7Event struct {
 
 const L7_EVENT = "l7_event"
 
-func (e L7Event) Type() string {
+func (e *L7Event) Type() string {
 	return L7_EVENT
 }
 
@@ -364,7 +364,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	}()
 
 	// initialize perf event readers
-	l7Events, err := perf.NewReader(L7BpfProgsAndMaps.L7Events, 1000*os.Getpagesize())
+	l7Events, err := perf.NewReader(L7BpfProgsAndMaps.L7Events, 512*os.Getpagesize())
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
 	}
@@ -405,11 +405,11 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 			}
 
 			if record.LostSamples != 0 {
-				log.Logger.Debug().Msgf("lost #%d samples due to ring buffer's full", record.LostSamples)
+				log.Logger.Warn().Msgf("lost #%d samples due to ring buffer's full", record.LostSamples)
 			}
 
 			if record.RawSample == nil || len(record.RawSample) == 0 {
-				log.Logger.Debug().Msgf("read empty record from perf array")
+				log.Logger.Warn().Msgf("read empty record from perf array")
 				return
 			}
 
@@ -503,66 +503,65 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	}()
 
 	go func() {
+		var record perf.Record
 		read := func() {
-			record, err := l7Events.Read()
+			err := l7Events.ReadInto(&record)
 			if err != nil {
 				log.Logger.Warn().Err(err).Msg("error reading from perf array")
 			}
 
 			if record.LostSamples != 0 {
-				log.Logger.Debug().Msgf("lost samples l7-event %d", record.LostSamples)
+				log.Logger.Warn().Msgf("lost samples l7-event %d", record.LostSamples)
 			}
 
 			// TODO: investigate why this is happening
 			if record.RawSample == nil || len(record.RawSample) == 0 {
-				log.Logger.Debug().Msgf("read sample l7-event nil or empty")
+				log.Logger.Warn().Msgf("read sample l7-event nil or empty")
 				return
 			}
 
 			l7Event := (*bpfL7Event)(unsafe.Pointer(&record.RawSample[0]))
 
-			go func() {
-				protocol := L7ProtocolConversion(l7Event.Protocol).String()
-				var method string
-				switch protocol {
-				case L7_PROTOCOL_HTTP:
-					method = HTTPMethodConversion(l7Event.Method).String()
-				case L7_PROTOCOL_AMQP:
-					method = RabbitMQMethodConversion(l7Event.Method).String()
-				case L7_PROTOCOL_POSTGRES:
-					method = PostgresMethodConversion(l7Event.Method).String()
-				case L7_PROTOCOL_HTTP2:
-					method = Http2MethodConversion(l7Event.Method).String()
-				default:
-					method = "Unknown"
-				}
+			protocol := L7ProtocolConversion(l7Event.Protocol).String()
+			var method string
+			switch protocol {
+			case L7_PROTOCOL_HTTP:
+				method = HTTPMethodConversion(l7Event.Method).String()
+			case L7_PROTOCOL_AMQP:
+				method = RabbitMQMethodConversion(l7Event.Method).String()
+			case L7_PROTOCOL_POSTGRES:
+				method = PostgresMethodConversion(l7Event.Method).String()
+			case L7_PROTOCOL_HTTP2:
+				method = Http2MethodConversion(l7Event.Method).String()
+			default:
+				method = "Unknown"
+			}
 
-				if protocol == L7_PROTOCOL_POSTGRES {
-					if method == SIMPLE_QUERY {
-						log.Logger.Info().Uint32("pid", l7Event.Pid).
-							Str("protocol", protocol).Str("method", method).
-							Str("payload", string(l7Event.Payload[:l7Event.PayloadSize])).Msg("pg-log sql command")
-					}
-				}
+			// copy payload slice
+			payload := [1024]uint8{}
+			copy(payload[:], l7Event.Payload[:])
 
-				ch <- L7Event{
-					Fd:                  l7Event.Fd,
-					Pid:                 l7Event.Pid,
-					Status:              l7Event.Status,
-					Duration:            l7Event.Duration,
-					Protocol:            protocol,
-					Tls:                 uint8ToBool(l7Event.IsTls),
-					Method:              method,
-					Payload:             l7Event.Payload,
-					PayloadSize:         l7Event.PayloadSize,
-					PayloadReadComplete: uint8ToBool(l7Event.PayloadReadComplete),
-					Failed:              uint8ToBool(l7Event.Failed),
-					WriteTimeNs:         l7Event.WriteTimeNs,
-					Tid:                 l7Event.Tid,
-					Seq:                 l7Event.Seq,
-					EventReadTime:       time.Now().UnixMilli(),
-				}
-			}()
+			userspacel7Event := &L7Event{
+				Fd:                  l7Event.Fd,
+				Pid:                 l7Event.Pid,
+				Status:              l7Event.Status,
+				Duration:            l7Event.Duration,
+				Protocol:            protocol,
+				Tls:                 uint8ToBool(l7Event.IsTls),
+				Method:              method,
+				Payload:             payload,
+				PayloadSize:         l7Event.PayloadSize,
+				PayloadReadComplete: uint8ToBool(l7Event.PayloadReadComplete),
+				Failed:              uint8ToBool(l7Event.Failed),
+				WriteTimeNs:         l7Event.WriteTimeNs,
+				Tid:                 l7Event.Tid,
+				Seq:                 l7Event.Seq,
+				EventReadTime:       time.Now().UnixMilli(),
+			}
+
+			go func(l7Event *L7Event) {
+				ch <- l7Event
+			}(userspacel7Event)
 		}
 		for {
 			select {

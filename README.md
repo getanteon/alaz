@@ -98,7 +98,7 @@ kubectl create namespace ddosify
 helm upgrade --install --namespace ddosify alaz ddosify/alaz --set monitoringID=$MONITORING_ID
 ```
 
-Then you can view the metrics and Kubernetes Service Map on the [Ddosify Observability dashboard](https://app.ddosify.com/clusters). For more information, see [Ddosify Observability Docs](https://docs.ddosify.com/cloud/observability/).
+Then you can view the metrics and Kubernetes Service Map on the [Ddosify Observability dashboard](https://app.ddosify.com/clusters). For more information, see [Ddosify Kubernetes Monitoring](https://docs.ddosify.com/ddosify/kubernetes-monitoring).
 
 ### 🏠 For Ddosify Self-Hosted
 
@@ -137,7 +137,7 @@ kubectl create namespace ddosify
 helm upgrade --install --namespace ddosify alaz ddosify/alaz --set monitoringID=$MONITORING_ID --set backendHost=$BACKEND_HOST
 ```
 
-Then you can view the metrics and Kubernetes Service Map on the Ddosify Self-Hosted Observability dashboard. For more information, see [Ddosify Observability Docs](https://docs.ddosify.com/cloud/observability/).
+Then you can view the metrics and Kubernetes Service Map on the Ddosify Self-Hosted Observability dashboard. For more information, see [Ddosify Monitoring Docs](https://docs.ddosify.com/ddosify/kubernetes-monitoring).
 
 Alaz runs as a DaemonSet on your Kubernetes cluster. It collects metrics and sends them to Ddosify Cloud or Ddosify Self-Hosted. You can view the metrics on the Ddosify Observability dashboard. For the detailed Alaz architecture, see [Alaz Architecture](https://github.com/ddosify/alaz/blob/master/Alaz-Architecture.md).
 
@@ -176,7 +176,7 @@ Alaz runs on Linux Kubernetes clusters. Windows or MacOS are not supported.
 In the future, we plan to support Docker containers.
 
 Alaz is an eBPF application that uses [CO-RE](https://github.com/libbpf/libbpf#bpf-co-re-compile-once--run-everywhere).
-Most of the latest linux distributions support CO-RE. In order to CO-RE to work, the kernel has to built with BTF(bpf type format) information.
+Most of the latest linux distributions support CO-RE. In order to CO-RE to work, the kernel has to be built with BTF(bpf type format) information.
 
 You can check your kernel version with `uname -r` 
 command and whether btf is enabled by default or not at the [btfhub](https://github.com/aquasecurity/btfhub/blob/main/docs/supported-distros.md).

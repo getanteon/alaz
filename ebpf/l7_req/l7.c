@@ -233,7 +233,7 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
             req-> method = method;
         }else if (parse_client_postgres_data(buf, count, &req->request_type)){
             // TODO: should wait for CloseComplete message in case of statement close 
-            if (req->request_type == POSTGRES_MESSAGE_CLOSE || req->request_type == POSTGRES_MESSAGE_TERMINATE){
+            if (req->request_type == POSTGRES_MESSAGE_TERMINATE){
                 req->protocol = PROTOCOL_POSTGRES;
                 req->method = METHOD_STATEMENT_CLOSE_OR_CONN_TERMINATE;
                 struct write_args args = {};
