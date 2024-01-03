@@ -138,9 +138,7 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, ec *eb
 		PidToSocketMap:        make(map[uint32]*SocketMap, 0),
 	}
 
-	go clearSocketLines(ctx, clusterInfo.PidToSocketMap)
-
-	return &Aggregator{
+	a := &Aggregator{
 		ctx:           ctx,
 		k8sChan:       k8sChan,
 		ebpfChan:      ec.EbpfEvents(),
@@ -151,6 +149,10 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, ec *eb
 		h2Parsers:     make(map[string]*http2Parser),
 		liveProcesses: make(map[uint32]struct{}),
 	}
+
+	go a.clearSocketLines(ctx)
+
+	return a
 }
 
 func (a *Aggregator) Run() {
@@ -245,27 +247,8 @@ func (a *Aggregator) processEbpf(ctx context.Context) {
 				}
 				go a.processTcpConnect(tcpConnectEvent)
 			case l7_req.L7_EVENT:
-				d := data.(l7_req.L7Event) // copy data's value
-
-				// copy payload slice
-				payload := [1024]uint8{}
-				copy(payload[:], d.Payload[:])
-
-				l7Event := l7_req.L7Event{
-					Fd:                  d.Fd,
-					Pid:                 d.Pid,
-					Status:              d.Status,
-					Duration:            d.Duration,
-					Protocol:            d.Protocol,
-					Tls:                 d.Tls,
-					Method:              d.Method,
-					Payload:             payload,
-					PayloadSize:         d.PayloadSize,
-					PayloadReadComplete: d.PayloadReadComplete,
-					Failed:              d.Failed,
-					WriteTimeNs:         d.WriteTimeNs,
-				}
-				go a.processL7(ctx, l7Event)
+				d := data.(*l7_req.L7Event) // copy data's value
+				go a.processL7(ctx, d)
 			case proc.PROC_EVENT:
 				d := data.(proc.ProcEvent) // copy data's value
 				if d.Type_ == proc.EVENT_PROC_EXEC {
@@ -776,7 +759,7 @@ func (a *Aggregator) getConnKey(pid uint32, fd uint64) string {
 	return fmt.Sprintf("%d-%d", pid, fd)
 }
 
-func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
+func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 	// other protocols events come as whole, but http2 events come as frames
 	// we need to aggregate frames to get the whole request
 	defer func() {
@@ -816,7 +799,7 @@ func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
 			}
 
 			// initialize channel
-			h2ChPid := make(chan *l7_req.L7Event, 1000)
+			h2ChPid := make(chan *l7_req.L7Event, 100)
 			a.h2ChMu.Lock()
 			a.h2Ch[d.Pid] = h2ChPid
 			ch = h2ChPid
@@ -824,11 +807,11 @@ func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
 			go a.processHttp2Frames(d.Pid, ch) // worker per pid, will be called once
 		}
 
-		ch <- &d
+		ch <- d
 		return
 	}
 
-	skInfo := a.findRelatedSocket(ctx, &d)
+	skInfo := a.findRelatedSocket(ctx, d)
 	if skInfo == nil {
 		return
 	}
@@ -861,7 +844,7 @@ func (a *Aggregator) processL7(ctx context.Context, d l7_req.L7Event) {
 		_, reqDto.Path, _, reqHostHeader = parseHttpPayload(string(d.Payload[0:d.PayloadSize]))
 	}
 
-	err := a.setFromTo(skInfo, &d, &reqDto, reqHostHeader)
+	err := a.setFromTo(skInfo, d, &reqDto, reqHostHeader)
 	if err != nil {
 		return
 	}
@@ -1013,7 +996,7 @@ func parseSqlCommand(r []uint8) string {
 	return sqlStatement
 }
 
-func clearSocketLines(ctx context.Context, pidToSocketMap map[uint32]*SocketMap) {
+func (a *Aggregator) clearSocketLines(ctx context.Context) {
 	ticker := time.NewTicker(1 * time.Minute)
 	skLineCh := make(chan *SocketLine, 1000)
 
@@ -1029,10 +1012,12 @@ func clearSocketLines(ctx context.Context, pidToSocketMap map[uint32]*SocketMap)
 	}()
 
 	for range ticker.C {
-		for _, socketMap := range pidToSocketMap {
+		a.clusterInfo.mu.RLock()
+		for _, socketMap := range a.clusterInfo.PidToSocketMap {
 			for _, socketLine := range socketMap.M {
 				skLineCh <- socketLine
 			}
 		}
+		a.clusterInfo.mu.RUnlock()
 	}
 }
