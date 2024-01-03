@@ -773,6 +773,13 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 		var ok bool
 		var ch chan *l7_req.L7Event
 
+		a.liveProcessesMu.RLock()
+		_, ok = a.liveProcesses[d.Pid]
+		a.liveProcessesMu.RUnlock()
+		if !ok {
+			return // if a late event comes, do not create parsers and new worker to avoid memory leak
+		}
+
 		connKey := a.getConnKey(d.Pid, d.Fd)
 		a.h2ParserMu.RLock()
 		_, ok = a.h2Parsers[connKey]
@@ -791,13 +798,6 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 		ch, ok = a.h2Ch[d.Pid]
 		a.h2ChMu.RUnlock()
 		if !ok {
-			a.liveProcessesMu.RLock()
-			_, ok = a.liveProcesses[d.Pid]
-			a.liveProcessesMu.RUnlock()
-			if !ok {
-				return // if a late event comes, we do not open a new worker to avoid memory leak
-			}
-
 			// initialize channel
 			h2ChPid := make(chan *l7_req.L7Event, 100)
 			a.h2ChMu.Lock()
