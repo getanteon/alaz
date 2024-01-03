@@ -132,7 +132,7 @@ var re *regexp.Regexp
 func init() {
 	reverseDnsCache = cache.New(defaultExpiration, purgeTime)
 
-	keywords := []string{"SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "FROM", "WHERE", "JOIN", "INNER", "OUTER", "LEFT", "RIGHT", "GROUP", "BY", "ORDER", "HAVING", "UNION", "ALL"}
+	keywords := []string{"SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "FROM", "WHERE", "JOIN", "INNER", "OUTER", "LEFT", "RIGHT", "GROUP", "BY", "ORDER", "HAVING", "UNION", "ALL", "BEGIN", "COMMIT"}
 
 	// Case-insensitive matching
 	re = regexp.MustCompile(strings.Join(keywords, "|"))
