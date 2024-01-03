@@ -43,8 +43,6 @@ int is_http2_magic_2(char *buf){
 
 
     if (buf_prefix[0] == 'P' && buf_prefix[1] == 'R' && buf_prefix[2] == 'I' && buf_prefix[3] == ' ' && buf_prefix[4] == '*' && buf_prefix[5] == ' ' && buf_prefix[6] == 'H' && buf_prefix[7] == 'T' && buf_prefix[8] == 'T' && buf_prefix[9] == 'P' && buf_prefix[10] == '/' && buf_prefix[11] == '2' && buf_prefix[12] == '.' && buf_prefix[13] == '0'){
-        char msg2[] = "parsed http2 client preface";
-        bpf_trace_printk(msg2, sizeof(msg2));
         return 1;
     }
     return 0;
@@ -87,8 +85,8 @@ int is_http2_frame(char *buf, __u64 size) {
     // 0x08 WINDOW_UPDATE
     // 0x09 CONTINUATION
 
-    // only care about payloads starting with data and headers, and settings
-    if (type != 0x00 && type != 0x01 && type != 0x04) {
+    // other frames can precede headers frames, so only check if its a valid frame type
+    if (type > 0x09){
         return 0;
     }
 
@@ -99,9 +97,13 @@ int is_http2_frame(char *buf, __u64 size) {
     // odd stream ids are client initiated
     // even stream ids are server initiated
     
+    if (stream_id == 0) { // special stream for window updates, pings
+        return 1;
+    }
+    
     // only track client initiated streams
     if (stream_id % 2 == 1) {
-        return 1;
+       return 1;
     }
     return 0;
 }
