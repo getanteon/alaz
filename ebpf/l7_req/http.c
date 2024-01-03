@@ -18,8 +18,6 @@ int parse_http_method(char *buf) {
     long r = bpf_probe_read(&buf_prefix, sizeof(buf_prefix), (void *)(buf)) ;
     
     if (r < 0) {
-        char msg[] = "not enough characters to parse http method - %ld";
-        bpf_trace_printk(msg, sizeof(msg), r);
         return 0;
     }
 
@@ -52,8 +50,6 @@ int parse_http_status(char *buf) {
     long r = bpf_probe_read(&b, sizeof(b), (void *)(buf)) ;
     
     if (r < 0) {
-        char msg[] = "not enough characters to parse http method - %ld";
-        bpf_trace_printk(msg, sizeof(msg), r);
         return 0;
     }
 
