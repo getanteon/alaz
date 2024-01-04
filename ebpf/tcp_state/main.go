@@ -178,7 +178,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 				bpfEvent := (*TcpEvent)(unsafe.Pointer(&record.RawSample[0]))
 
 				go func() {
-					ch <- TcpConnectEvent{
+					ch <- &TcpConnectEvent{
 						Pid:       bpfEvent.Pid,
 						Fd:        bpfEvent.Fd,
 						Timestamp: bpfEvent.Timestamp,
