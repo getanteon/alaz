@@ -126,7 +126,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 				bpfEvent := (*PEvent)(unsafe.Pointer(&record.RawSample[0]))
 
 				go func() {
-					ch <- ProcEvent{
+					ch <- &ProcEvent{
 						Pid:   bpfEvent.Pid,
 						Type_: ProcEventConversion(bpfEvent.Type_).String(),
 					}
