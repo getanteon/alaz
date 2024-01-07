@@ -192,7 +192,7 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
     unsigned char func_name[] = "process_enter_of_syscalls_write_sendto";
     __u64 id = bpf_get_current_pid_tgid();
     __u32 tid = id & 0xFFFFFFFF;
-    __u32 seq = process_for_dist_trace_write(fd);
+    __u32 seq = process_for_dist_trace_write(ctx,fd);
     
     int zero = 0;
     struct l7_request *req = bpf_map_lookup_elem(&l7_request_heap, &zero);
@@ -338,7 +338,7 @@ int process_enter_of_syscalls_read_recvfrom(void *ctx, struct read_enter_args * 
     // }
 
     // for distributed tracing
-    process_for_dist_trace_read(params->fd);
+    process_for_dist_trace_read(ctx,params->fd);
 
     
     struct read_args args = {};
@@ -965,7 +965,7 @@ int process_enter_of_go_conn_write(void *ctx, __u32 pid, __u32 fd, char *buf_ptr
     req->payload_read_complete = 0;
     req->write_time_ns = timestamp;
     req->request_type = 0;
-    req->seq = process_for_dist_trace_write(fd);
+    req->seq = process_for_dist_trace_write(ctx,fd);
    
     __u32 tid = bpf_get_current_pid_tgid() & 0xFFFFFFFF;
     req->tid = tid;
@@ -1092,7 +1092,7 @@ int BPF_UPROBE(go_tls_conn_read_enter) {
     }
 
     // for distributed tracing
-    process_for_dist_trace_read(fd);
+    process_for_dist_trace_read(ctx,fd);
 
     // X1(arm64) register contains the byte ptr, pointing to first byte of the slice
     char *buf_ptr = (char*)GO_PARAM2(ctx);
