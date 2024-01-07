@@ -12,6 +12,15 @@ import (
 	"github.com/cilium/ebpf"
 )
 
+type bpfCallEvent struct {
+	Pid  uint32
+	Tid  uint32
+	Tx   uint64
+	Type uint8
+	_    [3]byte
+	Seq  uint32
+}
+
 type bpfGoReadKey struct {
 	Pid  uint32
 	_    [4]byte
@@ -148,6 +157,7 @@ type bpfMapSpecs struct {
 	GoActiveReads      *ebpf.MapSpec `ebpf:"go_active_reads"`
 	GoL7RequestHeap    *ebpf.MapSpec `ebpf:"go_l7_request_heap"`
 	IngressEgressCalls *ebpf.MapSpec `ebpf:"ingress_egress_calls"`
+	IngressEgressHeap  *ebpf.MapSpec `ebpf:"ingress_egress_heap"`
 	L7EventHeap        *ebpf.MapSpec `ebpf:"l7_event_heap"`
 	L7Events           *ebpf.MapSpec `ebpf:"l7_events"`
 	L7RequestHeap      *ebpf.MapSpec `ebpf:"l7_request_heap"`
@@ -181,6 +191,7 @@ type bpfMaps struct {
 	GoActiveReads      *ebpf.Map `ebpf:"go_active_reads"`
 	GoL7RequestHeap    *ebpf.Map `ebpf:"go_l7_request_heap"`
 	IngressEgressCalls *ebpf.Map `ebpf:"ingress_egress_calls"`
+	IngressEgressHeap  *ebpf.Map `ebpf:"ingress_egress_heap"`
 	L7EventHeap        *ebpf.Map `ebpf:"l7_event_heap"`
 	L7Events           *ebpf.Map `ebpf:"l7_events"`
 	L7RequestHeap      *ebpf.Map `ebpf:"l7_request_heap"`
@@ -197,6 +208,7 @@ func (m *bpfMaps) Close() error {
 		m.GoActiveReads,
 		m.GoL7RequestHeap,
 		m.IngressEgressCalls,
+		m.IngressEgressHeap,
 		m.L7EventHeap,
 		m.L7Events,
 		m.L7RequestHeap,

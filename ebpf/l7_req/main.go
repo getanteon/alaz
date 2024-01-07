@@ -11,7 +11,6 @@ import (
 
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/perf"
-	"github.com/cilium/ebpf/ringbuf"
 	"github.com/cilium/ebpf/rlimit"
 )
 
@@ -382,7 +381,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		logs.Close()
 	}()
 
-	distTraceCalls, err := ringbuf.NewReader(L7BpfProgsAndMaps.IngressEgressCalls)
+	distTraceCalls, err := perf.NewReader(L7BpfProgsAndMaps.IngressEgressCalls, 512*os.Getpagesize())
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("error creating ringbuf reader")
 	}
@@ -574,19 +573,24 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	}()
 
 	go func() {
+		var record perf.Record
 		read := func() {
-			record, err := distTraceCalls.Read()
+			err := distTraceCalls.ReadInto(&record)
 			if err != nil {
 				log.Logger.Warn().Err(err).Msg("error reading from dist trace calls")
 			}
 
-			// TODO
-			bpfTraceEvent := (*bpfTraceEvent)(unsafe.Pointer(&record.RawSample[0]))
+			if record.LostSamples != 0 {
+				log.Logger.Warn().Msgf("lost samples dist-trace %d", record.LostSamples)
+			}
 
-			// log.Logger.Info().
-			// 	Uint32("pid", callEvent.Pid).Uint32("tid", callEvent.Tid).
-			// 	Uint64("tx", callEvent.Tx).Uint8("type", callEvent.Type).
-			// 	Uint32("seq", callEvent.Seq).Msg("dist-trace-call")
+			// TODO: investigate why this is happening
+			if record.RawSample == nil || len(record.RawSample) == 0 {
+				log.Logger.Warn().Msgf("read sample dist-trace nil or empty")
+				return
+			}
+
+			bpfTraceEvent := (*bpfTraceEvent)(unsafe.Pointer(&record.RawSample[0]))
 
 			traceEvent := TraceEvent{
 				Pid:   bpfTraceEvent.Pid,
@@ -596,7 +600,6 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 				Seq:   bpfTraceEvent.Seq,
 			}
 			ch <- &traceEvent
-
 		}
 		for {
 			select {
