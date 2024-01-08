@@ -128,12 +128,13 @@ type BackendDS struct {
 	host      string
 	port      string
 	c         *http.Client
-	batchSize int64
+	batchSize uint64
 
 	reqChanBuffer chan *ReqInfo
 	reqInfoPool   *poolutil.Pool[*ReqInfo]
 
 	traceEventChan chan *TraceInfo
+	traceInfoPool  *poolutil.Pool[*TraceInfo]
 
 	podEventChan       chan interface{} // *PodEvent
 	svcEventChan       chan interface{} // *SvcEvent
@@ -255,9 +256,9 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 	retryClient.HTTPClient.Timeout = 10 * time.Second // Set a timeout for the request
 	client := retryClient.StandardClient()
 
-	var defaultBatchSize int64 = 1000
+	var defaultBatchSize uint64 = 1000
 
-	bs, err := strconv.ParseInt(os.Getenv("BATCH_SIZE"), 10, 64)
+	bs, err := strconv.ParseUint(os.Getenv("BATCH_SIZE"), 10, 64)
 	if err != nil {
 		bs = defaultBatchSize
 	}
@@ -269,7 +270,8 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 		c:                  client,
 		batchSize:          bs,
 		reqInfoPool:        newReqInfoPool(func() *ReqInfo { return &ReqInfo{} }, func(r *ReqInfo) {}),
-		reqChanBuffer:      make(chan *ReqInfo, 10000),
+		traceInfoPool:      newTraceInfoPool(func() *TraceInfo { return &TraceInfo{} }, func(r *TraceInfo) {}),
+		reqChanBuffer:      make(chan *ReqInfo, 40000),
 		podEventChan:       make(chan interface{}, 100),
 		svcEventChan:       make(chan interface{}, 100),
 		rsEventChan:        make(chan interface{}, 100),
@@ -277,11 +279,11 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 		epEventChan:        make(chan interface{}, 100),
 		containerEventChan: make(chan interface{}, 100),
 		dsEventChan:        make(chan interface{}, 20),
-		traceEventChan:     make(chan *TraceInfo, 1000),
+		traceEventChan:     make(chan *TraceInfo, 100000), // 8 bytes * 100000 = 0.8 mb
 	}
 
-	go ds.sendReqsInBatch()
-	go ds.sendTraceEventsInBatch()
+	go ds.sendReqsInBatch(bs)
+	go ds.sendTraceEventsInBatch(10 * bs)
 
 	eventsInterval := 10 * time.Second
 	go ds.sendEventsInBatch(ds.podEventChan, podEndpoint, eventsInterval)
@@ -443,19 +445,19 @@ func (b *BackendDS) sendToBackend(method string, payload interface{}, endpoint s
 	}
 }
 
-func (b *BackendDS) sendTraceEventsInBatch() {
+func (b *BackendDS) sendTraceEventsInBatch(batchSize uint64) {
 	t := time.NewTicker(1 * time.Second)
 	defer t.Stop()
 
 	send := func() {
-		batch := make([]*TraceInfo, 0, b.batchSize)
+		batch := make([]*TraceInfo, 0, batchSize)
 		loop := true
 
-		for i := 0; (i < int(b.batchSize)) && loop; i++ {
+		for i := 0; (i < int(batchSize)) && loop; i++ {
 			select {
 			case trace := <-b.traceEventChan:
 				batch = append(batch, trace)
-			case <-time.After(200 * time.Millisecond):
+			case <-time.After(50 * time.Millisecond):
 				loop = false
 			}
 		}
@@ -465,7 +467,12 @@ func (b *BackendDS) sendTraceEventsInBatch() {
 		}
 
 		tracePayload := convertTraceEventsToPayload(batch)
-		b.sendToBackend(http.MethodPost, tracePayload, traceEventEndpoint)
+		go b.sendToBackend(http.MethodPost, tracePayload, traceEventEndpoint)
+
+		// return reqInfoss to the pool
+		for _, trace := range batch {
+			b.traceInfoPool.Put(trace)
+		}
 	}
 
 	for {
@@ -480,19 +487,19 @@ func (b *BackendDS) sendTraceEventsInBatch() {
 
 }
 
-func (b *BackendDS) sendReqsInBatch() {
-	t := time.NewTicker(10 * time.Second)
+func (b *BackendDS) sendReqsInBatch(batchSize uint64) {
+	t := time.NewTicker(5 * time.Second)
 	defer t.Stop()
 
 	send := func() {
-		batch := make([]*ReqInfo, 0, b.batchSize)
+		batch := make([]*ReqInfo, 0, batchSize)
 		loop := true
 
-		for i := 0; (i < int(b.batchSize)) && loop; i++ {
+		for i := 0; (i < int(batchSize)) && loop; i++ {
 			select {
 			case req := <-b.reqChanBuffer:
 				batch = append(batch, req)
-			case <-time.After(200 * time.Millisecond):
+			case <-time.After(50 * time.Millisecond):
 				loop = false
 			}
 		}
@@ -502,7 +509,7 @@ func (b *BackendDS) sendReqsInBatch() {
 		}
 
 		reqsPayload := convertReqsToPayload(batch)
-		b.sendToBackend(http.MethodPost, reqsPayload, reqEndpoint)
+		go b.sendToBackend(http.MethodPost, reqsPayload, reqEndpoint)
 
 		// return reqInfoss to the pool
 		for _, req := range batch {
@@ -578,6 +585,14 @@ func newReqInfoPool(factory func() *ReqInfo, close func(*ReqInfo)) *poolutil.Poo
 	}
 }
 
+func newTraceInfoPool(factory func() *TraceInfo, close func(*TraceInfo)) *poolutil.Pool[*TraceInfo] {
+	return &poolutil.Pool[*TraceInfo]{
+		Items:   make(chan *TraceInfo, 50000),
+		Factory: factory,
+		Close:   close,
+	}
+}
+
 func (b *BackendDS) PersistRequest(request *Request) error {
 	// get a reqInfo from the pool
 	reqInfo := b.reqInfoPool.Get()
@@ -608,7 +623,12 @@ func (b *BackendDS) PersistRequest(request *Request) error {
 }
 
 func (b *BackendDS) PersistTraceEvent(trace *l7_req.TraceEvent) error {
-	t := TraceInfo{}
+	if trace == nil {
+		return fmt.Errorf("trace event is nil")
+	}
+
+	t := b.traceInfoPool.Get()
+
 	t[0] = trace.Tx
 	t[1] = trace.Seq
 	t[2] = trace.Tid
@@ -620,7 +640,7 @@ func (b *BackendDS) PersistTraceEvent(trace *l7_req.TraceEvent) error {
 
 	t[3] = ingress
 
-	b.traceEventChan <- &t
+	go func() { b.traceEventChan <- t }()
 	return nil
 }
 

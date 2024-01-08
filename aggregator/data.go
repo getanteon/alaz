@@ -201,7 +201,7 @@ func (a *Aggregator) Run() {
 		// since we process events concurrently, some short-lived processes exit event can come before exec events
 		// this causes zombie http2 workers
 
-		t := time.NewTicker(5 * time.Minute)
+		t := time.NewTicker(2 * time.Minute)
 		defer t.Stop()
 
 		for range t.C {
@@ -217,7 +217,6 @@ func (a *Aggregator) Run() {
 				err := syscall.Kill(int(pid), 0)
 				if err != nil {
 					// pid does not exist
-					log.Logger.Warn().Uint32("pid", pid).Msg("clean leftover pid")
 					delete(a.liveProcesses, pid)
 
 					a.clusterInfo.mu.Lock()
@@ -300,7 +299,6 @@ func (a *Aggregator) processEbpf(ctx context.Context) {
 				d := data.(*l7_req.TraceEvent)
 				a.ds.PersistTraceEvent(d)
 			}
-
 		}
 	}
 }
