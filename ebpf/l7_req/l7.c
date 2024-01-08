@@ -501,7 +501,7 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
         e->pid = k.pid;
 
         // for distributed tracing
-        e->seq = 0; // default value , TODO : ?
+        e->seq = 0; // default value
         e->tid = bpf_get_current_pid_tgid() & 0xFFFFFFFF;
 
         // reset payload
