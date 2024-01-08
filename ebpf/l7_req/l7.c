@@ -9,6 +9,7 @@
 #include <bpf/bpf_tracing.h>
 #include <stddef.h>
 #include "../headers/pt_regs.h"
+#include <sys/socket.h>
 
 #include "../headers/log.h"
 #include "http.c"
@@ -16,7 +17,8 @@
 #include "postgres.c"
 #include "openssl.c"
 #include "http2.c"
-
+#include "tcp_sock.c"
+#include "go_internal.h"
 
 #define PROTOCOL_UNKNOWN    0
 #define PROTOCOL_HTTP	    1
@@ -27,9 +29,6 @@
 #define MAX_PAYLOAD_SIZE 1024
 #define PAYLOAD_PREFIX_SIZE 16
 
-// for rabbitmq methods
-#define METHOD_PUBLISH           1
-#define METHOD_DELIVER           2
 
 #define TLS_MASK 0x8000000000000000
 
@@ -49,6 +48,9 @@ struct l7_event {
     __u8 payload_read_complete;
     __u8 failed;
     __u8 is_tls;
+    
+    __u32 seq; // tcp sequence number
+    __u32 tid;
 };
 
 struct l7_request {
@@ -59,6 +61,8 @@ struct l7_request {
     __u32 payload_size;
     __u8 payload_read_complete;
     __u8 request_type;
+    __u32 seq;
+    __u32 tid;
 };
 
 struct socket_key {
@@ -72,6 +76,7 @@ struct go_req_key {
     __u64 fd;
 };
 
+
 struct go_read_key {
     __u32 pid;
     __u64 goid; // goroutine id
@@ -84,6 +89,22 @@ struct read_enter_args {
     char* buf;
     __u64 size;
     __u64 time;
+};
+
+struct go_read_args {
+    __u64 fd;
+    char* buf;
+    __u64 size;
+    __u64 read_start_ns;  
+};
+
+// when given with __type macro below
+// type *btf.Pointer not supported
+struct read_args {
+    __u64 fd;
+    char* buf;
+    __u64 size;
+    __u64 read_start_ns;  
 };
 
 // Instead of allocating on bpf stack, we allocate on a per-CPU array map
@@ -122,12 +143,6 @@ struct {
     __type(value, struct l7_request);
 } go_active_l7_requests SEC(".maps");
 
-struct go_read_args {
-    __u64 fd;
-    char* buf;
-    __u64 size;
-    __u64 read_start_ns;  
-};
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
@@ -143,14 +158,6 @@ struct {
     __uint(value_size, sizeof(int));
 } l7_events SEC(".maps");
 
-// when given with __type macro below
-// type *btf.Pointer not supported
-struct read_args {
-    __u64 fd;
-    char* buf;
-    __u64 size;
-    __u64 read_start_ns;  
-};
 
 // used for cases in which we don't have a read event
 // we are only tracking write events.
@@ -184,6 +191,8 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
     __u64 timestamp = bpf_ktime_get_ns();
     unsigned char func_name[] = "process_enter_of_syscalls_write_sendto";
     __u64 id = bpf_get_current_pid_tgid();
+    __u32 tid = id & 0xFFFFFFFF;
+    __u32 seq = process_for_dist_trace_write(ctx,fd);
     
     int zero = 0;
     struct l7_request *req = bpf_map_lookup_elem(&l7_request_heap, &zero);
@@ -294,6 +303,10 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
         req->payload_read_complete = 1;
     }
 
+    // for distributed tracing
+    req->seq = seq;
+    req->tid = tid;
+
     long res = bpf_map_update_elem(&active_l7_requests, &k, req, BPF_ANY);
     if(res < 0)
     {
@@ -323,6 +336,9 @@ int process_enter_of_syscalls_read_recvfrom(void *ctx, struct read_enter_args * 
     // {
     //     return 0;
     // }
+
+    // for distributed tracing
+    process_for_dist_trace_read(ctx,params->fd);
 
     
     struct read_args args = {};
@@ -400,6 +416,10 @@ int process_exit_of_syscalls_write_sendto(void* ctx, __s64 ret){
 
         bpf_map_delete_elem(&active_l7_requests, &k);
         bpf_map_delete_elem(&active_writes, &id);
+
+        // for distributed tracing
+        e->seq = active_req->seq;
+        e->tid = active_req->tid;
 
         bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
     }else{
@@ -479,7 +499,11 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
         e->status = 0;
         e->fd = k.fd;
         e->pid = k.pid;
-        
+
+        // for distributed tracing
+        e->seq = 0; // default value , TODO : ?
+        e->tid = bpf_get_current_pid_tgid() & 0xFFFFFFFF;
+
         // reset payload
         for (int i = 0; i < MAX_PAYLOAD_SIZE; i++) {
             e->payload[i] = 0;
@@ -544,6 +568,10 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
     bpf_probe_read(e->payload, MAX_PAYLOAD_SIZE, active_req->payload);
 
     e->failed = 0; // success
+
+    // for distributed tracing
+    e->seq = active_req->seq;
+    e->tid = active_req->tid;
 
     e->status = 0;
     if(read_info->buf && ret > PAYLOAD_PREFIX_SIZE){
@@ -835,6 +863,7 @@ int sys_enter_read(struct trace_event_raw_sys_enter_read* ctx) {
         .size = ctx->count,
         .time = time
     };
+
     return process_enter_of_syscalls_read_recvfrom(ctx, &params);
 }
 
@@ -916,25 +945,6 @@ void BPF_UPROBE(ssl_read_enter_v1_0_2, void* ssl, void* buffer, int num) {
     ssl_uprobe_read_enter_v1_0_2(ctx, id, pid, ssl, buffer, num, 0);
 }
 
-struct go_interface {
-    __s64 type;
-    void* ptr;
-};
-
-#if defined(__TARGET_ARCH_x86)
-#define GO_PARAM1(x) ((x)->ax)
-#define GO_PARAM2(x) ((x)->bx)
-#define GO_PARAM3(x) ((x)->cx)
-#define GOROUTINE(x) ((x)->r14)
-#elif defined(__TARGET_ARCH_arm64) 
-/* arm64 provides struct user_pt_regs instead of struct pt_regs to userspace */
-#define GO_PARAM1(x) (((struct user_pt_regs *)(x))->regs[0])
-#define GO_PARAM2(x) (((struct user_pt_regs *)(x))->regs[1])
-#define GO_PARAM3(x) (((struct user_pt_regs *)(x))->regs[2])
-#define GOROUTINE(x) (((struct user_pt_regs *)(x))->regs[28])
-#endif
-
-
 static __always_inline
 int process_enter_of_go_conn_write(void *ctx, __u32 pid, __u32 fd, char *buf_ptr, __u64 count) {
     __u64 timestamp = bpf_ktime_get_ns();
@@ -955,6 +965,11 @@ int process_enter_of_go_conn_write(void *ctx, __u32 pid, __u32 fd, char *buf_ptr
     req->payload_read_complete = 0;
     req->write_time_ns = timestamp;
     req->request_type = 0;
+    req->seq = process_for_dist_trace_write(ctx,fd);
+   
+    __u32 tid = bpf_get_current_pid_tgid() & 0xFFFFFFFF;
+    req->tid = tid;
+
 
     if(buf_ptr){
         // try to parse only http1.1 for gotls reqs for now.
@@ -1063,6 +1078,7 @@ int BPF_UPROBE(go_tls_conn_read_enter) {
     __u32 fd;
     struct go_interface conn;
 
+
     // X0(arm64) register contains the pointer to the first function argument, c *Conn
     if (bpf_probe_read_user(&conn, sizeof(conn), (void*)GO_PARAM1(ctx))) {
         return 1;
@@ -1074,6 +1090,9 @@ int BPF_UPROBE(go_tls_conn_read_enter) {
     if (bpf_probe_read_user(&fd, sizeof(fd), fd_ptr + 0x10)) {
         return 1;
     }
+
+    // for distributed tracing
+    process_for_dist_trace_read(ctx,fd);
 
     // X1(arm64) register contains the byte ptr, pointing to first byte of the slice
     char *buf_ptr = (char*)GO_PARAM2(ctx);

@@ -1,6 +1,9 @@
 package datastore
 
-import "github.com/ddosify/alaz/log"
+import (
+	"github.com/ddosify/alaz/ebpf/l7_req"
+	"github.com/ddosify/alaz/log"
+)
 
 type DataStore interface {
 	PersistPod(pod Pod, eventType string) error
@@ -12,6 +15,8 @@ type DataStore interface {
 	PersistDaemonSet(ds DaemonSet, eventType string) error
 
 	PersistRequest(request *Request) error
+
+	PersistTraceEvent(trace *l7_req.TraceEvent) error
 }
 
 type MockDataStore struct {
@@ -54,5 +59,9 @@ func (m *MockDataStore) PersistDaemonSet(ds DaemonSet, eventType string) error {
 
 func (m *MockDataStore) PersistRequest(request *Request) error {
 	log.Logger.Debug().Bool("isTls", request.Tls).Str("path", request.Path).Msg("PersistRequest")
+	return nil
+}
+
+func (m *MockDataStore) PersistTraceEvent(trace *l7_req.TraceEvent) error {
 	return nil
 }

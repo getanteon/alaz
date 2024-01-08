@@ -76,12 +76,6 @@ struct trace_event_raw_sys_enter_sendto {
     __u64 addr_len;
 };
 
-struct iovec
-{
-    void *iov_base;	/* Pointer to data.  */
-    __u64 iov_len;	/* Length of data.  */
-};
-
 
 struct user_msghdr {
 	void *msg_name;

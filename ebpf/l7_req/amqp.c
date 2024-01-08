@@ -60,6 +60,9 @@
 #define AMQP_CLASS_QUEUE 50 // used for queue-related operations, such as declaring a queue, binding a queue to an exchange, and consuming a queue
 #define AMQP_CLASS_BASIC 60 // used for basic message-related operations, such as publishing messages, consuming messages, and handling acknowledgments
 
+// for rabbitmq methods
+#define METHOD_PUBLISH           1
+#define METHOD_DELIVER           2
 
 // Methods differ according to the class they belong to
 

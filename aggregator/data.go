@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -127,8 +128,20 @@ var usePgDs bool = false
 var useBackendDs bool = true // default to true
 var reverseDnsCache *cache.Cache
 
+var re *regexp.Regexp
+
 func init() {
 	reverseDnsCache = cache.New(defaultExpiration, purgeTime)
+
+	keywords := []string{"SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "FROM", "WHERE", "JOIN", "INNER", "OUTER", "LEFT", "RIGHT", "GROUP", "BY", "ORDER", "HAVING", "UNION", "ALL", "BEGIN", "COMMIT"}
+
+	// Case-insensitive matching
+	re = regexp.MustCompile(strings.Join(keywords, "|"))
+}
+
+// Check if a string contains SQL keywords
+func containsSQLKeywords(input string) bool {
+	return re.MatchString(strings.ToUpper(input))
 }
 
 func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, ec *ebpf.EbpfCollector, ds datastore.DataStore) *Aggregator {
@@ -188,7 +201,7 @@ func (a *Aggregator) Run() {
 		// since we process events concurrently, some short-lived processes exit event can come before exec events
 		// this causes zombie http2 workers
 
-		t := time.NewTicker(5 * time.Minute)
+		t := time.NewTicker(2 * time.Minute)
 		defer t.Stop()
 
 		for range t.C {
@@ -204,7 +217,6 @@ func (a *Aggregator) Run() {
 				err := syscall.Kill(int(pid), 0)
 				if err != nil {
 					// pid does not exist
-					log.Logger.Warn().Uint32("pid", pid).Msg("clean leftover pid")
 					delete(a.liveProcesses, pid)
 
 					a.clusterInfo.mu.Lock()
@@ -283,8 +295,10 @@ func (a *Aggregator) processEbpf(ctx context.Context) {
 				} else if d.Type_ == proc.EVENT_PROC_EXIT {
 					go a.processExit(d.Pid)
 				}
+			case l7_req.TRACE_EVENT:
+				d := data.(*l7_req.TraceEvent)
+				a.ds.PersistTraceEvent(d)
 			}
-
 		}
 	}
 }
@@ -514,7 +528,7 @@ func (a *Aggregator) processHttp2Frames(pid uint32, ch chan *l7_req.L7Event) {
 			return
 		}
 
-		req.StartTime = time.Now().UnixMilli()
+		req.StartTime = d.EventReadTime
 		req.Latency = d.WriteTimeNs - req.Latency
 		req.Completed = true
 		req.FromIP = skInfo.Saddr
@@ -852,7 +866,7 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 	// TCP events and L7 events can be processed out of order
 
 	reqDto := datastore.Request{
-		StartTime:  time.Now().UnixMilli(),
+		StartTime:  d.EventReadTime,
 		Latency:    d.Duration,
 		FromIP:     skInfo.Saddr,
 		ToIP:       skInfo.Daddr,
@@ -862,13 +876,21 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 		StatusCode: d.Status,
 		FailReason: "",
 		Method:     d.Method,
+		Tid:        d.Tid,
+		Seq:        d.Seq,
 	}
 
 	if d.Protocol == l7_req.L7_PROTOCOL_POSTGRES && d.Method == l7_req.SIMPLE_QUERY {
 		// parse sql command from payload
 		// path = sql command
 		// method = sql message type
-		reqDto.Path = parseSqlCommand(d.Payload[0:d.PayloadSize])
+		var err error
+		reqDto.Path, err = parseSqlCommand(d.Payload[0:d.PayloadSize])
+		if err != nil {
+			log.Logger.Error().AnErr("err", err)
+			return
+		}
+
 	}
 	var reqHostHeader string
 	// parse http payload, extract path, query params, headers
@@ -1013,7 +1035,8 @@ func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) *
 	return skInfo
 
 }
-func parseSqlCommand(r []uint8) string {
+
+func parseSqlCommand(r []uint8) (string, error) {
 	// Q, 4 bytes of length, sql command
 
 	// skip Q, (simple query)
@@ -1025,7 +1048,14 @@ func parseSqlCommand(r []uint8) string {
 	// get sql command
 	sqlStatement := string(r)
 
-	return sqlStatement
+	// garbage data can come for postgres, we need to filter out
+	// search statement for sql keywords like
+	if containsSQLKeywords(sqlStatement) {
+		return sqlStatement, nil
+	} else {
+		return "", fmt.Errorf("no sql command found")
+	}
+
 }
 
 func (a *Aggregator) clearSocketLines(ctx context.Context) {

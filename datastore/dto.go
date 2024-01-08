@@ -103,6 +103,8 @@ type Request struct {
 	FailReason string
 	Method     string
 	Path       string
+	Tid        uint32
+	Seq        uint32
 }
 
 type BackendResponse struct {
