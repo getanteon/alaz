@@ -146,6 +146,9 @@ __u64 process_for_dist_trace_write(void* ctx, __u64 fd){
     tid = (__u32)id;
 
     __u32 seq = get_tcp_write_seq_from_fd(fd);
+    if(seq == 0){
+        return 0;
+    }
 
     int zero = 0;
     struct call_event *e = bpf_map_lookup_elem(&ingress_egress_heap, &zero);
@@ -175,6 +178,9 @@ void process_for_dist_trace_read(void* ctx, __u32 fd){
     tid = (__u32)id;
 
     __u32 seq = get_tcp_copied_seq_from_fd(fd);
+    if(seq == 0){
+        return;
+    }
 
     int zero = 0;
     struct call_event *e = bpf_map_lookup_elem(&ingress_egress_heap, &zero);
