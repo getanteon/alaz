@@ -113,11 +113,25 @@ type ContainerEvent struct {
 // 13) Method
 // 14) Path
 // 15) Encrypted (bool)
-type ReqInfo [16]interface{}
+// 16) Seq
+// 17) Tid
+
+type ReqInfo [18]interface{}
 
 type RequestsPayload struct {
 	Metadata Metadata   `json:"metadata"`
 	Requests []*ReqInfo `json:"requests"`
+}
+
+// 0) Timestamp
+// 1) Tcp Seq Num
+// 2) Tid
+// 3) Ingress(true), Egress(false)
+type TraceInfo [4]interface{}
+
+type TracePayload struct {
+	Metadata Metadata     `json:"metadata"`
+	Traces   []*TraceInfo `json:"traffic"`
 }
 
 func convertPodToPodEvent(pod Pod, eventType string) PodEvent {

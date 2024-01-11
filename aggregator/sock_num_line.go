@@ -111,7 +111,7 @@ func (nl *SocketLine) DeleteUnused() {
 	}
 
 	// assumedInterval is inversely proportional to the number of requests being discarded
-	assumedInterval := uint64(5 * time.Minute)
+	assumedInterval := uint64(3 * time.Minute)
 
 	// delete all values that
 	// closed and its LastMatch + assumedInterval < lastMatchedReqTime
@@ -155,7 +155,6 @@ func (nl *SocketLine) GetAlreadyExistingSockets() {
 	fdDir := strings.Join([]string{"/proc", fmt.Sprint(nl.pid), "fd"}, "/")
 	fdEntries, err := os.ReadDir(fdDir)
 	if err != nil {
-		log.Logger.Warn().Err(err).Msgf("failed to read directory %s", fdDir)
 		return
 	}
 
