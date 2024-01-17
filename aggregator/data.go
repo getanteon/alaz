@@ -39,8 +39,9 @@ type Aggregator struct {
 	ctx context.Context
 
 	// listen to events from different sources
-	k8sChan  <-chan interface{}
-	ebpfChan <-chan interface{}
+	k8sChan      <-chan interface{}
+	ebpfChan     <-chan interface{}
+	ebpfProcChan <-chan interface{}
 
 	ec *ebpf.EbpfCollector
 
@@ -156,6 +157,7 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, ec *eb
 		ctx:           ctx,
 		k8sChan:       k8sChan,
 		ebpfChan:      ec.EbpfEvents(),
+		ebpfProcChan:  ec.EbpfProcEvents(),
 		ec:            ec,
 		clusterInfo:   clusterInfo,
 		ds:            ds,
@@ -237,6 +239,8 @@ func (a *Aggregator) Run() {
 	for i := 0; i < numWorker; i++ {
 		go a.processEbpf(a.ctx)
 	}
+
+	go a.processEbpfProc(a.ctx)
 }
 
 func (a *Aggregator) processk8s() {
@@ -259,6 +263,37 @@ func (a *Aggregator) processk8s() {
 			a.processDaemonSet(d)
 		default:
 			log.Logger.Warn().Msgf("unknown resource type %s", d.ResourceType)
+		}
+	}
+}
+
+func (a *Aggregator) processEbpfProc(ctx context.Context) {
+	stop := make(chan struct{})
+	go func() {
+		<-ctx.Done()
+		close(stop)
+	}()
+
+	for data := range a.ebpfProcChan {
+		select {
+		case <-stop:
+			log.Logger.Info().Msg("processEbpf exiting...")
+			return
+		default:
+			bpfEvent, ok := data.(ebpf.BpfEvent)
+			if !ok {
+				log.Logger.Error().Interface("ebpfData", data).Msg("error casting ebpf event")
+				continue
+			}
+			switch bpfEvent.Type() {
+			case proc.PROC_EVENT:
+				d := data.(*proc.ProcEvent) // copy data's value
+				if d.Type_ == proc.EVENT_PROC_EXEC {
+					go a.processExec(d)
+				} else if d.Type_ == proc.EVENT_PROC_EXIT {
+					go a.processExit(d.Pid)
+				}
+			}
 		}
 	}
 }
@@ -288,13 +323,6 @@ func (a *Aggregator) processEbpf(ctx context.Context) {
 			case l7_req.L7_EVENT:
 				d := data.(*l7_req.L7Event) // copy data's value
 				go a.processL7(ctx, d)
-			case proc.PROC_EVENT:
-				d := data.(*proc.ProcEvent) // copy data's value
-				if d.Type_ == proc.EVENT_PROC_EXEC {
-					go a.processExec(d)
-				} else if d.Type_ == proc.EVENT_PROC_EXIT {
-					go a.processExit(d.Pid)
-				}
 			case l7_req.TRACE_EVENT:
 				d := data.(*l7_req.TraceEvent)
 				a.ds.PersistTraceEvent(d)
