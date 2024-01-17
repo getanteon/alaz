@@ -297,7 +297,7 @@ func (a *Aggregator) processEbpf(ctx context.Context) {
 				}
 			case l7_req.TRACE_EVENT:
 				d := data.(*l7_req.TraceEvent)
-				a.ds.PersistTraceEvent(d)
+				go a.ds.PersistTraceEvent(d)
 			}
 		}
 	}
