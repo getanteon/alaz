@@ -14,6 +14,7 @@ import (
 	"net"
 	"os/exec"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -53,8 +54,7 @@ type Aggregator struct {
 
 	// http2 ch
 	h2ChMu sync.RWMutex
-	// h2Ch   map[uint32]chan *l7_req.L7Event // pid -> ch
-	h2Ch chan *l7_req.L7Event // pid -> ch
+	h2Ch   chan *l7_req.L7Event
 
 	h2ParserMu sync.RWMutex
 	h2Parsers  map[string]*http2Parser // pid-fd -> http2Parser
@@ -236,7 +236,7 @@ func (a *Aggregator) Run() {
 	}()
 	go a.processk8s()
 
-	numWorker := 100
+	numWorker := runtime.NumCPU()
 	for i := 0; i < numWorker; i++ {
 		go a.processEbpf(a.ctx)
 	}
@@ -301,15 +301,9 @@ func (a *Aggregator) processEbpfProc(ctx context.Context) {
 }
 
 func (a *Aggregator) processEbpf(ctx context.Context) {
-	stop := make(chan struct{})
-	go func() {
-		<-ctx.Done()
-		close(stop)
-	}()
-
 	for data := range a.ebpfChan {
 		select {
-		case <-stop:
+		case <-ctx.Done():
 			log.Logger.Info().Msg("processEbpf exiting...")
 			return
 		default:
@@ -348,31 +342,18 @@ func (a *Aggregator) processExit(pid uint32) {
 	delete(a.clusterInfo.PidToSocketMap, pid)
 	a.clusterInfo.mu.Unlock()
 
-	// close http2Worker if exist
-	// a.stopHttp2Worker(pid)
+	a.h2ParserMu.Lock()
+	for key, parser := range a.h2Parsers {
+		// h2Parsers  map[string]*http2Parser // pid-fd -> http2Parser
+		if strings.HasPrefix(key, fmt.Sprint(pid)) {
+			parser.clientHpackDecoder.Close()
+			parser.serverHpackDecoder.Close()
+
+			delete(a.h2Parsers, key)
+		}
+	}
+	a.h2ParserMu.Unlock()
 }
-
-// func (a *Aggregator) stopHttp2Worker(pid uint32) {
-// 	a.h2ChMu.Lock()
-// 	defer a.h2ChMu.Unlock()
-// 	if ch, ok := a.h2Ch[pid]; ok {
-// 		close(ch)
-// 		delete(a.h2Ch, pid)
-
-// 		a.h2ParserMu.Lock()
-// 		for key, parser := range a.h2Parsers {
-// 			// h2Parsers  map[string]*http2Parser // pid-fd -> http2Parser
-// 			if strings.HasPrefix(key, fmt.Sprint(pid)) {
-// 				parser.clientHpackDecoder.Close()
-// 				parser.serverHpackDecoder.Close()
-
-// 				delete(a.h2Parsers, key)
-// 			}
-// 		}
-// 		a.h2ParserMu.Unlock()
-
-// 	}
-// }
 
 func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
 	go a.ec.ListenForEncryptedReqs(d.Pid)
@@ -868,19 +849,6 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 			}
 			a.h2ParserMu.Unlock()
 		}
-
-		// a.h2ChMu.RLock()
-		// ch, ok = a.h2Ch[d.Pid]
-		// a.h2ChMu.RUnlock()
-		// if !ok {
-		// 	// initialize channel
-		// 	h2ChPid := make(chan *l7_req.L7Event, 100)
-		// 	a.h2ChMu.Lock()
-		// 	a.h2Ch[d.Pid] = h2ChPid
-		// 	ch = h2ChPid
-		// 	a.h2ChMu.Unlock()
-		// 	go a.processHttp2Frames(d.Pid, ch) // worker per pid, will be called once
-		// }
 
 		a.h2Ch <- d
 		return
