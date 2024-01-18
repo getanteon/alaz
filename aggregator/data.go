@@ -169,7 +169,7 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, ec *eb
 		ec:            ec,
 		clusterInfo:   clusterInfo,
 		ds:            ds,
-		h2Ch:          make(chan *l7_req.L7Event, 10000),
+		h2Ch:          make(chan *l7_req.L7Event, 1000000),
 		h2Parsers:     make(map[string]*http2Parser),
 		liveProcesses: make(map[uint32]struct{}),
 		rateLimiters:  make(map[uint32]*rate.Limiter),
@@ -233,9 +233,6 @@ func (a *Aggregator) Run() {
 					a.clusterInfo.mu.Lock()
 					delete(a.clusterInfo.PidToSocketMap, pid)
 					a.clusterInfo.mu.Unlock()
-
-					// close http2Worker if exist
-					// a.stopHttp2Worker(pid)
 				}
 			}
 
@@ -249,10 +246,7 @@ func (a *Aggregator) Run() {
 		go a.processEbpf(a.ctx)
 	}
 
-	numWorker /= 2
-	for i := 0; i < numWorker; i++ {
-		go a.processHttp2Frames()
-	}
+	go a.processHttp2Frames()
 
 	go a.processEbpfProc(a.ctx)
 }
@@ -862,27 +856,12 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 
 	if d.Protocol == l7_req.L7_PROTOCOL_HTTP2 {
 		var ok bool
-		// var ch chan *l7_req.L7Event
 
 		a.liveProcessesMu.RLock()
 		_, ok = a.liveProcesses[d.Pid]
 		a.liveProcessesMu.RUnlock()
 		if !ok {
 			return // if a late event comes, do not create parsers and new worker to avoid memory leak
-		}
-
-		connKey := a.getConnKey(d.Pid, d.Fd)
-		a.h2ParserMu.RLock()
-		_, ok = a.h2Parsers[connKey]
-		a.h2ParserMu.RUnlock()
-		if !ok {
-			// initialize parser
-			a.h2ParserMu.Lock()
-			a.h2Parsers[connKey] = &http2Parser{
-				clientHpackDecoder: hpack.NewDecoder(4096, nil),
-				serverHpackDecoder: hpack.NewDecoder(4096, nil),
-			}
-			a.h2ParserMu.Unlock()
 		}
 
 		a.h2Ch <- d
