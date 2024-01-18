@@ -19,6 +19,9 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+
+	"golang.org/x/time/rate"
+
 	"time"
 
 	"github.com/ddosify/alaz/datastore"
@@ -61,6 +64,10 @@ type Aggregator struct {
 
 	liveProcessesMu sync.RWMutex
 	liveProcesses   map[uint32]struct{} // pid -> struct{}
+
+	// Used to rate limit and drop trace events based on pid
+	rateLimiters map[uint32]*rate.Limiter // pid -> rateLimiter
+	rateLimitMu  sync.RWMutex
 }
 
 // We need to keep track of the following
@@ -165,6 +172,7 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, ec *eb
 		h2Ch:          make(chan *l7_req.L7Event, 10000),
 		h2Parsers:     make(map[string]*http2Parser),
 		liveProcesses: make(map[uint32]struct{}),
+		rateLimiters:  make(map[uint32]*rate.Limiter),
 	}
 
 	go a.clearSocketLines(ctx)
@@ -321,10 +329,29 @@ func (a *Aggregator) processEbpf(ctx context.Context) {
 				go a.processL7(ctx, d)
 			case l7_req.TRACE_EVENT:
 				d := data.(*l7_req.TraceEvent)
-				a.ds.PersistTraceEvent(d)
+				rateLimiter := a.getRateLimiterForPid(d.Pid)
+				if rateLimiter.Allow() {
+					a.ds.PersistTraceEvent(d)
+				}
 			}
 		}
 	}
+}
+
+func (a *Aggregator) getRateLimiterForPid(pid uint32) *rate.Limiter {
+	var limiter *rate.Limiter
+	a.rateLimitMu.RLock()
+	limiter, ok := a.rateLimiters[pid]
+	a.rateLimitMu.RUnlock()
+	if !ok {
+		a.rateLimitMu.Lock()
+		// r means number of token added to bucket per second, maximum number of token in bucket is b, if bucket is full, token will be dropped
+		// b means the initial and max number of token in bucket
+		limiter = rate.NewLimiter(100, 1000) // TODO: decide limits
+		a.rateLimiters[pid] = limiter
+		a.rateLimitMu.Unlock()
+	}
+	return limiter
 }
 
 func (a *Aggregator) processExec(d *proc.ProcEvent) {
@@ -353,6 +380,10 @@ func (a *Aggregator) processExit(pid uint32) {
 		}
 	}
 	a.h2ParserMu.Unlock()
+
+	a.rateLimitMu.Lock()
+	delete(a.rateLimiters, pid)
+	a.rateLimitMu.Unlock()
 }
 
 func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
