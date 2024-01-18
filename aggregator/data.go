@@ -249,8 +249,12 @@ func (a *Aggregator) Run() {
 		go a.processEbpf(a.ctx)
 	}
 
+	numWorker /= 2
+	for i := 0; i < numWorker; i++ {
+		go a.processHttp2Frames()
+	}
+
 	go a.processEbpfProc(a.ctx)
-	go a.processHttp2Frames()
 }
 
 func (a *Aggregator) processk8s() {
