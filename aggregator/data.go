@@ -253,14 +253,14 @@ func (a *Aggregator) Run() {
 	}()
 	go a.processk8s()
 
-	numWorker := runtime.NumCPU()
+	numWorker := 10 * runtime.NumCPU()
 	for i := 0; i < numWorker; i++ {
 		go a.processEbpf(a.ctx)
+		go a.processEbpfProc(a.ctx)
 	}
 
 	go a.processHttp2Frames()
 
-	go a.processEbpfProc(a.ctx)
 }
 
 func (a *Aggregator) processk8s() {
@@ -309,9 +309,9 @@ func (a *Aggregator) processEbpfProc(ctx context.Context) {
 			case proc.PROC_EVENT:
 				d := data.(*proc.ProcEvent) // copy data's value
 				if d.Type_ == proc.EVENT_PROC_EXEC {
-					go a.processExec(d)
+					a.processExec(d)
 				} else if d.Type_ == proc.EVENT_PROC_EXIT {
-					go a.processExit(d.Pid)
+					a.processExit(d.Pid)
 				}
 			}
 		}
@@ -333,10 +333,10 @@ func (a *Aggregator) processEbpf(ctx context.Context) {
 			switch bpfEvent.Type() {
 			case tcp_state.TCP_CONNECT_EVENT:
 				d := data.(*tcp_state.TcpConnectEvent) // copy data's value
-				go a.processTcpConnect(d)
+				a.processTcpConnect(d)
 			case l7_req.L7_EVENT:
 				d := data.(*l7_req.L7Event) // copy data's value
-				go a.processL7(ctx, d)
+				a.processL7(ctx, d)
 			case l7_req.TRACE_EVENT:
 				d := data.(*l7_req.TraceEvent)
 				rateLimiter := a.getRateLimiterForPid(d.Pid)
@@ -490,7 +490,6 @@ func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
 		}
 		delete(a.h2Parsers, key)
 		a.h2ParserMu.Unlock()
-
 	}
 }
 
