@@ -233,6 +233,18 @@ func (a *Aggregator) Run() {
 					a.clusterInfo.mu.Lock()
 					delete(a.clusterInfo.PidToSocketMap, pid)
 					a.clusterInfo.mu.Unlock()
+
+					a.h2ParserMu.Lock()
+					for key, parser := range a.h2Parsers {
+						// h2Parsers  map[string]*http2Parser // pid-fd -> http2Parser
+						if strings.HasPrefix(key, fmt.Sprint(pid)) {
+							parser.clientHpackDecoder.Close()
+							parser.serverHpackDecoder.Close()
+
+							delete(a.h2Parsers, key)
+						}
+					}
+					a.h2ParserMu.Unlock()
 				}
 			}
 
