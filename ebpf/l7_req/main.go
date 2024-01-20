@@ -558,9 +558,9 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 				EventReadTime:       time.Now().UnixMilli(),
 			}
 
-			go func() {
-				ch <- userspacel7Event
-			}()
+			go func(l7Event *L7Event) {
+				ch <- l7Event
+			}(userspacel7Event)
 		}
 		for {
 			select {

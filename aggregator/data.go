@@ -288,15 +288,9 @@ func (a *Aggregator) processk8s() {
 }
 
 func (a *Aggregator) processEbpfProc(ctx context.Context) {
-	stop := make(chan struct{})
-	go func() {
-		<-ctx.Done()
-		close(stop)
-	}()
-
 	for data := range a.ebpfProcChan {
 		select {
-		case <-stop:
+		case <-ctx.Done():
 			log.Logger.Info().Msg("processEbpf exiting...")
 			return
 		default:
