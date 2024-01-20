@@ -404,11 +404,11 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 			}
 
 			if record.LostSamples != 0 {
-				log.Logger.Warn().Msgf("lost #%d samples due to ring buffer's full", record.LostSamples)
+				log.Logger.Warn().Msgf("lost #%d bpf logs", record.LostSamples)
 			}
 
 			if record.RawSample == nil || len(record.RawSample) == 0 {
-				log.Logger.Warn().Msgf("read empty record from perf array")
+				log.Logger.Warn().Msgf("read empty record from log perf array")
 				return
 			}
 

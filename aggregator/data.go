@@ -374,9 +374,10 @@ func (a *Aggregator) processExit(pid uint32) {
 	a.clusterInfo.mu.Unlock()
 
 	a.h2ParserMu.Lock()
+	pid_s := fmt.Sprint(pid)
 	for key, parser := range a.h2Parsers {
 		// h2Parsers  map[string]*http2Parser // pid-fd -> http2Parser
-		if strings.HasPrefix(key, fmt.Sprint(pid)) {
+		if strings.HasPrefix(key, pid_s) {
 			parser.clientHpackDecoder.Close()
 			parser.serverHpackDecoder.Close()
 
