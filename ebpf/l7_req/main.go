@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"strconv"
 	"time"
 	"unsafe"
 
@@ -13,6 +14,23 @@ import (
 	"github.com/cilium/ebpf/perf"
 	"github.com/cilium/ebpf/rlimit"
 )
+
+var DIST_TRACING_ENABLED bool
+
+func init() {
+	DIST_TRACING_ENABLED = true
+
+	flag := os.Getenv("DIST_TRACING_ENABLED")
+
+	if flag != "" {
+		enabled, err := strconv.ParseBool(flag)
+		if err != nil {
+			log.Logger.Warn().Str("flag", "DIST_TRACING_ENABLED").Err(err).Msg("flag set incorrect")
+			DIST_TRACING_ENABLED = false
+		}
+		DIST_TRACING_ENABLED = enabled
+	}
+}
 
 // match with values in l7_req.c
 const (
@@ -363,7 +381,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	}()
 
 	// initialize perf event readers
-	l7Events, err := perf.NewReader(L7BpfProgsAndMaps.L7Events, 512*os.Getpagesize())
+	l7Events, err := perf.NewReader(L7BpfProgsAndMaps.L7Events, 4096*os.Getpagesize())
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
 	}
@@ -381,12 +399,12 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		logs.Close()
 	}()
 
-	distTraceCalls, err := perf.NewReader(L7BpfProgsAndMaps.IngressEgressCalls, 512*os.Getpagesize())
+	distTraceCalls, err := perf.NewReader(L7BpfProgsAndMaps.IngressEgressCalls, 4096*os.Getpagesize())
 	if err != nil {
-		log.Logger.Fatal().Err(err).Msg("error creating ringbuf reader")
+		log.Logger.Fatal().Err(err).Msg("error creating perf reader")
 	}
 	defer func() {
-		log.Logger.Info().Msg("closing distTraceCalls ringbuf reader")
+		log.Logger.Info().Msg("closing distTraceCalls perf reader")
 		distTraceCalls.Close()
 	}()
 
@@ -404,11 +422,11 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 			}
 
 			if record.LostSamples != 0 {
-				log.Logger.Warn().Msgf("lost #%d samples due to ring buffer's full", record.LostSamples)
+				log.Logger.Warn().Msgf("lost #%d bpf logs", record.LostSamples)
 			}
 
 			if record.RawSample == nil || len(record.RawSample) == 0 {
-				log.Logger.Warn().Msgf("read empty record from perf array")
+				log.Logger.Warn().Msgf("read empty record from log perf array")
 				return
 			}
 
@@ -584,22 +602,25 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 				log.Logger.Warn().Msgf("lost samples dist-trace %d", record.LostSamples)
 			}
 
-			// TODO: investigate why this is happening
 			if record.RawSample == nil || len(record.RawSample) == 0 {
 				log.Logger.Warn().Msgf("read sample dist-trace nil or empty")
 				return
 			}
 
-			bpfTraceEvent := (*bpfTraceEvent)(unsafe.Pointer(&record.RawSample[0]))
+			// TODO: we need to compile bpf bytecode accordingly and select the one complies with the flag to attach into kernel.
+			// That way, we'll not send data from bpf that will not get into processing in user space.
+			if DIST_TRACING_ENABLED {
+				bpfTraceEvent := (*bpfTraceEvent)(unsafe.Pointer(&record.RawSample[0]))
 
-			traceEvent := TraceEvent{
-				Pid:   bpfTraceEvent.Pid,
-				Tid:   bpfTraceEvent.Tid,
-				Tx:    time.Now().UnixMilli(),
-				Type_: bpfTraceEvent.Type_,
-				Seq:   bpfTraceEvent.Seq,
+				traceEvent := TraceEvent{
+					Pid:   bpfTraceEvent.Pid,
+					Tid:   bpfTraceEvent.Tid,
+					Tx:    time.Now().UnixMilli(),
+					Type_: bpfTraceEvent.Type_,
+					Seq:   bpfTraceEvent.Seq,
+				}
+				ch <- &traceEvent
 			}
-			ch <- &traceEvent
 		}
 		for {
 			select {
