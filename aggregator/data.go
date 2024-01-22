@@ -359,7 +359,7 @@ func (a *Aggregator) getRateLimiterForPid(pid uint32) *rate.Limiter {
 		a.rateLimitMu.Lock()
 		// r means number of token added to bucket per second, maximum number of token in bucket is b, if bucket is full, token will be dropped
 		// b means the initial and max number of token in bucket
-		limiter = rate.NewLimiter(100, 1000) // TODO: decide limits
+		limiter = rate.NewLimiter(100, 1000)
 		a.rateLimiters[pid] = limiter
 		a.rateLimitMu.Unlock()
 	}
