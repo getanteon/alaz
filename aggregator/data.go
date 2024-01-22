@@ -56,8 +56,9 @@ type Aggregator struct {
 	ds datastore.DataStore
 
 	// http2 ch
-	h2ChMu sync.RWMutex
-	h2Ch   chan *l7_req.L7Event
+	h2Mu     sync.RWMutex
+	h2Ch     chan *l7_req.L7Event
+	h2Frames map[string]*FrameArrival // pid-fd-streamId -> frame
 
 	h2ParserMu sync.RWMutex
 	h2Parsers  map[string]*http2Parser // pid-fd -> http2Parser
@@ -171,6 +172,7 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, ec *eb
 		ds:            ds,
 		h2Ch:          make(chan *l7_req.L7Event, 1000000),
 		h2Parsers:     make(map[string]*http2Parser),
+		h2Frames:      make(map[string]*FrameArrival),
 		liveProcesses: make(map[uint32]struct{}),
 		rateLimiters:  make(map[uint32]*rate.Limiter),
 	}
@@ -208,7 +210,7 @@ func (a *Aggregator) Run() {
 
 	}()
 	go func() {
-		// every 5 minutes, check alive processes, and clear the ones left behind
+		// every 2 minutes, check alive processes, and clear the ones left behind
 		// since we process events concurrently, some short-lived processes exit event can come before exec events
 		// this causes zombie http2 workers
 
@@ -253,14 +255,20 @@ func (a *Aggregator) Run() {
 	}()
 	go a.processk8s()
 
-	numWorker := 10 * runtime.NumCPU()
+	cpuCount := runtime.NumCPU()
+	numWorker := 10 * cpuCount
+	if numWorker < 100 {
+		numWorker = 100 // min number
+	}
 	for i := 0; i < numWorker; i++ {
 		go a.processEbpf(a.ctx)
 		go a.processEbpfProc(a.ctx)
 	}
 
-	go a.processHttp2Frames()
-
+	// TODO: pod number may be ideal
+	for i := 0; i < 2*cpuCount; i++ {
+		go a.processHttp2Frames()
+	}
 }
 
 func (a *Aggregator) processk8s() {
@@ -525,13 +533,9 @@ type FrameArrival struct {
 }
 
 func (a *Aggregator) processHttp2Frames() {
-	mu := sync.RWMutex{}
-
 	createFrameKey := func(pid uint32, fd uint64, streamId uint32) string {
 		return fmt.Sprintf("%d-%d-%d", pid, fd, streamId)
 	}
-	// pid-fd-streamId -> frame
-	frames := make(map[string]*FrameArrival)
 
 	done := make(chan bool, 1)
 
@@ -542,15 +546,15 @@ func (a *Aggregator) processHttp2Frames() {
 		for {
 			select {
 			case <-t.C:
-				mu.Lock()
-				for key, f := range frames {
+				a.h2Mu.Lock()
+				for key, f := range a.h2Frames {
 					if f.ClientHeadersFrameArrived && !f.ServerHeadersFrameArrived {
-						delete(frames, key)
+						delete(a.h2Frames, key)
 					} else if !f.ClientHeadersFrameArrived && f.ServerHeadersFrameArrived {
-						delete(frames, key)
+						delete(a.h2Frames, key)
 					}
 				}
-				mu.Unlock()
+				a.h2Mu.Unlock()
 			case <-done:
 				return
 			}
@@ -674,15 +678,15 @@ func (a *Aggregator) processHttp2Frames() {
 
 				streamId := fh.StreamID
 				key := createFrameKey(d.Pid, fd, streamId)
-				mu.Lock()
-				if _, ok := frames[key]; !ok {
-					frames[key] = &FrameArrival{
+				a.h2Mu.Lock()
+				if _, ok := a.h2Frames[key]; !ok {
+					a.h2Frames[key] = &FrameArrival{
 						ClientHeadersFrameArrived: true,
 						req:                       &datastore.Request{},
 					}
 				}
 
-				fa := frames[key]
+				fa := a.h2Frames[key]
 				fa.ClientHeadersFrameArrived = true
 				fa.req.Latency = d.WriteTimeNs // set latency to write time here, will be updated later
 
@@ -721,9 +725,9 @@ func (a *Aggregator) processHttp2Frames() {
 				if fa.ServerHeadersFrameArrived {
 					req := *fa.req
 					go persistReq(d, &req, fa.statusCode, fa.grpcStatus)
-					delete(frames, key)
+					delete(a.h2Frames, key)
 				}
-				mu.Unlock()
+				a.h2Mu.Unlock()
 				break
 			}
 		} else if d.Method == l7_req.SERVER_FRAME {
@@ -751,14 +755,14 @@ func (a *Aggregator) processHttp2Frames() {
 				}
 
 				if fh.Type == http2.FrameHeaders {
-					mu.Lock()
-					if _, ok := frames[key]; !ok {
-						frames[key] = &FrameArrival{
+					a.h2Mu.Lock()
+					if _, ok := a.h2Frames[key]; !ok {
+						a.h2Frames[key] = &FrameArrival{
 							ServerHeadersFrameArrived: true,
 							req:                       &datastore.Request{},
 						}
 					}
-					fa := frames[key]
+					fa := a.h2Frames[key]
 					fa.ServerHeadersFrameArrived = true
 					// Process server headers frame
 					respHeaderSet := func(req *datastore.Request) func(hf hpack.HeaderField) {
@@ -779,9 +783,9 @@ func (a *Aggregator) processHttp2Frames() {
 					if fa.ClientHeadersFrameArrived {
 						req := *fa.req
 						go persistReq(d, &req, fa.statusCode, fa.grpcStatus)
-						delete(frames, key)
+						delete(a.h2Frames, key)
 					}
-					mu.Unlock()
+					a.h2Mu.Unlock()
 					break
 				}
 			}
@@ -1076,7 +1080,7 @@ func parseSqlCommand(r []uint8) (string, error) {
 }
 
 func (a *Aggregator) clearSocketLines(ctx context.Context) {
-	ticker := time.NewTicker(1 * time.Minute)
+	ticker := time.NewTicker(30 * time.Second)
 	skLineCh := make(chan *SocketLine, 1000)
 
 	go func() {
