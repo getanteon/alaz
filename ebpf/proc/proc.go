@@ -3,7 +3,6 @@ package proc
 import (
 	"context"
 	"os"
-	"time"
 	"unsafe"
 
 	"github.com/ddosify/alaz/log"
@@ -60,7 +59,42 @@ func (e ProcEvent) Type() string {
 
 var objs bpfObjects
 
-func LoadBpfObjects() {
+type ProcProgConfig struct {
+	ProcEventsMapSize uint32 // specified in terms of os page size
+}
+
+var defaultConfig *ProcProgConfig = &ProcProgConfig{
+	ProcEventsMapSize: 16,
+}
+
+type ProcProg struct {
+	// links represent a program attached to a hook
+	links             map[string]link.Link // key : hook name
+	ProcEvents        *perf.Reader
+	ProcEventsMapSize uint32
+}
+
+func InitProcProg(conf *ProcProgConfig) *ProcProg {
+	if conf == nil {
+		conf = defaultConfig
+	}
+
+	return &ProcProg{
+		links:             map[string]link.Link{},
+		ProcEventsMapSize: conf.ProcEventsMapSize,
+	}
+}
+
+func (pp *ProcProg) Close() {
+	for hookName, link := range pp.links {
+		log.Logger.Info().Msgf("unattach %s", hookName)
+		link.Close()
+	}
+	objs.Close()
+}
+
+// Loads bpf programs into kernel
+func (pp *ProcProg) Load() {
 	// Allow the current process to lock memory for eBPF resources.
 	if err := rlimit.RemoveMemlock(); err != nil {
 		log.Logger.Fatal().Err(err).Msg("failed to remove memlock limit")
@@ -72,78 +106,56 @@ func LoadBpfObjects() {
 		log.Logger.Fatal().Err(err).Msg("loading objects")
 	}
 }
-
-// returns when program is detached
-func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
-	ctx, _ := context.WithCancel(parentCtx)
-	defer objs.Close()
-
-	time.Sleep(1 * time.Second)
-
+func (pp *ProcProg) Attach() {
 	l, err := link.Tracepoint("sched", "sched_process_exit", objs.bpfPrograms.SchedProcessExit, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sched_process_exit tracepoint")
 	}
-	defer func() {
-		log.Logger.Info().Msg("closing sched_process_exit tracepoint")
-		l.Close()
-	}()
+	pp.links["sched/sched_process_exit"] = l
 
 	l1, err := link.Tracepoint("sched", "sched_process_exec", objs.bpfPrograms.SchedProcessExec, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sched_process_exec tracepoint")
 	}
-	defer func() {
-		log.Logger.Info().Msg("closing sched_process_exec tracepoint")
-		l1.Close()
-	}()
+	pp.links["sched/sched_process_exec"] = l1
+}
 
-	pEvents, err := perf.NewReader(objs.ProcEvents, 16*os.Getpagesize())
+func (pp *ProcProg) InitMaps() {
+	var err error
+	pp.ProcEvents, err = perf.NewReader(objs.ProcEvents, 16*os.Getpagesize())
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("error creating ringbuf reader")
 	}
-	defer func() {
-		log.Logger.Info().Msg("closing pExitEvents ringbuf reader")
-		pEvents.Close()
-	}()
+}
 
-	// go listenDebugMsgs()
-
-	readDone := make(chan struct{})
-	go func() {
-		for {
-			read := func() {
-				record, err := pEvents.Read()
-				if err != nil {
-					log.Logger.Warn().Err(err).Msg("error reading from pExitEvents")
-				}
-
-				if record.RawSample == nil || len(record.RawSample) == 0 {
-					log.Logger.Debug().Msgf("read sample l7-event nil or empty")
-					return
-				}
-
-				bpfEvent := (*PEvent)(unsafe.Pointer(&record.RawSample[0]))
-
-				go func() {
-					ch <- &ProcEvent{
-						Pid:   bpfEvent.Pid,
-						Type_: ProcEventConversion(bpfEvent.Type_).String(),
-					}
-				}()
+func (pp *ProcProg) Consume(ctx context.Context, ch chan interface{}) {
+	for {
+		read := func() {
+			record, err := pp.ProcEvents.Read()
+			if err != nil {
+				log.Logger.Warn().Err(err).Msg("error reading from proc events map")
 			}
 
-			select {
-			case <-readDone:
+			if record.RawSample == nil || len(record.RawSample) == 0 {
+				log.Logger.Debug().Msgf("read sample l7-event nil or empty")
 				return
-			default:
-				read()
 			}
 
-		}
-	}()
+			bpfEvent := (*PEvent)(unsafe.Pointer(&record.RawSample[0]))
 
-	<-ctx.Done() // wait for context to be cancelled
-	readDone <- struct{}{}
-	// defers will clean up
+			go func() {
+				ch <- &ProcEvent{
+					Pid:   bpfEvent.Pid,
+					Type_: ProcEventConversion(bpfEvent.Type_).String(),
+				}
+			}()
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			read()
+		}
+	}
 }

@@ -63,7 +63,8 @@ func main() {
 	var ec *ebpf.EbpfCollector
 	if ebpfEnabled {
 		ec = ebpf.NewEbpfCollector(ctx)
-		go ec.Deploy()
+		ec.Init()
+		go ec.ListenEvents()
 
 		a := aggregator.NewAggregator(ctx, kubeEvents, ec, dsBackend)
 		a.Run()

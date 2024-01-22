@@ -41,7 +41,7 @@ type EbpfCollector struct {
 	ebpfProcEvents chan interface{}
 	tlsAttachQueue chan uint32
 
-	// TODO: objectify l7_req and tcp_state
+	bpfPrograms map[string]Program
 
 	sslWriteUprobes     map[uint32]link.Link
 	sslReadEnterUprobes map[uint32]link.Link
@@ -59,6 +59,13 @@ type EbpfCollector struct {
 func NewEbpfCollector(parentCtx context.Context) *EbpfCollector {
 	ctx, _ := context.WithCancel(parentCtx)
 
+	bpfPrograms := make(map[string]Program)
+
+	// initialize bpfPrograms
+	bpfPrograms["tcp_state_prog"] = tcp_state.InitTcpStateProg(nil)
+	bpfPrograms["l7_prog"] = l7_req.InitL7Prog(nil)
+	bpfPrograms["proc_prog"] = proc.InitProcProg(nil)
+
 	return &EbpfCollector{
 		ctx:                 ctx,
 		done:                make(chan struct{}),
@@ -72,6 +79,7 @@ func NewEbpfCollector(parentCtx context.Context) *EbpfCollector {
 		goTlsReadUprobes:    make(map[uint32]link.Link),
 		goTlsReadUretprobes: make(map[uint32][]link.Link),
 		tlsAttachQueue:      make(chan uint32, 10),
+		bpfPrograms:         bpfPrograms,
 	}
 }
 
@@ -87,41 +95,35 @@ func (e *EbpfCollector) EbpfProcEvents() chan interface{} {
 	return e.ebpfProcEvents
 }
 
-func (e *EbpfCollector) Deploy() {
-	// load programs and convert them to user space structs
+func (e *EbpfCollector) Init() {
+	for _, p := range e.bpfPrograms {
+		p.Load()
+		p.Attach()
+		p.InitMaps()
+	}
+
+	go func() {
+		<-e.ctx.Done()
+		e.close()
+		close(e.done)
+	}()
+}
+
+func (e *EbpfCollector) ListenEvents() {
+	go e.bpfPrograms["tcp_state_prog"].Consume(e.ctx, e.ebpfEvents)
+	go e.bpfPrograms["l7_prog"].Consume(e.ctx, e.ebpfEvents)
+	go e.bpfPrograms["proc_prog"].Consume(e.ctx, e.ebpfProcEvents)
+
 	go e.AttachUprobesForEncrypted()
-
-	tcp_state.LoadBpfObjects()
-	l7_req.LoadBpfObjects()
-	proc.LoadBpfObjects()
-
-	// function to version to program
-
-	wg := sync.WaitGroup{}
-	wg.Add(3)
-	go func() {
-		defer wg.Done()
-		tcp_state.DeployAndWait(e.ctx, e.ebpfEvents)
-	}()
-	go func() {
-		defer wg.Done()
-		l7_req.DeployAndWait(e.ctx, e.ebpfEvents)
-	}()
-	go func() {
-		defer wg.Done()
-		proc.DeployAndWait(e.ctx, e.ebpfProcEvents)
-	}()
-	wg.Wait()
-
-	log.Logger.Info().Msg("reading ebpf maps stopped")
-	e.close()
-	close(e.done)
-
-	// go listenDebugMsgs()
 }
 
 func (e *EbpfCollector) close() {
 	log.Logger.Info().Msg("closing ebpf links")
+
+	for _, p := range e.bpfPrograms {
+		p.Close()
+	}
+
 	close(e.ebpfEvents)
 	close(e.ebpfProcEvents)
 

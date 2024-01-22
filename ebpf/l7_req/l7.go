@@ -281,11 +281,59 @@ func (e *L7Event) Type() string {
 
 var L7BpfProgsAndMaps bpfObjects
 
-func LoadBpfObjects() {
+type L7ProgConfig struct {
+	TrafficBpfMapSize  uint32 // specified in terms of os page size
+	L7EventsBpfMapSize uint32 // specified in terms of os page size
+	LogsBpfMapSize     uint32
+}
+
+var defaultConfig *L7ProgConfig = &L7ProgConfig{
+	TrafficBpfMapSize:  4096,
+	L7EventsBpfMapSize: 4096,
+	LogsBpfMapSize:     4,
+}
+
+type L7Prog struct {
+	// links represent a program attached to a hook
+	links map[string]link.Link // key : hook name
+
+	l7Events *perf.Reader
+	logs     *perf.Reader
+	traffic  *perf.Reader // ingress-egress calls
+
+	l7EventsMapSize uint32
+	trafficMapSize  uint32
+	logsMapsSize    uint32
+}
+
+func InitL7Prog(conf *L7ProgConfig) *L7Prog {
+	if conf == nil {
+		conf = defaultConfig
+	}
+
+	return &L7Prog{
+		links:           map[string]link.Link{},
+		l7EventsMapSize: conf.L7EventsBpfMapSize,
+		trafficMapSize:  conf.TrafficBpfMapSize,
+		logsMapsSize:    conf.LogsBpfMapSize,
+	}
+}
+
+func (l7p *L7Prog) Close() {
+	for hookName, link := range l7p.links {
+		log.Logger.Info().Msgf("unattach %s", hookName)
+		link.Close()
+	}
+	L7BpfProgsAndMaps.Close()
+}
+
+// Loads bpf programs into kernel
+func (l7p *L7Prog) Load() {
 	// Allow the current process to lock memory for eBPF resources.
 	if err := rlimit.RemoveMemlock(); err != nil {
 		log.Logger.Fatal().Err(err).Msg("failed to remove memlock limit")
 	}
+
 	// Load pre-compiled programs and maps into the kernel.
 	L7BpfProgsAndMaps = bpfObjects{}
 	if err := loadBpfObjects(&L7BpfProgsAndMaps, nil); err != nil {
@@ -293,130 +341,84 @@ func LoadBpfObjects() {
 	}
 }
 
-// returns when program is detached
-func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
-	ctx, _ := context.WithCancel(parentCtx)
-	defer L7BpfProgsAndMaps.Close()
-
-	// link programs
+func (l7p *L7Prog) Attach() {
 	l, err := link.Tracepoint("syscalls", "sys_enter_read", L7BpfProgsAndMaps.bpfPrograms.SysEnterRead, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_enter_read tracepoint")
 	}
-	log.Logger.Info().Msg("sys_enter_read linked")
-	defer func() {
-		log.Logger.Info().Msg("closing sys_enter_read tracepoint")
-		l.Close()
-	}()
+	l7p.links["syscalls/sys_enter_read"] = l
 
 	l1, err := link.Tracepoint("syscalls", "sys_enter_write", L7BpfProgsAndMaps.bpfPrograms.SysEnterWrite, nil)
 	if err != nil {
-		log.Logger.Warn().Str("verifier log", string(L7BpfProgsAndMaps.bpfPrograms.SysEnterWrite.VerifierLog)).Msg("verifier log")
 		log.Logger.Fatal().Err(err).Msg("link sys_enter_write tracepoint")
 	}
-	log.Logger.Info().Msg("sys_enter_write linked")
-	defer func() {
-		log.Logger.Info().Msg("closing sys_enter_write tracepoint")
-		l1.Close()
-	}()
+	l7p.links["syscalls/sys_enter_write"] = l1
 
 	l2, err := link.Tracepoint("syscalls", "sys_exit_read", L7BpfProgsAndMaps.bpfPrograms.SysExitRead, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_exit_read tracepoint")
 	}
-	log.Logger.Info().Msg("sys_exit_read linked")
-	defer func() {
-		log.Logger.Info().Msg("closing sys_exit_read tracepoint")
-		l2.Close()
-	}()
+	l7p.links["syscalls/sys_exit_read"] = l2
 
 	l3, err := link.Tracepoint("syscalls", "sys_enter_sendto", L7BpfProgsAndMaps.bpfPrograms.SysEnterSendto, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_enter_sendto tracepoint")
 	}
-	log.Logger.Info().Msg("sys_enter_sendto linked")
-	defer func() {
-		log.Logger.Info().Msg("closing sys_enter_sendto tracepoint")
-		l3.Close()
-	}()
+	l7p.links["syscalls/sys_enter_sendto"] = l3
 
 	l4, err := link.Tracepoint("syscalls", "sys_enter_recvfrom", L7BpfProgsAndMaps.bpfPrograms.SysEnterRecvfrom, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_enter_recvfrom tracepoint")
 	}
-	log.Logger.Info().Msg("sys_enter_recvfrom linked")
-	defer func() {
-		log.Logger.Info().Msg("closing sys_enter_recvfrom tracepoint")
-		l4.Close()
-	}()
+	l7p.links["syscalls/sys_enter_recvfrom"] = l4
 
 	l5, err := link.Tracepoint("syscalls", "sys_exit_recvfrom", L7BpfProgsAndMaps.bpfPrograms.SysExitRecvfrom, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_exit_recvfrom tracepoint")
 	}
-	log.Logger.Info().Msg("sys_exit_recvfrom linked")
-	defer func() {
-		log.Logger.Info().Msg("closing sys_exit_recvfrom tracepoint")
-		l5.Close()
-	}()
+	l7p.links["syscalls/sys_exit_recvfrom"] = l5
 
 	l6, err := link.Tracepoint("syscalls", "sys_exit_sendto", L7BpfProgsAndMaps.bpfPrograms.SysExitSendto, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_exit_sendto tracepoint")
 	}
-	log.Logger.Info().Msg("sys_exit_sendto linked")
-	defer func() {
-		log.Logger.Info().Msg("closing sys_exit_sendto tracepoint")
-		l6.Close()
-	}()
+	l7p.links["syscalls/sys_exit_sendto"] = l6
 
 	l7, err := link.Tracepoint("syscalls", "sys_exit_write", L7BpfProgsAndMaps.bpfPrograms.SysExitWrite, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_exit_write tracepoint")
 	}
-	log.Logger.Info().Msg("sys_exit_write linked")
-	defer func() {
-		log.Logger.Info().Msg("closing sys_exit_write tracepoint")
-		l7.Close()
-	}()
+	l7p.links["syscalls/sys_exit_write"] = l7
+}
 
+func (l7p *L7Prog) InitMaps() {
 	// initialize perf event readers
-	l7Events, err := perf.NewReader(L7BpfProgsAndMaps.L7Events, 4096*os.Getpagesize())
+	var err error
+	l7p.l7Events, err = perf.NewReader(L7BpfProgsAndMaps.L7Events, int(l7p.l7EventsMapSize)*os.Getpagesize())
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
 	}
-	defer func() {
-		log.Logger.Info().Msg("closing l7 events perf event array reader")
-		l7Events.Close()
-	}()
 
-	logs, err := perf.NewReader(L7BpfProgsAndMaps.LogMap, 4*os.Getpagesize())
+	l7p.logs, err = perf.NewReader(L7BpfProgsAndMaps.LogMap, int(l7p.logsMapsSize)*os.Getpagesize())
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
 	}
-	defer func() {
-		log.Logger.Info().Msg("closing l7 events perf event array reader")
-		logs.Close()
-	}()
 
-	distTraceCalls, err := perf.NewReader(L7BpfProgsAndMaps.IngressEgressCalls, 4096*os.Getpagesize())
+	l7p.traffic, err = perf.NewReader(L7BpfProgsAndMaps.IngressEgressCalls, int(l7p.trafficMapSize)*os.Getpagesize())
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("error creating perf reader")
 	}
-	defer func() {
-		log.Logger.Info().Msg("closing distTraceCalls perf reader")
-		distTraceCalls.Close()
-	}()
+}
 
-	logsDone := make(chan struct{}, 1)
-	readDone := make(chan struct{})
-	read2Done := make(chan struct{})
+// returns when program is detached
+func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
+	stop := make(chan struct{})
 
 	go func() {
 		var logMessage []byte
 		var funcName []byte
 		read := func() {
-			record, err := logs.Read()
+			record, err := l7p.logs.Read()
 			if err != nil {
 				log.Logger.Warn().Err(err).Msg("error reading from perf array")
 			}
@@ -511,7 +513,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		}
 		for {
 			select {
-			case <-logsDone:
+			case <-stop:
 				return
 			default:
 				read()
@@ -522,7 +524,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	go func() {
 		var record perf.Record
 		read := func() {
-			err := l7Events.ReadInto(&record)
+			err := l7p.l7Events.ReadInto(&record)
 			if err != nil {
 				log.Logger.Warn().Err(err).Msg("error reading from perf array")
 			}
@@ -582,7 +584,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		}
 		for {
 			select {
-			case <-readDone:
+			case <-stop:
 				return
 			default:
 				read()
@@ -593,7 +595,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	go func() {
 		var record perf.Record
 		read := func() {
-			err := distTraceCalls.ReadInto(&record)
+			err := l7p.traffic.ReadInto(&record)
 			if err != nil {
 				log.Logger.Warn().Err(err).Msg("error reading from dist trace calls")
 			}
@@ -624,7 +626,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 		}
 		for {
 			select {
-			case <-read2Done:
+			case <-stop:
 				return
 			default:
 				read()
@@ -633,9 +635,7 @@ func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
 	}()
 
 	<-ctx.Done() // wait for context to be cancelled
-	readDone <- struct{}{}
-	read2Done <- struct{}{}
-	logsDone <- struct{}{}
+	close(stop)
 	// defers will clean up
 }
 
