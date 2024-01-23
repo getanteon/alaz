@@ -38,6 +38,7 @@ type EbpfCollector struct {
 	ctx            context.Context
 	done           chan struct{}
 	ebpfEvents     chan interface{}
+	ebpfProcEvents chan interface{}
 	tlsAttachQueue chan uint32
 
 	// TODO: objectify l7_req and tcp_state
@@ -62,6 +63,7 @@ func NewEbpfCollector(parentCtx context.Context) *EbpfCollector {
 		ctx:                 ctx,
 		done:                make(chan struct{}),
 		ebpfEvents:          make(chan interface{}, 100000), // interface is 16 bytes, 16 * 100000 = 8 Megabytes
+		ebpfProcEvents:      make(chan interface{}, 100),
 		tlsPidMap:           make(map[uint32]struct{}),
 		sslWriteUprobes:     make(map[uint32]link.Link),
 		sslReadEnterUprobes: make(map[uint32]link.Link),
@@ -79,6 +81,10 @@ func (e *EbpfCollector) Done() chan struct{} {
 
 func (e *EbpfCollector) EbpfEvents() chan interface{} {
 	return e.ebpfEvents
+}
+
+func (e *EbpfCollector) EbpfProcEvents() chan interface{} {
+	return e.ebpfProcEvents
 }
 
 func (e *EbpfCollector) Deploy() {
@@ -103,7 +109,7 @@ func (e *EbpfCollector) Deploy() {
 	}()
 	go func() {
 		defer wg.Done()
-		proc.DeployAndWait(e.ctx, e.ebpfEvents)
+		proc.DeployAndWait(e.ctx, e.ebpfProcEvents)
 	}()
 	wg.Wait()
 
@@ -117,6 +123,7 @@ func (e *EbpfCollector) Deploy() {
 func (e *EbpfCollector) close() {
 	log.Logger.Info().Msg("closing ebpf links")
 	close(e.ebpfEvents)
+	close(e.ebpfProcEvents)
 
 	e.probesMu.Lock()
 	defer e.probesMu.Unlock()

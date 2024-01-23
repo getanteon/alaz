@@ -2,6 +2,7 @@ package datastore
 
 import (
 	"bytes"
+	"container/list"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ddosify/alaz/config"
@@ -133,8 +135,10 @@ type BackendDS struct {
 	reqChanBuffer chan *ReqInfo
 	reqInfoPool   *poolutil.Pool[*ReqInfo]
 
-	traceEventChan chan *TraceInfo
-	traceInfoPool  *poolutil.Pool[*TraceInfo]
+	traceEventQueue *list.List
+	traceEventMu    sync.RWMutex
+
+	traceInfoPool *poolutil.Pool[*TraceInfo]
 
 	podEventChan       chan interface{} // *PodEvent
 	svcEventChan       chan interface{} // *SvcEvent
@@ -279,7 +283,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 		epEventChan:        make(chan interface{}, 100),
 		containerEventChan: make(chan interface{}, 100),
 		dsEventChan:        make(chan interface{}, 20),
-		traceEventChan:     make(chan *TraceInfo, 100000), // 8 bytes * 100000 = 0.8 mb
+		traceEventQueue:    list.New(),
 	}
 
 	go ds.sendReqsInBatch(bs)
@@ -377,6 +381,33 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 	return ds
 }
 
+func (b *BackendDS) enqueueTraceInfo(traceInfo *TraceInfo) {
+	b.traceEventMu.Lock()
+	defer b.traceEventMu.Unlock()
+	b.traceEventQueue.PushBack(traceInfo)
+}
+
+func (b *BackendDS) dequeueTraceEvents(batchSize uint64) []*TraceInfo {
+	b.traceEventMu.Lock()
+	defer b.traceEventMu.Unlock()
+
+	batch := make([]*TraceInfo, 0, batchSize)
+
+	for i := 0; i < int(batchSize); i++ {
+		if b.traceEventQueue.Len() == 0 {
+			return batch
+		}
+
+		elem := b.traceEventQueue.Front()
+		b.traceEventQueue.Remove(elem)
+		tInfo, _ := elem.Value.(*TraceInfo)
+
+		batch = append(batch, tInfo)
+	}
+
+	return batch
+}
+
 func (b *BackendDS) DoRequest(req *http.Request) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -446,21 +477,11 @@ func (b *BackendDS) sendToBackend(method string, payload interface{}, endpoint s
 }
 
 func (b *BackendDS) sendTraceEventsInBatch(batchSize uint64) {
-	t := time.NewTicker(5 * time.Second)
+	t := time.NewTicker(1 * time.Second)
 	defer t.Stop()
 
 	send := func() {
-		batch := make([]*TraceInfo, 0, batchSize)
-		loop := true
-
-		for i := 0; (i < int(batchSize)) && loop; i++ {
-			select {
-			case trace := <-b.traceEventChan:
-				batch = append(batch, trace)
-			case <-time.After(50 * time.Millisecond):
-				loop = false
-			}
-		}
+		batch := b.dequeueTraceEvents(batchSize)
 
 		if len(batch) == 0 {
 			return
@@ -640,7 +661,7 @@ func (b *BackendDS) PersistTraceEvent(trace *l7_req.TraceEvent) error {
 
 	t[3] = ingress
 
-	go func() { b.traceEventChan <- t }()
+	b.enqueueTraceInfo(t)
 	return nil
 }
 
@@ -686,7 +707,7 @@ func (b *BackendDS) PersistContainer(c Container, eventType string) error {
 	return nil
 }
 
-func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool, k8sVersion string) {
+func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool, dist bool, k8sVersion string) {
 	t := time.NewTicker(10 * time.Second)
 	defer t.Stop()
 
@@ -699,11 +720,13 @@ func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool, k8sVersion string) 
 				AlazVersion:    tag,
 			},
 			Info: struct {
-				EbpfEnabled    bool `json:"ebpf"`
-				MetricsEnabled bool `json:"metrics"`
+				EbpfEnabled        bool `json:"ebpf"`
+				MetricsEnabled     bool `json:"metrics"`
+				DistTracingEnabled bool `json:"traffic"`
 			}{
-				EbpfEnabled:    ebpf,
-				MetricsEnabled: metrics,
+				EbpfEnabled:        ebpf,
+				MetricsEnabled:     metrics,
+				DistTracingEnabled: dist,
 			},
 			Telemetry: struct {
 				KernelVersion string `json:"kernel_version"`
