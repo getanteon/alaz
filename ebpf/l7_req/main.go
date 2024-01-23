@@ -18,7 +18,7 @@ import (
 var DIST_TRACING_ENABLED bool
 
 func init() {
-	DIST_TRACING_ENABLED = true
+	DIST_TRACING_ENABLED = false
 
 	flag := os.Getenv("DIST_TRACING_ENABLED")
 

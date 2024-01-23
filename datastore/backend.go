@@ -707,7 +707,7 @@ func (b *BackendDS) PersistContainer(c Container, eventType string) error {
 	return nil
 }
 
-func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool, k8sVersion string) {
+func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool, dist bool, k8sVersion string) {
 	t := time.NewTicker(10 * time.Second)
 	defer t.Stop()
 
@@ -720,11 +720,13 @@ func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool, k8sVersion string) 
 				AlazVersion:    tag,
 			},
 			Info: struct {
-				EbpfEnabled    bool `json:"ebpf"`
-				MetricsEnabled bool `json:"metrics"`
+				EbpfEnabled        bool `json:"ebpf"`
+				MetricsEnabled     bool `json:"metrics"`
+				DistTracingEnabled bool `json:"traffic"`
 			}{
-				EbpfEnabled:    ebpf,
-				MetricsEnabled: metrics,
+				EbpfEnabled:        ebpf,
+				MetricsEnabled:     metrics,
+				DistTracingEnabled: dist,
 			},
 			Telemetry: struct {
 				KernelVersion string `json:"kernel_version"`
