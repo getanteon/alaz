@@ -43,9 +43,10 @@ type Aggregator struct {
 	ctx context.Context
 
 	// listen to events from different sources
-	k8sChan      <-chan interface{}
-	ebpfChan     <-chan interface{}
-	ebpfProcChan <-chan interface{}
+	k8sChan             <-chan interface{}
+	ebpfChan            <-chan interface{}
+	ebpfProcChan        <-chan interface{}
+	tlsAttachSignalChan chan uint32
 
 	ec *ebpf.EbpfCollector
 
@@ -154,7 +155,11 @@ func containsSQLKeywords(input string) bool {
 	return re.MatchString(strings.ToUpper(input))
 }
 
-func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, ec *ebpf.EbpfCollector, ds datastore.DataStore) *Aggregator {
+func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{},
+	events chan interface{},
+	procEvents chan interface{},
+	tlsAttachSignalChan chan uint32,
+	ds datastore.DataStore) *Aggregator {
 	ctx, _ := context.WithCancel(parentCtx)
 	clusterInfo := &ClusterInfo{
 		PodIPToPodUid:         map[string]types.UID{},
@@ -163,18 +168,18 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, ec *eb
 	}
 
 	a := &Aggregator{
-		ctx:           ctx,
-		k8sChan:       k8sChan,
-		ebpfChan:      ec.EbpfEvents(),
-		ebpfProcChan:  ec.EbpfProcEvents(),
-		ec:            ec,
-		clusterInfo:   clusterInfo,
-		ds:            ds,
-		h2Ch:          make(chan *l7_req.L7Event, 1000000),
-		h2Parsers:     make(map[string]*http2Parser),
-		h2Frames:      make(map[string]*FrameArrival),
-		liveProcesses: make(map[uint32]struct{}),
-		rateLimiters:  make(map[uint32]*rate.Limiter),
+		ctx:                 ctx,
+		k8sChan:             k8sChan,
+		ebpfChan:            events,
+		ebpfProcChan:        procEvents,
+		clusterInfo:         clusterInfo,
+		ds:                  ds,
+		tlsAttachSignalChan: tlsAttachSignalChan,
+		h2Ch:                make(chan *l7_req.L7Event, 1000000),
+		h2Parsers:           make(map[string]*http2Parser),
+		h2Frames:            make(map[string]*FrameArrival),
+		liveProcesses:       make(map[uint32]struct{}),
+		rateLimiters:        make(map[uint32]*rate.Limiter),
 	}
 
 	go a.clearSocketLines(ctx)
@@ -399,8 +404,12 @@ func (a *Aggregator) processExit(pid uint32) {
 	a.rateLimitMu.Unlock()
 }
 
+func (a *Aggregator) signalTlsAttachment(pid uint32) {
+	a.tlsAttachSignalChan <- pid
+}
+
 func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
-	go a.ec.ListenForEncryptedReqs(d.Pid)
+	go a.signalTlsAttachment(d.Pid)
 	if d.Type_ == tcp_state.EVENT_TCP_ESTABLISHED {
 		// filter out localhost connections
 		if d.SAddr == "127.0.0.1" || d.DAddr == "127.0.0.1" {
@@ -1037,7 +1046,7 @@ func (a *Aggregator) fetchSocketMap(pid uint32) *SocketMap {
 		a.clusterInfo.PidToSocketMap[pid] = sockMap
 		a.clusterInfo.mu.Unlock() // unlock for writing
 
-		go a.ec.ListenForEncryptedReqs(pid)
+		go a.signalTlsAttachment(pid)
 	}
 	return sockMap
 }

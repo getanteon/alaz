@@ -5,6 +5,7 @@ go 1.18
 require (
 	github.com/alecthomas/kingpin/v2 v2.3.2
 	github.com/cilium/ebpf v0.10.1-0.20230626090016-654491c8a500
+	github.com/cilium/fake v0.6.1
 	github.com/go-kit/log v0.2.1
 	github.com/hashicorp/go-retryablehttp v0.7.4
 	github.com/prometheus/client_golang v1.16.0
@@ -77,7 +78,6 @@ require (
 	github.com/rogpeppe/go-internal v1.11.0 // indirect
 	github.com/safchain/ethtool v0.3.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
-	github.com/stretchr/testify v1.8.4 // indirect
 	github.com/xhit/go-str2duration/v2 v2.1.0 // indirect
 	go.ddosify.com/ddosify v1.0.5
 	go.uber.org/multierr v1.11.0 // indirect

@@ -95,6 +95,10 @@ func (e *EbpfCollector) EbpfProcEvents() chan interface{} {
 	return e.ebpfProcEvents
 }
 
+func (e *EbpfCollector) TlsAttachQueue() chan uint32 {
+	return e.tlsAttachQueue
+}
+
 func (e *EbpfCollector) Init() {
 	for _, p := range e.bpfPrograms {
 		p.Load()

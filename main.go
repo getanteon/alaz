@@ -66,7 +66,7 @@ func main() {
 		ec.Init()
 		go ec.ListenEvents()
 
-		a := aggregator.NewAggregator(ctx, kubeEvents, ec, dsBackend)
+		a := aggregator.NewAggregator(ctx, kubeEvents, ec.EbpfEvents(), ec.EbpfProcEvents(), ec.TlsAttachQueue(), dsBackend)
 		a.Run()
 	}
 
