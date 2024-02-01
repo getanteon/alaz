@@ -51,11 +51,11 @@ func main() {
 	metricsEnabled, _ := strconv.ParseBool(os.Getenv("METRICS_ENABLED"))
 
 	// datastore backend
-	dsBackend := datastore.NewBackendDS(ctx, config.BackendConfig{
+	dsBackend := datastore.NewBackendDS(ctx, config.BackendDSConfig{
 		Host:                  os.Getenv("BACKEND_HOST"),
-		Port:                  os.Getenv("BACKEND_PORT"),
 		MetricsExport:         metricsEnabled,
 		MetricsExportInterval: 10,
+		ReqBufferSize:         40000, // TODO: get from a conf file
 	})
 	go dsBackend.SendHealthCheck(ebpfEnabled, metricsEnabled, k8sVersion)
 

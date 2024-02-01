@@ -2,9 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand"
 	"net/http"
+	"net/http/httptest"
+	"os"
 	"runtime/metrics"
 
 	"sync"
@@ -14,11 +18,12 @@ import (
 
 	"github.com/cilium/fake"
 	"github.com/ddosify/alaz/aggregator"
+	"github.com/ddosify/alaz/config"
 	"github.com/ddosify/alaz/datastore"
 	"github.com/ddosify/alaz/ebpf/l7_req"
 	"github.com/ddosify/alaz/ebpf/tcp_state"
 	"github.com/ddosify/alaz/k8s"
-	"github.com/ddosify/alaz/log"
+	"github.com/rs/zerolog"
 	"golang.org/x/time/rate"
 
 	"github.com/prometheus/procfs"
@@ -28,21 +33,48 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var testDuration = 10   // in seconds
-var memProfInterval = 5 // in seconds
-var podCount = 100
-var serviceCount = 50
-var edgeCount = 20
-var edgeRate = 50000 // events per second on a single edge
+type SimulatorConfig struct {
+	// number of processes
+	// pod and services
+	// k8s IPs must match with tcp and l7 events produced
+	// tcp and l7 events rates
+	// http, http2, grpc, postgres, rabbitmq calls
+	// outbound calls
 
-var kubeEventsBufferSize = 1000
-var ebpfEventsBufferSize = 8000
-var ebpfProcEventsBufferSize = 100
-var tlsAttachQueueBufferSize = 10
+	// edgeCount * edgeRate should be smaller than ebpfEventsBufferSize
 
-// expected total request count = testDuration * edgeCount * edgeRate
-// 60 * 10 * 1000 = 600000 ≈ 600k
-// 60 * 10 * 5000 = 3000000 ≈ 3m
+	TestDuration             int `json:"testDuration"`
+	MemProfInterval          int `json:"memProfInterval"`
+	PodCount                 int `json:"podCount"`
+	ServiceCount             int `json:"serviceCount"`
+	EdgeCount                int `json:"edgeCount"`
+	EdgeRate                 int `json:"edgeRate"`
+	KubeEventsBufferSize     int `json:"kubeEventsBufferSize"`
+	EbpfEventsBufferSize     int `json:"ebpfEventsBufferSize"`
+	EbpfProcEventsBufferSize int `json:"ebpfProcEventsBufferSize"`
+	TlsAttachQueueBufferSize int `json:"tlsAttachQueueBufferSize"`
+	DsReqBufferSize          int `json:"dsReqBufferSize"`
+}
+
+func readSimulationConfig(path string) (*SimulatorConfig, error) {
+	var conf SimulatorConfig
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	bytes, err := io.ReadAll(f)
+	if err != nil {
+		return nil, err
+	}
+	err = json.Unmarshal(bytes, &conf)
+	if err != nil {
+		return nil, err
+	}
+
+	return &conf, nil
+}
+
+var simLog zerolog.Logger
 
 func TestSimulation(t *testing.T) {
 	// TODO: read simulation config from a file
@@ -51,7 +83,7 @@ func TestSimulation(t *testing.T) {
 	// we need to get it periodically with top output too
 	// memProfFile, err := os.Create("memprof.out")
 	// if err != nil {
-	// 	log.Logger.Fatal().Err(err).Msg("could not create memory profile")
+	// 	simLog.Fatal().Err(err).Msg("could not create memory profile")
 	// }
 	// defer memProfFile.Close() // error handling omitted for example
 	// defer func() {
@@ -61,42 +93,55 @@ func TestSimulation(t *testing.T) {
 	// 	// pprof.Lookup("heap").WriteTo(memProfFile, 0)
 	// }()
 
-	log.Logger.Info().Msg("simulation starts...")
-	conf := &SimulatorConfig{
-		// TODO: get these from a config file
-		kubeEventsBufferSize:     kubeEventsBufferSize,
-		ebpfEventsBufferSize:     ebpfEventsBufferSize,
-		ebpfProcEventsBufferSize: ebpfProcEventsBufferSize,
-		tlsAttachQueueBufferSize: tlsAttachQueueBufferSize,
+	simLog = zerolog.New(os.Stdout).With().Timestamp().Logger()
+
+	conf, err := readSimulationConfig("testconfig/config1.json")
+	if err != nil {
+		simLog.Fatal().Err(err).Msg("could not read simulation config")
 	}
+
+	simLog.Info().Msg("simulation starts...")
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	sim := CreateSimulator(conf)
-	var totalReqProcessed uint32
-	go func() {
-		totalReqProcessed = sim.start(ctx, conf)
-	}()
+	sim := CreateSimulator(ctx, conf)
 
-	go func() {
-		t := time.NewTicker(time.Duration(memProfInterval) * time.Second)
+	go func(ctx context.Context) {
+		t := time.NewTicker(time.Duration(conf.MemProfInterval) * time.Second)
 		for range t.C {
-			PrintMemUsage()
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				PrintMemUsage()
+			}
 		}
+	}(ctx)
+
+	go func() {
+		<-time.After(time.Duration(conf.TestDuration) * time.Second) // test duration
+		cancel()
+		simLog.Info().Msg("context canceled")
 	}()
 
-	<-time.After(time.Duration(testDuration) * time.Second) // test duration
-	cancel()
-	<-sim.simDone // wait for simulator to stop
+	sim.start(ctx, conf)
 
-	time.Sleep(1 * time.Second) // wait for totalReqProcessed to be set
-	expectedTotalReqProcessed := uint32(testDuration * edgeCount * edgeRate)
+	totalReqReadyToBeSent := sim.getDataStore().(*MockDataStore).ReadyToBeSendReq.Load()
+	putIntoBackendQueue := sim.getDataStore().(*MockDataStore).SendToBackendQueueReq.Load()
+
+	simLog.Info().Str("totalReqReadyToBeSent", ToText(totalReqReadyToBeSent)).Msg("totalReqReadyToBeSent")
+	simLog.Info().Str("putIntoBackendQueue", ToText(putIntoBackendQueue)).Msg("putIntoBackendQueue")
+
+	expectedTotalReqProcessed := uint32(conf.TestDuration * conf.EdgeCount * conf.EdgeRate)
 	errorMargin := 10
 
-	l := expectedTotalReqProcessed * uint32(100-errorMargin) / 100
-	assert.GreaterOrEqual(t, totalReqProcessed, l, "actual request count is less than expected")
+	simLog.Info().Str("expectedTotalReqProcessed", ToText(expectedTotalReqProcessed)).Msg("expectedTotalReqProcessed")
 
-	<-time.After(time.Duration(memProfInterval) * time.Second) // time interval for retrival of mem usage after simulation stops
+	l := expectedTotalReqProcessed * uint32(100-errorMargin) / 100
+	assert.GreaterOrEqual(t, totalReqReadyToBeSent, l, "actual request count is less than expected")
+	assert.GreaterOrEqual(t, putIntoBackendQueue, l, "actual request count is less than expected")
+
+	// <-time.After(time.Duration(2*conf.MemProfInterval) * time.Second) // time interval for retrival of mem usage after simulation stops
 }
 
 var memMetrics = []metrics.Sample{
@@ -172,20 +217,20 @@ func PrintMemUsage() {
 	fmt.Printf("\tTotal gc cycles: %v", (memMetrics[3].Value.Uint64()))
 	// fmt.Printf("\tGOGC percent: %v", (memMetrics[4].Value.Uint64()))
 	// fmt.Printf("\tGOMEMLIMIT: %v\n", bToMb(memMetrics[5].Value.Uint64()))
-	// fmt.Printf("\tHeapFree: %v", HeapFree)
-	// fmt.Printf("\tHeapReleased: %v", bToMb(memMetrics[7].Value.Uint64()))
-	// fmt.Printf("\tHeapUnused: %v", HeapUnused)
+	fmt.Printf("\tHeapFree: %v", HeapFree)
+	fmt.Printf("\tHeapReleased: %v", bToMb(memMetrics[7].Value.Uint64()))
+	fmt.Printf("\tHeapUnused: %v", HeapUnused)
 	// fmt.Printf("\tTotal: %v", bToMb(memMetrics[9].Value.Uint64()))
-	// fmt.Printf("\tStack: %v", Stack)
+	fmt.Printf("\tStack: %v", Stack)
 	fmt.Printf("\tLiveGoroutines: %v", LiveGoroutines)
 
 	proc, err := procfs.Self()
 	if err != nil {
-		log.Logger.Fatal().Err(err)
+		simLog.Fatal().Err(err)
 	}
 	smapRollup, err := proc.ProcSMapsRollup()
 	if err != nil {
-		log.Logger.Fatal().Err(err)
+		simLog.Fatal().Err(err)
 	}
 
 	// Anonymous pages of process that are mapped on RAM. Includes heap area.
@@ -212,7 +257,7 @@ func bToMb(b uint64) uint64 {
 	return b / 1024 / 1024
 }
 
-func (sim *Simulator) start(ctx context.Context, conf *SimulatorConfig) uint32 {
+func (sim *Simulator) start(ctx context.Context, conf *SimulatorConfig) {
 	// TODO: call this func from another test, and after some time send a sigkill
 	// measure memory and cpu resources
 
@@ -227,11 +272,7 @@ func (sim *Simulator) start(ctx context.Context, conf *SimulatorConfig) uint32 {
 
 	go http.ListenAndServe(":8181", nil)
 
-	<-sim.simDone // wait for simulation to stop to print metrics
-	log.Logger.Info().Msg("simulation finished")
-	totalReqProcessed := sim.getDataStore().(*MockDataStore).ReqCount.Load()
-	log.Logger.Info().Uint32("totalReq", totalReqProcessed).Str("tReq", ToText(totalReqProcessed)).Msg("totalReqCount")
-	return totalReqProcessed
+	<-sim.simDone // wait for simulation to stop generating traffic to return metrics
 }
 
 type Simulator struct {
@@ -247,32 +288,21 @@ type Simulator struct {
 	services map[string]*FakeService
 
 	simDone chan struct{}
+
+	conf *SimulatorConfig
 }
 
-type SimulatorConfig struct {
-	// number of processes
-	// pod and services
-	// k8s IPs must match with tcp and l7 events produced
-	// tcp and l7 events rates
-	// http, http2, grpc, postgres, rabbitmq calls
-	// outbound calls
-
-	kubeEventsBufferSize     int
-	ebpfEventsBufferSize     int
-	ebpfProcEventsBufferSize int
-	tlsAttachQueueBufferSize int
-}
-
-func CreateSimulator(conf *SimulatorConfig) *Simulator {
+func CreateSimulator(ctx context.Context, conf *SimulatorConfig) *Simulator {
 	return &Simulator{
-		kubeEvents:     make(chan interface{}, conf.kubeEventsBufferSize),
-		ebpfEvents:     make(chan interface{}, conf.ebpfEventsBufferSize),
-		ebpfProcEvents: make(chan interface{}, conf.ebpfProcEventsBufferSize),
-		tlsAttachQueue: make(chan uint32, conf.tlsAttachQueueBufferSize),
-		mockDs:         &MockDataStore{},
+		kubeEvents:     make(chan interface{}, conf.KubeEventsBufferSize),
+		ebpfEvents:     make(chan interface{}, conf.EbpfEventsBufferSize),
+		ebpfProcEvents: make(chan interface{}, conf.EbpfProcEventsBufferSize),
+		tlsAttachQueue: make(chan uint32, conf.TlsAttachQueueBufferSize),
+		mockDs:         NewMockDataStore(ctx, conf),
 		pods:           map[string]*FakePod{},
 		services:       map[string]*FakeService{},
 		simDone:        make(chan struct{}),
+		conf:           conf,
 	}
 }
 
@@ -314,7 +344,7 @@ func (s *Simulator) Setup() {
 	// Create Kubernetes Workloads
 	// K8sResourceMessage
 
-	for i := 0; i < podCount; i++ {
+	for i := 0; i < s.conf.PodCount; i++ {
 		// TODO: namespace
 		podName := fake.Name()
 		podIP := fake.IP(fake.WithIPv4())
@@ -340,7 +370,7 @@ func (s *Simulator) Setup() {
 	// create services
 	// then create traffic between pods and services
 
-	for i := 0; i < serviceCount; i++ {
+	for i := 0; i < s.conf.ServiceCount; i++ {
 		// TODO: namespace
 		svcName := fake.Name()
 		svcIP := fake.IP(fake.WithIPv4())
@@ -402,7 +432,7 @@ func (sim *Simulator) Simulate(ctx context.Context) {
 		svcKeys = append(svcKeys, n)
 	}
 
-	ec := edgeCount
+	ec := sim.conf.EdgeCount
 	// retryLimit changed to 1 on aggregator
 	// processL7 exiting, stop retrying... // retry blocks workers
 
@@ -446,14 +476,16 @@ func (sim *Simulator) Simulate(ctx context.Context) {
 				pod:      pod,
 				fd:       fd,
 				svc:      svc,
-				rate:     rate.NewLimiter(rate.Limit(edgeRate), edgeRate), // 1000 events per second
+				rate:     rate.NewLimiter(rate.Limit(sim.conf.EdgeRate), sim.conf.EdgeRate), // 1000 events per second
 				protocol: l7_req.L7_PROTOCOL_HTTP,
 			})
 			wg.Done()
 		}(wg)
 	}
 
+	simLog.Warn().Msg("waiting for traffic to stop")
 	wg.Wait()
+	simLog.Warn().Msg("closing simDone chan")
 	close(sim.simDone)
 }
 
@@ -485,18 +517,15 @@ type Traffic struct {
 }
 
 func (sim *Simulator) httpTraffic(ctx context.Context, t *Traffic) {
-	// connStartTx := pod.OpenConnections[fd]
-
-	httpPayload := `GET /user HTTP1.1
-	`
-
+	httpPayload := `GET /user HTTP1.1`
 	payload := [1024]uint8{}
 	for i, b := range []uint8(httpPayload) {
 		payload[i] = b
 	}
 
-	log.Logger.Warn().Any("payload", payload)
+	simLog.Warn().Any("payload", payload)
 
+	blockingLogged := false
 	for {
 		// time.Sleep(time.Duration(rand.Intn(10)) * time.Millisecond)
 		select {
@@ -504,7 +533,15 @@ func (sim *Simulator) httpTraffic(ctx context.Context, t *Traffic) {
 			return
 		default:
 			if t.rate.Allow() {
-				sim.ebpfEvents <- &l7_req.L7Event{
+				// In ebpf.Program's Consume methods, in order to prevent drops on
+				// ebpf maps, we send collected data using new goroutines
+				// otherwise in case of blocking on internal ebpfEvents channel
+				// ebpf map are likely to drop events
+				// go func() {
+				// TODO:! when a new goroutine spawned for each event stack rocketed
+
+				select {
+				case sim.ebpfEvents <- &l7_req.L7Event{
 					Fd:                  t.fd,
 					Pid:                 t.pod.Pid,
 					Status:              200,
@@ -522,7 +559,15 @@ func (sim *Simulator) httpTraffic(ctx context.Context, t *Traffic) {
 					Tid:           0,
 					Seq:           0,
 					EventReadTime: 0,
+				}:
+				default:
+					if !blockingLogged {
+						simLog.Warn().Msg("block on ebpfEvents chan")
+						blockingLogged = true
+					}
 				}
+				// }()
+
 			}
 		}
 	}
@@ -549,55 +594,44 @@ func (s *Simulator) getDataStore() datastore.DataStore {
 	return s.mockDs
 }
 
+func NewMockDataStore(ctx context.Context, conf *SimulatorConfig) *MockDataStore {
+	mockBackendServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		simLog.Debug().Str("path", r.URL.Path).Msg("")
+		// time.Sleep(time.Duration(rand.Intn(5)) * time.Millisecond)
+		fmt.Fprintf(w, "success")
+	}))
+
+	backendDs := datastore.NewBackendDS(ctx, config.BackendDSConfig{
+		Host:                  mockBackendServer.URL,
+		MetricsExport:         false,
+		MetricsExportInterval: 10,
+		ReqBufferSize:         conf.DsReqBufferSize,
+	})
+	return &MockDataStore{
+		BackendDS:             backendDs,
+		BackendServer:         mockBackendServer,
+		ReadyToBeSendReq:      atomic.Uint32{},
+		SendToBackendQueueReq: atomic.Uint32{},
+	}
+
+}
+
 type MockDataStore struct {
-	// TODO: mimic backend speed and timeouts
-	ReqCount atomic.Uint32
-}
+	// Wrapper for BackendDS
+	// mock backend endpoints with httptest.Server
+	*datastore.BackendDS
+	BackendServer *httptest.Server
 
-func (m *MockDataStore) PersistPod(pod datastore.Pod, eventType string) error {
-	log.Logger.Debug().Str("pod", pod.Name).Msg("PersistPod")
-	return nil
-}
-
-func (m *MockDataStore) PersistService(service datastore.Service, eventType string) error {
-	log.Logger.Debug().Str("service", service.Name).Msg("PersistService")
-	return nil
-}
-
-func (m *MockDataStore) PersistReplicaSet(rs datastore.ReplicaSet, eventType string) error {
-	log.Logger.Info().Str("replicaset", rs.Name).Msg("PersistReplicaSet")
-	return nil
-}
-
-func (m *MockDataStore) PersistDeployment(d datastore.Deployment, eventType string) error {
-	log.Logger.Info().Str("deployment", d.Name).Msg("PersistDeployment")
-	return nil
-}
-
-func (m *MockDataStore) PersistEndpoints(e datastore.Endpoints, eventType string) error {
-	log.Logger.Info().Str("endpoints", e.Name).Msg("PersistEndpoints")
-	return nil
-}
-
-func (m *MockDataStore) PersistContainer(c datastore.Container, eventType string) error {
-	log.Logger.Info().Str("container", c.Name).Msg("PersistContainer")
-	return nil
-}
-
-func (m *MockDataStore) PersistDaemonSet(ds datastore.DaemonSet, eventType string) error {
-	log.Logger.Info().Str("daemonset", ds.Name).Msg("PersistDaemonSet")
-	return nil
+	// difference between these two metrics can indicate
+	// small buffer on backendDS or slow responding backend
+	ReadyToBeSendReq      atomic.Uint32
+	SendToBackendQueueReq atomic.Uint32
 }
 
 func (m *MockDataStore) PersistRequest(request *datastore.Request) error {
-	// TODO: mimic latency
-	m.ReqCount.Add(1)
-	return nil
-}
-
-func (m *MockDataStore) PersistTraceEvent(trace *l7_req.TraceEvent) error {
-	// TODO: mimic latency
-	log.Logger.Info().Msg("PersistTraceEvent")
+	m.ReadyToBeSendReq.Add(1)
+	// m.BackendDS.PersistRequest(request) // depends on dsReqBufferSize, batchSize, batchInterval, backend latency
+	m.SendToBackendQueueReq.Add(1)
 	return nil
 }
 

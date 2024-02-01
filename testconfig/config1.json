@@ -1,0 +1,15 @@
+{
+    "testDuration" : 30,
+    "memProfInterval" : 5,
+    "podCount": 100,
+    "serviceCount" : 50,
+    "edgeCount" : 20,
+    "edgeRate" : 10000,
+    "kubeEventsBufferSize" : 1000,
+    "ebpfEventsBufferSize": 200000,
+    "ebpfProcEventsBufferSize" : 100,
+    "tlsAttachQueueBufferSize" : 10,
+    "dsReqBufferSize" : 150000,
+    "mockBackendMinLatency": 5,
+    "mockBackendMaxLatency": 20
+}

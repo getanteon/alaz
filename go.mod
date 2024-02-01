@@ -12,6 +12,7 @@ require (
 	github.com/prometheus/common v0.44.0
 	github.com/prometheus/node_exporter v1.6.1
 	github.com/rs/zerolog v1.29.1
+	github.com/stretchr/testify v1.8.4
 	golang.org/x/arch v0.5.0
 	golang.org/x/mod v0.12.0
 	inet.af/netaddr v0.0.0-20230525184311-b8eac61e914a
@@ -20,6 +21,8 @@ require (
 	k8s.io/client-go v0.27.2
 
 )
+
+require github.com/pmezard/go-difflib v1.0.0 // indirect
 
 require (
 	github.com/alecthomas/units v0.0.0-20211218093645-b94a6e3cc137 // indirect
@@ -74,7 +77,7 @@ require (
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/prometheus-community/go-runit v0.1.0 // indirect
 	github.com/prometheus/client_model v0.4.0 // indirect
-	github.com/prometheus/procfs v0.11.0 // indirect
+	github.com/prometheus/procfs v0.11.0
 	github.com/rogpeppe/go-internal v1.11.0 // indirect
 	github.com/safchain/ethtool v0.3.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
