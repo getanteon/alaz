@@ -72,8 +72,8 @@ generate:
 ALAZ_IMAGE_NAME := alaz
 ALAZ_TAG ?= latest
 REGISTRY ?= ddosify
+ALAZ_DOCKERFILE ?= Dockerfile.default
 BUILDX_BUILDER := buildx-multi-arch
-ALAZ_DOCKERFILE := Dockerfile
 
 ifeq ($(TARGET_ARCH), arm64)
 	DOCKER_PLATFORM := linux/arm64
