@@ -8,6 +8,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-X 'github.com/ddosify/alaz/data
 FROM registry.access.redhat.com/ubi9/ubi-minimal:9.3-1552
 RUN microdnf update -y && microdnf install procps ca-certificates -y && microdnf clean all
 
-COPY --chown=0:0 --from=builder /app/alaz ./bin/
-ENTRYPOINT ["alaz"]
+COPY --chown=1001:0 --from=builder /app/alaz ./bin/
+COPY --chown=1001:0 LICENSE /licenses/LICENSE
 
+USER 1001
+ENTRYPOINT ["alaz"]
