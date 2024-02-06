@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"runtime/metrics"
+	"runtime/pprof"
 
 	"sync"
 	"sync/atomic"
@@ -77,22 +78,6 @@ func readSimulationConfig(path string) (*SimulatorConfig, error) {
 var simLog zerolog.Logger
 
 func TestSimulation(t *testing.T) {
-	// TODO: read simulation config from a file
-
-	// TODO: this code gets mem profile at exit
-	// we need to get it periodically with top output too
-	// memProfFile, err := os.Create("memprof.out")
-	// if err != nil {
-	// 	simLog.Fatal().Err(err).Msg("could not create memory profile")
-	// }
-	// defer memProfFile.Close() // error handling omitted for example
-	// defer func() {
-	// 	pprof.Lookup("allocs").WriteTo(memProfFile, 0)
-	// 	// if you want to check live heap objects:
-	// 	// runtime.GC() // get up-to-date statistics
-	// 	// pprof.Lookup("heap").WriteTo(memProfFile, 0)
-	// }()
-
 	simLog = zerolog.New(os.Stdout).With().Timestamp().Logger()
 
 	conf, err := readSimulationConfig("testconfig/config1.json")
@@ -108,13 +93,15 @@ func TestSimulation(t *testing.T) {
 
 	go func(ctx context.Context) {
 		t := time.NewTicker(time.Duration(conf.MemProfInterval) * time.Second)
+		i := 0
 		for range t.C {
 			select {
 			case <-ctx.Done():
 				return
 			default:
-				PrintMemUsage()
+				CaptureMemUsage(i)
 			}
+			i++
 		}
 	}(ctx)
 
@@ -198,11 +185,28 @@ var memMetrics = []metrics.Sample{
 // Memory that has been reserved for heap objects but unused. (/memory/classes/heap/unused:bytes)
 // LazyFree pages that are returned to OS with madvise syscall but not yet reclaimed by OS.
 
-func PrintMemUsage() {
-
+func CaptureMemUsage(order int) {
 	// Memory statistics are recorded after a GC run.
 	// Trigger GC to have latest state of heap.
 	// runtime.GC() // triggered each time PrintMemUsage called, preventing us observing the normal GC behaviour.
+
+	go func() {
+		memProfFile, err := os.Create(fmt.Sprintf("memprof_%d.prof", order))
+		if err != nil {
+			simLog.Fatal().Err(err).Msg("could not create memory profile")
+		}
+		defer memProfFile.Close() // error handling omitted for example
+		pprof.WriteHeapProfile(memProfFile)
+		// pprof.Lookup("allocs").WriteTo(memProfFile, 0)
+		// pprof.Lookup("heap").WriteTo(memProfFile, 0)
+
+		goroutineProfFile, err := os.Create(fmt.Sprintf("goroutineprof_%d.prof", order))
+		if err != nil {
+			simLog.Fatal().Err(err).Msg("could not create goroutine profile")
+		}
+		defer goroutineProfFile.Close() // error handling omitted for example
+		pprof.Lookup("goroutine").WriteTo(goroutineProfFile, 0)
+	}()
 	metrics.Read(memMetrics)
 
 	HeapInUse := bToMb(memMetrics[1].Value.Uint64())
@@ -211,6 +215,7 @@ func PrintMemUsage() {
 	Stack := bToMb(memMetrics[10].Value.Uint64())
 	LiveGoroutines := memMetrics[11].Value.Uint64()
 
+	fmt.Printf("Stat%d : ", order)
 	fmt.Printf("Total bytes allocated: %v", bToMb(memMetrics[0].Value.Uint64()))
 	fmt.Printf("\tIn-use bytes: %v", HeapInUse)
 	// fmt.Printf("\tAutomatic gc cycles: %v", (memMetrics[2].Value.Uint64()))
