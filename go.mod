@@ -1,6 +1,6 @@
 module github.com/ddosify/alaz
 
-go 1.18
+go 1.20
 
 require (
 	github.com/alecthomas/kingpin/v2 v2.3.2
@@ -19,7 +19,6 @@ require (
 	k8s.io/api v0.27.2
 	k8s.io/apimachinery v0.27.2
 	k8s.io/client-go v0.27.2
-
 )
 
 require github.com/pmezard/go-difflib v1.0.0 // indirect
