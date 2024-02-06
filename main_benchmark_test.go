@@ -53,6 +53,7 @@ type SimulatorConfig struct {
 	KubeEventsBufferSize     int `json:"kubeEventsBufferSize"`
 	EbpfEventsBufferSize     int `json:"ebpfEventsBufferSize"`
 	EbpfProcEventsBufferSize int `json:"ebpfProcEventsBufferSize"`
+	EbpfTcpEventsBufferSize  int `json:"ebpfTcpEventsBufferSize"`
 	TlsAttachQueueBufferSize int `json:"tlsAttachQueueBufferSize"`
 	DsReqBufferSize          int `json:"dsReqBufferSize"`
 }
@@ -111,7 +112,21 @@ func TestSimulation(t *testing.T) {
 		simLog.Info().Msg("context canceled")
 	}()
 
-	sim.start(ctx, conf)
+	aggregatorCtx, aggregatorCancel := context.WithCancel(context.Background())
+	sim.start(ctx, aggregatorCtx, conf)
+
+	wait_start := time.Now()
+	var wait_end time.Time
+	for {
+		// all events are consumed
+		if len(sim.ebpfEvents) == 0 && len(sim.ebpfTcpEvents) == 0 {
+			wait_end = time.Now()
+			break
+		}
+	}
+	simLog.Info().Str("wait time", wait_end.Sub(wait_start).String()).Msg("waited for all events to be consumed")
+
+	aggregatorCancel()
 
 	totalReqReadyToBeSent := sim.getDataStore().(*MockDataStore).ReadyToBeSendReq.Load()
 	putIntoBackendQueue := sim.getDataStore().(*MockDataStore).SendToBackendQueueReq.Load()
@@ -223,16 +238,29 @@ func CaptureMemUsage(order int) {
 	// fmt.Printf("\tGOGC percent: %v", (memMetrics[4].Value.Uint64()))
 	// fmt.Printf("\tGOMEMLIMIT: %v\n", bToMb(memMetrics[5].Value.Uint64()))
 	fmt.Printf("\tHeapFree: %v", HeapFree)
-	fmt.Printf("\tHeapReleased: %v", bToMb(memMetrics[7].Value.Uint64()))
-	fmt.Printf("\tHeapUnused: %v", HeapUnused)
+	// fmt.Printf("\tHeapReleased: %v", bToMb(memMetrics[7].Value.Uint64()))
+	// fmt.Printf("\tHeapUnused: %v", HeapUnused)
 	// fmt.Printf("\tTotal: %v", bToMb(memMetrics[9].Value.Uint64()))
-	fmt.Printf("\tStack: %v", Stack)
+	// fmt.Printf("\tStack: %v", Stack)
 	fmt.Printf("\tLiveGoroutines: %v", LiveGoroutines)
 
 	proc, err := procfs.Self()
 	if err != nil {
 		simLog.Fatal().Err(err)
 	}
+
+	stat, err := proc.Stat()
+	if err != nil {
+		simLog.Fatal().Err(err)
+	}
+	cpuTime := stat.CPUTime()
+	fmt.Printf("\tCpuTime: %v", cpuTime)
+	// (utime + stime)/clocktick
+	// utime and stime measured in clock ticks
+
+	// unix timestamp of the process in seconds
+	stat.StartTime()
+
 	smapRollup, err := proc.ProcSMapsRollup()
 	if err != nil {
 		simLog.Fatal().Err(err)
@@ -262,17 +290,14 @@ func bToMb(b uint64) uint64 {
 	return b / 1024 / 1024
 }
 
-func (sim *Simulator) start(ctx context.Context, conf *SimulatorConfig) {
-	// TODO: call this func from another test, and after some time send a sigkill
-	// measure memory and cpu resources
-
+func (sim *Simulator) start(simCtx context.Context, ctx context.Context, conf *SimulatorConfig) {
 	sim.Setup()
 
 	// debug.SetGCPercent(80)
-	go sim.Simulate(ctx)
+	go sim.Simulate(simCtx)
 
 	a := aggregator.NewAggregator(ctx, sim.getKubeEvents(), sim.getEbpfEvents(),
-		sim.getEbpfProcEvents(), sim.getTlsAttachQueue(), sim.getDataStore())
+		sim.getEbpfProcEvents(), sim.getEbpfTcpEvents(), sim.getTlsAttachQueue(), sim.getDataStore())
 	a.Run()
 
 	go http.ListenAndServe(":8181", nil)
@@ -282,9 +307,11 @@ func (sim *Simulator) start(ctx context.Context, conf *SimulatorConfig) {
 
 type Simulator struct {
 	kubeEvents chan interface{} // will be sent k8s events
-	// mockCollector ?
+
 	ebpfEvents     chan interface{}
 	ebpfProcEvents chan interface{}
+	ebpfTcpEvents  chan interface{}
+
 	tlsAttachQueue chan uint32
 
 	mockDs datastore.DataStore
@@ -302,6 +329,7 @@ func CreateSimulator(ctx context.Context, conf *SimulatorConfig) *Simulator {
 		kubeEvents:     make(chan interface{}, conf.KubeEventsBufferSize),
 		ebpfEvents:     make(chan interface{}, conf.EbpfEventsBufferSize),
 		ebpfProcEvents: make(chan interface{}, conf.EbpfProcEventsBufferSize),
+		ebpfTcpEvents:  make(chan interface{}, conf.EbpfTcpEventsBufferSize),
 		tlsAttachQueue: make(chan uint32, conf.TlsAttachQueueBufferSize),
 		mockDs:         NewMockDataStore(ctx, conf),
 		pods:           map[string]*FakePod{},
@@ -325,6 +353,10 @@ func (s *Simulator) getEbpfProcEvents() chan interface{} {
 
 func (s *Simulator) getTlsAttachQueue() chan uint32 {
 	return s.tlsAttachQueue
+}
+
+func (s *Simulator) getEbpfTcpEvents() chan interface{} {
+	return s.ebpfTcpEvents
 }
 
 type FakePod struct {
@@ -446,8 +478,6 @@ func (sim *Simulator) Simulate(ctx context.Context) {
 		ec--
 
 		// select one pod and service
-		// TODO: these randoms conflict ????
-
 		pod := sim.pods[podKeys[rand.Intn(len(podKeys))]]
 		svc := sim.services[svcKeys[rand.Intn(len(svcKeys))]]
 
@@ -472,20 +502,19 @@ func (sim *Simulator) Simulate(ctx context.Context) {
 			PodName: pod.Name,
 			SvcName: svc.Name,
 		}
-
 		sim.constructSockets([]*ConnectionConfig{cc})
 		wg.Add(1)
 		// simulate traffic
-		go func(wg *sync.WaitGroup) {
-			sim.httpTraffic(ctx, &Traffic{
-				pod:      pod,
-				fd:       fd,
-				svc:      svc,
-				rate:     rate.NewLimiter(rate.Limit(sim.conf.EdgeRate), sim.conf.EdgeRate), // 1000 events per second
-				protocol: l7_req.L7_PROTOCOL_HTTP,
-			})
+		go func(wg *sync.WaitGroup, t *Traffic) {
+			sim.httpTraffic(ctx, t)
 			wg.Done()
-		}(wg)
+		}(wg, &Traffic{
+			pod:      pod,
+			fd:       fd,
+			svc:      svc,
+			rate:     rate.NewLimiter(rate.Limit(sim.conf.EdgeRate), sim.conf.EdgeRate), // 1000 events per second
+			protocol: l7_req.L7_PROTOCOL_HTTP,
+		})
 	}
 
 	simLog.Warn().Msg("waiting for traffic to stop")
@@ -530,7 +559,7 @@ func (sim *Simulator) httpTraffic(ctx context.Context, t *Traffic) {
 
 	simLog.Warn().Any("payload", payload)
 
-	blockingLogged := false
+	// blockingLogged := false
 	for {
 		// time.Sleep(time.Duration(rand.Intn(10)) * time.Millisecond)
 		select {
@@ -545,8 +574,7 @@ func (sim *Simulator) httpTraffic(ctx context.Context, t *Traffic) {
 				// go func() {
 				// TODO:! when a new goroutine spawned for each event stack rocketed
 
-				select {
-				case sim.ebpfEvents <- &l7_req.L7Event{
+				sim.ebpfEvents <- &l7_req.L7Event{
 					Fd:                  t.fd,
 					Pid:                 t.pod.Pid,
 					Status:              200,
@@ -564,14 +592,16 @@ func (sim *Simulator) httpTraffic(ctx context.Context, t *Traffic) {
 					Tid:           0,
 					Seq:           0,
 					EventReadTime: 0,
-				}:
-				default:
-					if !blockingLogged {
-						simLog.Warn().Msg("block on ebpfEvents chan")
-						blockingLogged = true
-					}
 				}
-				// }()
+				// 	select {
+				// 	case
+				// 	// default:
+				// 	// 	if !blockingLogged {
+				// 	// 		simLog.Warn().Msg("block on ebpfEvents chan")
+				// 	// 		blockingLogged = true
+				// 	// 	}
+				// 	// }
+				// 	// }()
 
 			}
 		}
@@ -583,7 +613,7 @@ func (sim *Simulator) httpTraffic(ctx context.Context, t *Traffic) {
 // {pid,fd} duo is used to socketLine struct
 // socketInfo corresponding to requests timestamp is retrieved
 func (sim *Simulator) tcpEstablish(srcPid uint32, fd uint64, saddr string, daddr string, tx uint64) {
-	sim.ebpfEvents <- &tcp_state.TcpConnectEvent{
+	sim.ebpfTcpEvents <- &tcp_state.TcpConnectEvent{
 		Fd:        fd,
 		Timestamp: tx,
 		Type_:     tcp_state.EVENT_TCP_ESTABLISHED,
