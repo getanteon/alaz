@@ -40,7 +40,6 @@ func NewSocketLine(pid uint32, fd uint64) *SocketLine {
 		fd:     fd,
 		Values: make([]TimestampedSocket, 0),
 	}
-	go skLine.DeleteUnused()
 
 	return skLine
 }
@@ -107,6 +106,9 @@ func (nl *SocketLine) DeleteUnused() {
 	}
 
 	if lastMatchedReqTime == 0 {
+		// in case of tracking only tcp sockets without any requests matching them, socketLine will consume memory over time
+		// we need to delete all values in this case
+		nl.Values = make([]TimestampedSocket, 0)
 		return
 	}
 
