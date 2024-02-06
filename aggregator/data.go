@@ -44,8 +44,9 @@ type Aggregator struct {
 
 	// listen to events from different sources
 	k8sChan             <-chan interface{}
-	ebpfChan            <-chan interface{}
+	ebpfChan            chan interface{}
 	ebpfProcChan        <-chan interface{}
+	ebpfTcpChan         <-chan interface{}
 	tlsAttachSignalChan chan uint32
 
 	ec *ebpf.EbpfCollector
@@ -127,8 +128,8 @@ type ClusterInfo struct {
 var (
 	// default exponential backoff (*2)
 	// when retryLimit is increased, we are blocking the events that we wait it to be processed more
-	retryInterval = 400 * time.Millisecond
-	retryLimit    = 5
+	retryInterval = 50 * time.Millisecond
+	retryLimit    = 2
 	// 400 + 800 + 1600 + 3200 + 6400 = 12400 ms
 
 	defaultExpiration = 5 * time.Minute
@@ -158,6 +159,7 @@ func containsSQLKeywords(input string) bool {
 func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{},
 	events chan interface{},
 	procEvents chan interface{},
+	tcpEvents chan interface{},
 	tlsAttachSignalChan chan uint32,
 	ds datastore.DataStore) *Aggregator {
 	ctx, _ := context.WithCancel(parentCtx)
@@ -172,6 +174,7 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{},
 		k8sChan:             k8sChan,
 		ebpfChan:            events,
 		ebpfProcChan:        procEvents,
+		ebpfTcpChan:         tcpEvents,
 		clusterInfo:         clusterInfo,
 		ds:                  ds,
 		tlsAttachSignalChan: tlsAttachSignalChan,
@@ -267,12 +270,13 @@ func (a *Aggregator) Run() {
 	}
 	for i := 0; i < numWorker; i++ {
 		go a.processEbpf(a.ctx)
-		go a.processEbpfProc(a.ctx)
+		go a.processEbpfTcp(a.ctx)
 	}
 
 	// TODO: pod number may be ideal
 	for i := 0; i < 2*cpuCount; i++ {
 		go a.processHttp2Frames()
+		go a.processEbpfProc(a.ctx)
 	}
 }
 
@@ -304,7 +308,6 @@ func (a *Aggregator) processEbpfProc(ctx context.Context) {
 	for data := range a.ebpfProcChan {
 		select {
 		case <-ctx.Done():
-			log.Logger.Info().Msg("processEbpf exiting...")
 			return
 		default:
 			bpfEvent, ok := data.(ebpf.BpfEvent)
@@ -325,11 +328,10 @@ func (a *Aggregator) processEbpfProc(ctx context.Context) {
 	}
 }
 
-func (a *Aggregator) processEbpf(ctx context.Context) {
-	for data := range a.ebpfChan {
+func (a *Aggregator) processEbpfTcp(ctx context.Context) {
+	for data := range a.ebpfTcpChan {
 		select {
 		case <-ctx.Done():
-			log.Logger.Info().Msg("processEbpf exiting...")
 			return
 		default:
 			bpfEvent, ok := data.(ebpf.BpfEvent)
@@ -341,6 +343,24 @@ func (a *Aggregator) processEbpf(ctx context.Context) {
 			case tcp_state.TCP_CONNECT_EVENT:
 				d := data.(*tcp_state.TcpConnectEvent) // copy data's value
 				a.processTcpConnect(d)
+			}
+		}
+
+	}
+}
+
+func (a *Aggregator) processEbpf(ctx context.Context) {
+	for data := range a.ebpfChan {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			bpfEvent, ok := data.(ebpf.BpfEvent)
+			if !ok {
+				log.Logger.Error().Interface("ebpfData", data).Msg("error casting ebpf event")
+				continue
+			}
+			switch bpfEvent.Type() {
 			case l7_req.L7_EVENT:
 				d := data.(*l7_req.L7Event) // copy data's value
 				a.processL7(ctx, d)

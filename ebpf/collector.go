@@ -39,6 +39,8 @@ type EbpfCollector struct {
 	done           chan struct{}
 	ebpfEvents     chan interface{}
 	ebpfProcEvents chan interface{}
+	ebpfTcpEvents  chan interface{}
+
 	tlsAttachQueue chan uint32
 
 	bpfPrograms map[string]Program
@@ -71,6 +73,7 @@ func NewEbpfCollector(parentCtx context.Context) *EbpfCollector {
 		done:                make(chan struct{}),
 		ebpfEvents:          make(chan interface{}, 100000), // interface is 16 bytes, 16 * 100000 = 8 Megabytes
 		ebpfProcEvents:      make(chan interface{}, 100),
+		ebpfTcpEvents:       make(chan interface{}, 1000),
 		tlsPidMap:           make(map[uint32]struct{}),
 		sslWriteUprobes:     make(map[uint32]link.Link),
 		sslReadEnterUprobes: make(map[uint32]link.Link),
@@ -95,6 +98,10 @@ func (e *EbpfCollector) EbpfProcEvents() chan interface{} {
 	return e.ebpfProcEvents
 }
 
+func (e *EbpfCollector) EbpfTcpEvents() chan interface{} {
+	return e.ebpfTcpEvents
+}
+
 func (e *EbpfCollector) TlsAttachQueue() chan uint32 {
 	return e.tlsAttachQueue
 }
@@ -114,7 +121,7 @@ func (e *EbpfCollector) Init() {
 }
 
 func (e *EbpfCollector) ListenEvents() {
-	go e.bpfPrograms["tcp_state_prog"].Consume(e.ctx, e.ebpfEvents)
+	go e.bpfPrograms["tcp_state_prog"].Consume(e.ctx, e.ebpfTcpEvents)
 	go e.bpfPrograms["l7_prog"].Consume(e.ctx, e.ebpfEvents)
 	go e.bpfPrograms["proc_prog"].Consume(e.ctx, e.ebpfProcEvents)
 
@@ -130,6 +137,7 @@ func (e *EbpfCollector) close() {
 
 	close(e.ebpfEvents)
 	close(e.ebpfProcEvents)
+	close(e.ebpfTcpEvents)
 
 	e.probesMu.Lock()
 	defer e.probesMu.Unlock()
