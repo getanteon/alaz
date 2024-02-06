@@ -44,6 +44,12 @@ var kernelVersion string
 var cloudProvider CloudProvider
 
 func init() {
+
+	TestMode := os.Getenv("TEST_MODE")
+	if TestMode == "true" {
+		return
+	}
+
 	MonitoringID = os.Getenv("MONITORING_ID")
 	if MonitoringID == "" {
 		log.Logger.Fatal().Msg("MONITORING_ID is not set")
