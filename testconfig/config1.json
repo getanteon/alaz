@@ -1,5 +1,5 @@
 {
-    "testDuration" : 30,
+    "testDuration" : 15,
     "memProfInterval" : 5,
     "podCount": 100,
     "serviceCount" : 50,
@@ -9,6 +9,7 @@
     "ebpfEventsBufferSize": 200000,
     "ebpfProcEventsBufferSize" : 100,
     "tlsAttachQueueBufferSize" : 10,
+    "ebpfTcpEventsBufferSize" : 1000,
     "dsReqBufferSize" : 150000,
     "mockBackendMinLatency": 5,
     "mockBackendMaxLatency": 20
