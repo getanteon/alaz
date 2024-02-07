@@ -156,7 +156,7 @@ var re *regexp.Regexp
 func init() {
 	reverseDnsCache = cache.New(defaultExpiration, purgeTime)
 
-	keywords := []string{"SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "FROM", "WHERE", "JOIN", "INNER", "OUTER", "LEFT", "RIGHT", "GROUP", "BY", "ORDER", "HAVING", "UNION", "ALL", "BEGIN", "COMMIT"}
+	keywords := []string{"SELECT", "INSERT INTO", "UPDATE", "DELETE FROM", "CREATE TABLE", "ALTER TABLE", "DROP TABLE", "TRUNCATE TABLE", "BEGIN", "COMMIT", "ROLLBACK", "SAVEPOINT", "CREATE INDEX", "DROP INDEX", "CREATE VIEW", "DROP VIEW", "GRANT", "REVOKE"}
 
 	// Case-insensitive matching
 	re = regexp.MustCompile(strings.Join(keywords, "|"))
