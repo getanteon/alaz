@@ -44,6 +44,12 @@ var kernelVersion string
 var cloudProvider CloudProvider
 
 func init() {
+
+	TestMode := os.Getenv("TEST_MODE")
+	if TestMode == "true" {
+		return
+	}
+
 	MonitoringID = os.Getenv("MONITORING_ID")
 	if MonitoringID == "" {
 		log.Logger.Fatal().Msg("MONITORING_ID is not set")
@@ -186,7 +192,7 @@ func (ll LeveledLogger) Warn(msg string, keysAndValues ...interface{}) {
 	ll.l.Warn().Fields(keysAndValues).Msg(msg)
 }
 
-func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *BackendDS {
+func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *BackendDS {
 	ctx, _ := context.WithCancel(parentCtx)
 	rand.Seed(time.Now().UnixNano())
 
@@ -270,12 +276,11 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendConfig) *Backend
 	ds := &BackendDS{
 		ctx:                ctx,
 		host:               conf.Host,
-		port:               conf.Port,
 		c:                  client,
 		batchSize:          bs,
 		reqInfoPool:        newReqInfoPool(func() *ReqInfo { return &ReqInfo{} }, func(r *ReqInfo) {}),
 		traceInfoPool:      newTraceInfoPool(func() *TraceInfo { return &TraceInfo{} }, func(r *TraceInfo) {}),
-		reqChanBuffer:      make(chan *ReqInfo, 40000),
+		reqChanBuffer:      make(chan *ReqInfo, conf.ReqBufferSize),
 		podEventChan:       make(chan interface{}, 100),
 		svcEventChan:       make(chan interface{}, 100),
 		rsEventChan:        make(chan interface{}, 100),

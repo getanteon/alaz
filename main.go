@@ -59,11 +59,11 @@ func main() {
 	distTracingEnabled, _ := strconv.ParseBool(os.Getenv("DIST_TRACING_ENABLED"))
 
 	// datastore backend
-	dsBackend := datastore.NewBackendDS(ctx, config.BackendConfig{
+	dsBackend := datastore.NewBackendDS(ctx, config.BackendDSConfig{
 		Host:                  os.Getenv("BACKEND_HOST"),
-		Port:                  os.Getenv("BACKEND_PORT"),
 		MetricsExport:         metricsEnabled,
 		MetricsExportInterval: 10,
+		ReqBufferSize:         40000, // TODO: get from a conf file
 	})
 	go dsBackend.SendHealthCheck(ebpfEnabled, metricsEnabled, distTracingEnabled, k8sVersion)
 
@@ -71,9 +71,10 @@ func main() {
 	var ec *ebpf.EbpfCollector
 	if ebpfEnabled {
 		ec = ebpf.NewEbpfCollector(ctx)
-		go ec.Deploy()
+		ec.Init()
+		go ec.ListenEvents()
 
-		a := aggregator.NewAggregator(ctx, kubeEvents, ec, dsBackend)
+		a := aggregator.NewAggregator(ctx, kubeEvents, ec.EbpfEvents(), ec.EbpfProcEvents(), ec.EbpfTcpEvents(), ec.TlsAttachQueue(), dsBackend)
 		a.Run()
 	}
 
