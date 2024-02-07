@@ -43,9 +43,11 @@ type Aggregator struct {
 	ctx context.Context
 
 	// listen to events from different sources
-	k8sChan      <-chan interface{}
-	ebpfChan     <-chan interface{}
-	ebpfProcChan <-chan interface{}
+	k8sChan             <-chan interface{}
+	ebpfChan            chan interface{}
+	ebpfProcChan        <-chan interface{}
+	ebpfTcpChan         <-chan interface{}
+	tlsAttachSignalChan chan uint32
 
 	ec *ebpf.EbpfCollector
 
@@ -103,13 +105,24 @@ type SocketMap struct {
 }
 
 type ClusterInfo struct {
-	mu                    sync.RWMutex
+	k8smu                 sync.RWMutex
 	PodIPToPodUid         map[string]types.UID `json:"podIPToPodUid"`
 	ServiceIPToServiceUid map[string]types.UID `json:"serviceIPToServiceUid"`
 
 	// Pid -> SocketMap
 	// pid -> fd -> {saddr, sport, daddr, dport}
-	PidToSocketMap map[uint32]*SocketMap `json:"pidToSocketMap"`
+
+	// shard pidToSocketMap by pid to reduce lock contention
+	mu0             sync.RWMutex
+	mu1             sync.RWMutex
+	mu2             sync.RWMutex
+	mu3             sync.RWMutex
+	mu4             sync.RWMutex
+	PidToSocketMap0 map[uint32]*SocketMap `json:"pidToSocketMap0"` // pid ending with 0-1
+	PidToSocketMap1 map[uint32]*SocketMap `json:"pidToSocketMap1"` // pid ending with 2-3
+	PidToSocketMap2 map[uint32]*SocketMap `json:"pidToSocketMap2"` // pid ending with 4-5
+	PidToSocketMap3 map[uint32]*SocketMap `json:"pidToSocketMap3"` // pid ending with 6-7
+	PidToSocketMap4 map[uint32]*SocketMap `json:"pidToSocketMap4"` // pid ending with 8-9
 }
 
 // If we have information from the container runtimes
@@ -126,8 +139,8 @@ type ClusterInfo struct {
 var (
 	// default exponential backoff (*2)
 	// when retryLimit is increased, we are blocking the events that we wait it to be processed more
-	retryInterval = 400 * time.Millisecond
-	retryLimit    = 5
+	retryInterval = 50 * time.Millisecond
+	retryLimit    = 2
 	// 400 + 800 + 1600 + 3200 + 6400 = 12400 ms
 
 	defaultExpiration = 5 * time.Minute
@@ -154,27 +167,37 @@ func containsSQLKeywords(input string) bool {
 	return re.MatchString(strings.ToUpper(input))
 }
 
-func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, ec *ebpf.EbpfCollector, ds datastore.DataStore) *Aggregator {
+func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{},
+	events chan interface{},
+	procEvents chan interface{},
+	tcpEvents chan interface{},
+	tlsAttachSignalChan chan uint32,
+	ds datastore.DataStore) *Aggregator {
 	ctx, _ := context.WithCancel(parentCtx)
 	clusterInfo := &ClusterInfo{
 		PodIPToPodUid:         map[string]types.UID{},
 		ServiceIPToServiceUid: map[string]types.UID{},
-		PidToSocketMap:        make(map[uint32]*SocketMap, 0),
+		PidToSocketMap0:       make(map[uint32]*SocketMap),
+		PidToSocketMap1:       make(map[uint32]*SocketMap),
+		PidToSocketMap2:       make(map[uint32]*SocketMap),
+		PidToSocketMap3:       make(map[uint32]*SocketMap),
+		PidToSocketMap4:       make(map[uint32]*SocketMap),
 	}
 
 	a := &Aggregator{
-		ctx:           ctx,
-		k8sChan:       k8sChan,
-		ebpfChan:      ec.EbpfEvents(),
-		ebpfProcChan:  ec.EbpfProcEvents(),
-		ec:            ec,
-		clusterInfo:   clusterInfo,
-		ds:            ds,
-		h2Ch:          make(chan *l7_req.L7Event, 1000000),
-		h2Parsers:     make(map[string]*http2Parser),
-		h2Frames:      make(map[string]*FrameArrival),
-		liveProcesses: make(map[uint32]struct{}),
-		rateLimiters:  make(map[uint32]*rate.Limiter),
+		ctx:                 ctx,
+		k8sChan:             k8sChan,
+		ebpfChan:            events,
+		ebpfProcChan:        procEvents,
+		ebpfTcpChan:         tcpEvents,
+		clusterInfo:         clusterInfo,
+		ds:                  ds,
+		tlsAttachSignalChan: tlsAttachSignalChan,
+		h2Ch:                make(chan *l7_req.L7Event, 1000000),
+		h2Parsers:           make(map[string]*http2Parser),
+		h2Frames:            make(map[string]*FrameArrival),
+		liveProcesses:       make(map[uint32]struct{}),
+		rateLimiters:        make(map[uint32]*rate.Limiter),
 	}
 
 	go a.clearSocketLines(ctx)
@@ -183,32 +206,30 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{}, ec *eb
 }
 
 func (a *Aggregator) Run() {
-	go func() {
-		// get all alive processes, populate liveProcesses
-		cmd := exec.Command("ps", "-e", "-o", "pid=")
-		output, err := cmd.Output()
-		if err != nil {
-			log.Logger.Fatal().Err(err).Msg("error getting all alive processes")
-		}
+	// get all alive processes, populate liveProcesses
+	cmd := exec.Command("ps", "-e", "-o", "pid=")
+	output, err := cmd.Output()
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("error getting all alive processes")
+	}
 
-		lines := strings.Split(string(output), "\n")
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if line != "" {
-				fields := strings.Fields(line)
-				if len(fields) > 0 {
-					pid := fields[0]
-					pidInt, err := strconv.Atoi(pid)
-					if err != nil {
-						log.Logger.Error().Err(err).Msgf("error converting pid to int %s", pid)
-						continue
-					}
-					a.liveProcesses[uint32(pidInt)] = struct{}{}
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			fields := strings.Fields(line)
+			if len(fields) > 0 {
+				pid := fields[0]
+				pidInt, err := strconv.Atoi(pid)
+				if err != nil {
+					log.Logger.Error().Err(err).Msgf("error converting pid to int %s", pid)
+					continue
 				}
+				a.liveProcesses[uint32(pidInt)] = struct{}{}
 			}
 		}
+	}
 
-	}()
 	go func() {
 		// every 2 minutes, check alive processes, and clear the ones left behind
 		// since we process events concurrently, some short-lived processes exit event can come before exec events
@@ -231,10 +252,7 @@ func (a *Aggregator) Run() {
 				if err != nil {
 					// pid does not exist
 					delete(a.liveProcesses, pid)
-
-					a.clusterInfo.mu.Lock()
-					delete(a.clusterInfo.PidToSocketMap, pid)
-					a.clusterInfo.mu.Unlock()
+					a.removeFromClusterInfo(pid)
 
 					a.h2ParserMu.Lock()
 					for key, parser := range a.h2Parsers {
@@ -256,18 +274,20 @@ func (a *Aggregator) Run() {
 	go a.processk8s()
 
 	cpuCount := runtime.NumCPU()
-	numWorker := 10 * cpuCount
-	if numWorker < 100 {
-		numWorker = 100 // min number
+	numWorker := 5 * cpuCount
+	if numWorker < 50 {
+		numWorker = 50 // min number
 	}
+
 	for i := 0; i < numWorker; i++ {
 		go a.processEbpf(a.ctx)
-		go a.processEbpfProc(a.ctx)
+		go a.processEbpfTcp(a.ctx)
 	}
 
 	// TODO: pod number may be ideal
 	for i := 0; i < 2*cpuCount; i++ {
 		go a.processHttp2Frames()
+		go a.processEbpfProc(a.ctx)
 	}
 }
 
@@ -299,7 +319,6 @@ func (a *Aggregator) processEbpfProc(ctx context.Context) {
 	for data := range a.ebpfProcChan {
 		select {
 		case <-ctx.Done():
-			log.Logger.Info().Msg("processEbpf exiting...")
 			return
 		default:
 			bpfEvent, ok := data.(ebpf.BpfEvent)
@@ -320,11 +339,10 @@ func (a *Aggregator) processEbpfProc(ctx context.Context) {
 	}
 }
 
-func (a *Aggregator) processEbpf(ctx context.Context) {
-	for data := range a.ebpfChan {
+func (a *Aggregator) processEbpfTcp(ctx context.Context) {
+	for data := range a.ebpfTcpChan {
 		select {
 		case <-ctx.Done():
-			log.Logger.Info().Msg("processEbpf exiting...")
 			return
 		default:
 			bpfEvent, ok := data.(ebpf.BpfEvent)
@@ -336,6 +354,24 @@ func (a *Aggregator) processEbpf(ctx context.Context) {
 			case tcp_state.TCP_CONNECT_EVENT:
 				d := data.(*tcp_state.TcpConnectEvent) // copy data's value
 				a.processTcpConnect(d)
+			}
+		}
+
+	}
+}
+
+func (a *Aggregator) processEbpf(ctx context.Context) {
+	for data := range a.ebpfChan {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			bpfEvent, ok := data.(ebpf.BpfEvent)
+			if !ok {
+				log.Logger.Error().Interface("ebpfData", data).Msg("error casting ebpf event")
+				continue
+			}
+			switch bpfEvent.Type() {
 			case l7_req.L7_EVENT:
 				d := data.(*l7_req.L7Event) // copy data's value
 				a.processL7(ctx, d)
@@ -377,9 +413,7 @@ func (a *Aggregator) processExit(pid uint32) {
 	delete(a.liveProcesses, pid)
 	a.liveProcessesMu.Unlock()
 
-	a.clusterInfo.mu.Lock()
-	delete(a.clusterInfo.PidToSocketMap, pid)
-	a.clusterInfo.mu.Unlock()
+	a.removeFromClusterInfo(pid)
 
 	a.h2ParserMu.Lock()
 	pid_s := fmt.Sprint(pid)
@@ -399,8 +433,12 @@ func (a *Aggregator) processExit(pid uint32) {
 	a.rateLimitMu.Unlock()
 }
 
+func (a *Aggregator) signalTlsAttachment(pid uint32) {
+	a.tlsAttachSignalChan <- pid
+}
+
 func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
-	go a.ec.ListenForEncryptedReqs(d.Pid)
+	go a.signalTlsAttachment(d.Pid)
 	if d.Type_ == tcp_state.EVENT_TCP_ESTABLISHED {
 		// filter out localhost connections
 		if d.SAddr == "127.0.0.1" || d.DAddr == "127.0.0.1" {
@@ -410,30 +448,26 @@ func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
 		var sockMap *SocketMap
 		var ok bool
 
-		a.clusterInfo.mu.RLock() // lock for reading
-		sockMap, ok = a.clusterInfo.PidToSocketMap[d.Pid]
-		a.clusterInfo.mu.RUnlock() // unlock for reading
+		mu, pidToSocketMap := a.getShard(d.Pid)
+		mu.Lock()
+		sockMap, ok = pidToSocketMap[d.Pid]
 		if !ok {
 			sockMap = &SocketMap{
 				M:  make(map[uint64]*SocketLine),
 				mu: sync.RWMutex{},
 			}
-			a.clusterInfo.mu.Lock() // lock for writing
-			a.clusterInfo.PidToSocketMap[d.Pid] = sockMap
-			a.clusterInfo.mu.Unlock() // unlock for writing
+			pidToSocketMap[d.Pid] = sockMap
 		}
+		mu.Unlock() // unlock for writing
 
 		var skLine *SocketLine
 
-		sockMap.mu.RLock() // lock for reading
+		sockMap.mu.Lock() // lock for reading
 		skLine, ok = sockMap.M[d.Fd]
-		sockMap.mu.RUnlock() // unlock for reading
 
 		if !ok {
 			skLine = NewSocketLine(d.Pid, d.Fd)
-			sockMap.mu.Lock() // lock for writing
 			sockMap.M[d.Fd] = skLine
-			sockMap.mu.Unlock() // unlock for writing
 		}
 
 		skLine.AddValue(
@@ -447,35 +481,36 @@ func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
 				Dport: d.DPort,
 			},
 		)
+		sockMap.mu.Unlock() // unlock for writing
+
 	} else if d.Type_ == tcp_state.EVENT_TCP_CLOSED {
 		var sockMap *SocketMap
 		var ok bool
 
-		a.clusterInfo.mu.RLock() // lock for reading
-		sockMap, ok = a.clusterInfo.PidToSocketMap[d.Pid]
-		a.clusterInfo.mu.RUnlock() // unlock for reading
-
+		mu, pidToSocketMap := a.getShard(d.Pid)
+		mu.Lock()
+		sockMap, ok = pidToSocketMap[d.Pid]
 		if !ok {
 			sockMap = &SocketMap{
 				M:  make(map[uint64]*SocketLine),
 				mu: sync.RWMutex{},
 			}
 
-			a.clusterInfo.mu.Lock() // lock for writing
-			a.clusterInfo.PidToSocketMap[d.Pid] = sockMap
-			a.clusterInfo.mu.Unlock() // unlock for writing
+			pidToSocketMap[d.Pid] = sockMap
+			mu.Unlock() // unlock for writing
 			return
 		}
+		mu.Unlock()
 
 		var skLine *SocketLine
 
-		sockMap.mu.RLock() // lock for reading
+		sockMap.mu.Lock() // lock for reading
 		skLine, ok = sockMap.M[d.Fd]
-		sockMap.mu.RUnlock() // unlock for reading
-
 		if !ok {
+			sockMap.mu.Unlock() // unlock for reading
 			return
 		}
+		sockMap.mu.Unlock() // unlock for reading
 
 		// If connection is established before, add the close event
 		skLine.AddValue(
@@ -800,9 +835,9 @@ func (a *Aggregator) processHttp2Frames() {
 
 func (a *Aggregator) setFromTo(skInfo *SockInfo, d *l7_req.L7Event, reqDto *datastore.Request, hostHeader string) error {
 	// find pod info
-	a.clusterInfo.mu.RLock() // lock for reading
+	a.clusterInfo.k8smu.RLock() // lock for reading
 	podUid, ok := a.clusterInfo.PodIPToPodUid[skInfo.Saddr]
-	a.clusterInfo.mu.RUnlock() // unlock for reading
+	a.clusterInfo.k8smu.RUnlock() // unlock for reading
 	if !ok {
 		return fmt.Errorf("error finding pod with sockets saddr")
 	}
@@ -813,17 +848,17 @@ func (a *Aggregator) setFromTo(skInfo *SockInfo, d *l7_req.L7Event, reqDto *data
 	reqDto.ToPort = skInfo.Dport
 
 	// find service info
-	a.clusterInfo.mu.RLock() // lock for reading
+	a.clusterInfo.k8smu.RLock() // lock for reading
 	svcUid, ok := a.clusterInfo.ServiceIPToServiceUid[skInfo.Daddr]
-	a.clusterInfo.mu.RUnlock() // unlock for reading
+	a.clusterInfo.k8smu.RUnlock() // unlock for reading
 
 	if ok {
 		reqDto.ToUID = string(svcUid)
 		reqDto.ToType = "service"
 	} else {
-		a.clusterInfo.mu.RLock() // lock for reading
+		a.clusterInfo.k8smu.RLock() // lock for reading
 		podUid, ok := a.clusterInfo.PodIPToPodUid[skInfo.Daddr]
-		a.clusterInfo.mu.RUnlock() // unlock for reading
+		a.clusterInfo.k8smu.RUnlock() // unlock for reading
 
 		if ok {
 			reqDto.ToUID = string(podUid)
@@ -971,19 +1006,17 @@ func getHostnameFromIP(ipAddr string) (string, error) {
 }
 
 func (a *Aggregator) fetchSkLine(sockMap *SocketMap, pid uint32, fd uint64) *SocketLine {
-	sockMap.mu.RLock() // lock for reading
+	sockMap.mu.Lock() // lock for reading
 	skLine, ok := sockMap.M[fd]
-	sockMap.mu.RUnlock() // unlock for reading
 
 	if !ok {
 		log.Logger.Debug().Uint32("pid", pid).Uint64("fd", fd).Msg("error finding skLine, go look for it")
 		// start new socket line, find already established connections
 		skLine = NewSocketLine(pid, fd)
 		skLine.GetAlreadyExistingSockets() // find already established connections
-		sockMap.mu.Lock()                  // lock for writing
 		sockMap.M[fd] = skLine
-		sockMap.mu.Unlock() // unlock for writing
 	}
+	sockMap.mu.Unlock() // unlock for writing
 
 	return skLine
 }
@@ -1020,25 +1053,57 @@ func (a *Aggregator) fetchSkInfo(ctx context.Context, skLine *SocketLine, d *l7_
 	return skInfo
 }
 
+func (a *Aggregator) getShard(pid uint32) (*sync.RWMutex, map[uint32]*SocketMap) {
+	lastDigit := pid % 10
+	var mu *sync.RWMutex
+	var pidToSocketMap map[uint32]*SocketMap
+	switch lastDigit {
+	case 0, 1:
+		mu = &a.clusterInfo.mu0
+		pidToSocketMap = a.clusterInfo.PidToSocketMap0
+	case 2, 3:
+		mu = &a.clusterInfo.mu1
+		pidToSocketMap = a.clusterInfo.PidToSocketMap1
+	case 4, 5:
+		mu = &a.clusterInfo.mu2
+		pidToSocketMap = a.clusterInfo.PidToSocketMap2
+	case 6, 7:
+		mu = &a.clusterInfo.mu3
+		pidToSocketMap = a.clusterInfo.PidToSocketMap3
+	case 8, 9:
+		mu = &a.clusterInfo.mu4
+		pidToSocketMap = a.clusterInfo.PidToSocketMap4
+	}
+
+	return mu, pidToSocketMap
+}
+
+func (a *Aggregator) removeFromClusterInfo(pid uint32) {
+	mu, pidToSocketMap := a.getShard(pid)
+	mu.Lock()
+	delete(pidToSocketMap, pid)
+	mu.Unlock()
+}
+
 func (a *Aggregator) fetchSocketMap(pid uint32) *SocketMap {
 	var sockMap *SocketMap
 	var ok bool
 
-	a.clusterInfo.mu.RLock() // lock for reading
-	sockMap, ok = a.clusterInfo.PidToSocketMap[pid]
-	a.clusterInfo.mu.RUnlock() // unlock for reading
+	mu, pidToSocketMap := a.getShard(pid) // create shard if not exists
+	mu.Lock()                             // lock for reading
+	sockMap, ok = pidToSocketMap[pid]
 	if !ok {
 		// initialize socket map
 		sockMap = &SocketMap{
 			M:  make(map[uint64]*SocketLine),
 			mu: sync.RWMutex{},
 		}
-		a.clusterInfo.mu.Lock() // lock for writing
-		a.clusterInfo.PidToSocketMap[pid] = sockMap
-		a.clusterInfo.mu.Unlock() // unlock for writing
+		pidToSocketMap[pid] = sockMap
 
-		go a.ec.ListenForEncryptedReqs(pid)
+		go a.signalTlsAttachment(pid)
 	}
+	mu.Unlock() // unlock for writing
+
 	return sockMap
 }
 
@@ -1095,12 +1160,44 @@ func (a *Aggregator) clearSocketLines(ctx context.Context) {
 	}()
 
 	for range ticker.C {
-		a.clusterInfo.mu.RLock()
-		for _, socketMap := range a.clusterInfo.PidToSocketMap {
+		a.clusterInfo.mu0.RLock()
+		for _, socketMap := range a.clusterInfo.PidToSocketMap0 {
 			for _, socketLine := range socketMap.M {
 				skLineCh <- socketLine
 			}
 		}
-		a.clusterInfo.mu.RUnlock()
+		a.clusterInfo.mu0.RUnlock()
+
+		a.clusterInfo.mu1.RLock()
+		for _, socketMap := range a.clusterInfo.PidToSocketMap1 {
+			for _, socketLine := range socketMap.M {
+				skLineCh <- socketLine
+			}
+		}
+		a.clusterInfo.mu1.RUnlock()
+
+		a.clusterInfo.mu2.RLock()
+		for _, socketMap := range a.clusterInfo.PidToSocketMap2 {
+			for _, socketLine := range socketMap.M {
+				skLineCh <- socketLine
+			}
+		}
+		a.clusterInfo.mu2.RUnlock()
+
+		a.clusterInfo.mu3.RLock()
+		for _, socketMap := range a.clusterInfo.PidToSocketMap3 {
+			for _, socketLine := range socketMap.M {
+				skLineCh <- socketLine
+			}
+		}
+		a.clusterInfo.mu3.RUnlock()
+
+		a.clusterInfo.mu4.RLock()
+		for _, socketMap := range a.clusterInfo.PidToSocketMap4 {
+			for _, socketLine := range socketMap.M {
+				skLineCh <- socketLine
+			}
+		}
+		a.clusterInfo.mu4.RUnlock()
 	}
 }

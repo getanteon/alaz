@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"time"
 	"unsafe"
 
 	"github.com/ddosify/alaz/log"
@@ -59,7 +58,7 @@ func (e TcpStateConversion) String() string {
 const mapKey uint32 = 0
 
 // padding to match the kernel struct
-type TcpEvent struct {
+type BpfTcpEvent struct {
 	Fd        uint64
 	Timestamp uint64
 	Type      uint32
@@ -90,7 +89,45 @@ func (e TcpConnectEvent) Type() string {
 
 var objs bpfObjects
 
-func LoadBpfObjects() {
+var TcpState *TcpStateProg
+
+type TcpStateConfig struct {
+	BpfMapSize uint32 // specified in terms of os page size
+}
+
+var defaultConfig *TcpStateConfig = &TcpStateConfig{
+	BpfMapSize: 64,
+}
+
+func InitTcpStateProg(conf *TcpStateConfig) *TcpStateProg {
+	if conf == nil {
+		conf = defaultConfig
+	}
+
+	return &TcpStateProg{
+		links:             map[string]link.Link{},
+		tcpConnectMapSize: conf.BpfMapSize,
+	}
+}
+
+type TcpStateProg struct {
+	// links represent a program attached to a hook
+	links map[string]link.Link // key : hook name
+
+	tcpConnectMapSize uint32
+	tcpConnectEvents  *perf.Reader
+}
+
+func (tsp *TcpStateProg) Close() {
+	for hookName, link := range tsp.links {
+		log.Logger.Info().Msgf("unattach %s", hookName)
+		link.Close()
+	}
+	objs.Close()
+}
+
+// Loads bpf programs into kernel
+func (tsp *TcpStateProg) Load() {
 	// Allow the current process to lock memory for eBPF resources.
 	if err := rlimit.RemoveMemlock(); err != nil {
 		log.Logger.Fatal().Err(err).Msg("failed to remove memlock limit")
@@ -103,127 +140,72 @@ func LoadBpfObjects() {
 	}
 }
 
-// returns when program is detached
-func DeployAndWait(parentCtx context.Context, ch chan interface{}) {
-	ctx, _ := context.WithCancel(parentCtx)
-	defer objs.Close()
-
-	time.Sleep(1 * time.Second)
-
+func (tsp *TcpStateProg) Attach() {
 	l, err := link.Tracepoint("sock", "inet_sock_set_state", objs.bpfPrograms.InetSockSetState, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link inet_sock_set_state tracepoint")
 	}
-	defer func() {
-		log.Logger.Info().Msg("closing inet_sock_set_state tracepoint")
-		l.Close()
-	}()
+	tsp.links["sock/inet_sock_set_state"] = l
 
 	l1, err := link.Tracepoint("syscalls", "sys_enter_connect", objs.bpfPrograms.SysEnterConnect, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_enter_connect tracepoint")
 	}
-	defer func() {
-		log.Logger.Info().Msg("closing sys_enter_connect tracepoint")
-		l1.Close()
-	}()
+	tsp.links["syscalls/sys_enter_connect"] = l1
 
 	l2, err := link.Tracepoint("syscalls", "sys_exit_connect", objs.bpfPrograms.SysEnterConnect, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_exit_connect tracepoint")
 	}
-	defer func() {
-		log.Logger.Info().Msg("closing sys_exit_connect tracepoint")
-		l2.Close()
-	}()
-
-	// initialize perf event readers
-	tcpListenEvents, err := perf.NewReader(objs.TcpListenEvents, 64*os.Getpagesize())
-	if err != nil {
-		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
-	}
-	defer func() {
-		log.Logger.Info().Msg("closing tcpListenEvents perf event reader")
-		tcpListenEvents.Close()
-	}()
-
-	tcpConnectEvents, err := perf.NewReader(objs.TcpConnectEvents, 64*os.Getpagesize())
-	if err != nil {
-		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
-	}
-	defer func() {
-		log.Logger.Info().Msg("closing tcpConnectEvents perf event reader")
-		tcpConnectEvents.Close()
-	}()
-
-	// go listenDebugMsgs()
-
-	readDone := make(chan struct{})
-	go func() {
-		for {
-			read := func() {
-				record, err := tcpConnectEvents.Read()
-				if err != nil {
-					log.Logger.Warn().Err(err).Msg("error reading from perf array")
-				}
-
-				if record.LostSamples != 0 {
-					log.Logger.Warn().Msgf("lost samples tcp-connect %d", record.LostSamples)
-				}
-
-				if record.RawSample == nil || len(record.RawSample) == 0 {
-					return
-				}
-
-				bpfEvent := (*TcpEvent)(unsafe.Pointer(&record.RawSample[0]))
-
-				go func() {
-					ch <- &TcpConnectEvent{
-						Pid:       bpfEvent.Pid,
-						Fd:        bpfEvent.Fd,
-						Timestamp: bpfEvent.Timestamp,
-						Type_:     TcpStateConversion(bpfEvent.Type).String(),
-						SPort:     bpfEvent.SPort,
-						DPort:     bpfEvent.DPort,
-						SAddr:     fmt.Sprintf("%d.%d.%d.%d", bpfEvent.SAddr[0], bpfEvent.SAddr[1], bpfEvent.SAddr[2], bpfEvent.SAddr[3]),
-						DAddr:     fmt.Sprintf("%d.%d.%d.%d", bpfEvent.DAddr[0], bpfEvent.DAddr[1], bpfEvent.DAddr[2], bpfEvent.DAddr[3]),
-					}
-				}()
-			}
-
-			select {
-			case <-readDone:
-				return
-			default:
-				read()
-			}
-
-		}
-	}()
-
-	<-ctx.Done() // wait for context to be cancelled
-	readDone <- struct{}{}
-	// defers will clean up
+	tsp.links["syscalls/sys_exit_connect"] = l2
 }
 
-func listenDebugMsgs() {
-	printsPath := "/sys/kernel/debug/tracing/trace_pipe"
-
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	fd, err := os.Open(printsPath)
+func (tsp *TcpStateProg) InitMaps() {
+	var err error
+	tsp.tcpConnectEvents, err = perf.NewReader(objs.TcpConnectEvents, int(tsp.tcpConnectMapSize)*os.Getpagesize())
 	if err != nil {
-		log.Logger.Warn().Err(err).Msg("error opening trace_pipe")
+		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
 	}
-	defer fd.Close()
+}
 
-	buf := make([]byte, 1024)
-	for range ticker.C {
-		n, err := fd.Read(buf)
-		if err != nil {
-			log.Logger.Error().Err(err).Msg("error reading from trace_pipe")
+// returns when program is detached
+func (tsp *TcpStateProg) Consume(ctx context.Context, ch chan interface{}) {
+	for {
+		read := func() {
+			record, err := tsp.tcpConnectEvents.Read()
+			if err != nil {
+				log.Logger.Warn().Err(err).Msg("error reading from tcp connect event map")
+			}
+
+			if record.LostSamples != 0 {
+				log.Logger.Warn().Msgf("lost samples tcp-connect %d", record.LostSamples)
+			}
+
+			if record.RawSample == nil || len(record.RawSample) == 0 {
+				return
+			}
+
+			bpfEvent := (*BpfTcpEvent)(unsafe.Pointer(&record.RawSample[0]))
+
+			go func() {
+				ch <- &TcpConnectEvent{
+					Pid:       bpfEvent.Pid,
+					Fd:        bpfEvent.Fd,
+					Timestamp: bpfEvent.Timestamp,
+					Type_:     TcpStateConversion(bpfEvent.Type).String(),
+					SPort:     bpfEvent.SPort,
+					DPort:     bpfEvent.DPort,
+					SAddr:     fmt.Sprintf("%d.%d.%d.%d", bpfEvent.SAddr[0], bpfEvent.SAddr[1], bpfEvent.SAddr[2], bpfEvent.SAddr[3]),
+					DAddr:     fmt.Sprintf("%d.%d.%d.%d", bpfEvent.DAddr[0], bpfEvent.DAddr[1], bpfEvent.DAddr[2], bpfEvent.DAddr[3]),
+				}
+			}()
 		}
-		log.Logger.Debug().Msgf("read %d bytes: %s\n", n, buf[:n])
+		select {
+		case <-ctx.Done():
+			log.Logger.Info().Msg("stop consuming tcp events...")
+			return
+		default:
+			read()
+		}
 	}
 }

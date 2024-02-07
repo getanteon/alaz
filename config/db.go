@@ -8,9 +8,10 @@ type PostgresConfig struct {
 	DBName   string
 }
 
-type BackendConfig struct {
+type BackendDSConfig struct {
 	Host                  string
-	Port                  string
 	MetricsExport         bool
 	MetricsExportInterval int // in seconds
+
+	ReqBufferSize int
 }

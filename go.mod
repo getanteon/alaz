@@ -1,24 +1,27 @@
 module github.com/ddosify/alaz
 
-go 1.18
+go 1.20
 
 require (
 	github.com/alecthomas/kingpin/v2 v2.3.2
 	github.com/cilium/ebpf v0.10.1-0.20230626090016-654491c8a500
+	github.com/cilium/fake v0.6.1
 	github.com/go-kit/log v0.2.1
 	github.com/hashicorp/go-retryablehttp v0.7.4
 	github.com/prometheus/client_golang v1.16.0
 	github.com/prometheus/common v0.44.0
 	github.com/prometheus/node_exporter v1.6.1
 	github.com/rs/zerolog v1.29.1
+	github.com/stretchr/testify v1.8.4
 	golang.org/x/arch v0.5.0
 	golang.org/x/mod v0.12.0
 	inet.af/netaddr v0.0.0-20230525184311-b8eac61e914a
 	k8s.io/api v0.27.2
 	k8s.io/apimachinery v0.27.2
 	k8s.io/client-go v0.27.2
-
 )
+
+require github.com/pmezard/go-difflib v1.0.0 // indirect
 
 require (
 	github.com/alecthomas/units v0.0.0-20211218093645-b94a6e3cc137 // indirect
@@ -73,11 +76,10 @@ require (
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/prometheus-community/go-runit v0.1.0 // indirect
 	github.com/prometheus/client_model v0.4.0 // indirect
-	github.com/prometheus/procfs v0.11.0 // indirect
+	github.com/prometheus/procfs v0.11.0
 	github.com/rogpeppe/go-internal v1.11.0 // indirect
 	github.com/safchain/ethtool v0.3.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
-	github.com/stretchr/testify v1.8.4 // indirect
 	github.com/xhit/go-str2duration/v2 v2.1.0 // indirect
 	go.ddosify.com/ddosify v1.0.5
 	go.uber.org/multierr v1.11.0 // indirect
