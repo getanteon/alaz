@@ -47,8 +47,16 @@ func main() {
 		go k8sCollector.Init(kubeEvents)
 	}
 
-	ebpfEnabled, _ := strconv.ParseBool(os.Getenv("EBPF_ENABLED"))
+	// EBPF_ENABLED changed to SERVICE_MAP_ENABLED
+	// for backwards compatibility
+	ebpfEnabled, err := strconv.ParseBool(os.Getenv("SERVICE_MAP_ENABLED"))
+	if err != nil {
+		// if SERVICE_MAP_ENABLED not given, check EBPF_ENABLED
+		ebpfEnabled, _ = strconv.ParseBool(os.Getenv("EBPF_ENABLED"))
+	}
+
 	metricsEnabled, _ := strconv.ParseBool(os.Getenv("METRICS_ENABLED"))
+	distTracingEnabled, _ := strconv.ParseBool(os.Getenv("DIST_TRACING_ENABLED"))
 
 	// datastore backend
 	dsBackend := datastore.NewBackendDS(ctx, config.BackendDSConfig{
@@ -57,7 +65,7 @@ func main() {
 		MetricsExportInterval: 10,
 		ReqBufferSize:         40000, // TODO: get from a conf file
 	})
-	go dsBackend.SendHealthCheck(ebpfEnabled, metricsEnabled, k8sVersion)
+	go dsBackend.SendHealthCheck(ebpfEnabled, metricsEnabled, distTracingEnabled, k8sVersion)
 
 	// deploy ebpf programs
 	var ec *ebpf.EbpfCollector

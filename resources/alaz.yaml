@@ -56,9 +56,11 @@ spec:
       hostPID: true
       containers:
       - env:
-        - name: EBPF_ENABLED
+        - name: SERVICE_MAP_ENABLED
           value: "true"
         - name: METRICS_ENABLED
+          value: "true"
+        - name: DIST_TRACING_ENABLED
           value: "true"
         - name: BACKEND_HOST
           value: https://api.ddosify.com:443
@@ -76,7 +78,7 @@ spec:
         - --no-collector.hwmon
         - --collector.filesystem.ignored-mount-points=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/pods/.+)($|/)
         - --collector.netclass.ignored-devices=^(veth.*)$
-        image: ddosify/alaz:v0.4.0
+        image: ddosify/alaz:v0.5.0
         imagePullPolicy: IfNotPresent
         name: alaz-pod
         ports:
