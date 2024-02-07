@@ -206,32 +206,30 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{},
 }
 
 func (a *Aggregator) Run() {
-	go func() {
-		// get all alive processes, populate liveProcesses
-		cmd := exec.Command("ps", "-e", "-o", "pid=")
-		output, err := cmd.Output()
-		if err != nil {
-			log.Logger.Fatal().Err(err).Msg("error getting all alive processes")
-		}
+	// get all alive processes, populate liveProcesses
+	cmd := exec.Command("ps", "-e", "-o", "pid=")
+	output, err := cmd.Output()
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("error getting all alive processes")
+	}
 
-		lines := strings.Split(string(output), "\n")
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if line != "" {
-				fields := strings.Fields(line)
-				if len(fields) > 0 {
-					pid := fields[0]
-					pidInt, err := strconv.Atoi(pid)
-					if err != nil {
-						log.Logger.Error().Err(err).Msgf("error converting pid to int %s", pid)
-						continue
-					}
-					a.liveProcesses[uint32(pidInt)] = struct{}{}
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			fields := strings.Fields(line)
+			if len(fields) > 0 {
+				pid := fields[0]
+				pidInt, err := strconv.Atoi(pid)
+				if err != nil {
+					log.Logger.Error().Err(err).Msgf("error converting pid to int %s", pid)
+					continue
 				}
+				a.liveProcesses[uint32(pidInt)] = struct{}{}
 			}
 		}
+	}
 
-	}()
 	go func() {
 		// every 2 minutes, check alive processes, and clear the ones left behind
 		// since we process events concurrently, some short-lived processes exit event can come before exec events
