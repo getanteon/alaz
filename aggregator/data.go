@@ -276,10 +276,11 @@ func (a *Aggregator) Run() {
 	go a.processk8s()
 
 	cpuCount := runtime.NumCPU()
-	numWorker := 10 * cpuCount
-	if numWorker < 100 {
-		numWorker = 100 // min number
+	numWorker := 5 * cpuCount
+	if numWorker < 50 {
+		numWorker = 50 // min number
 	}
+
 	for i := 0; i < numWorker; i++ {
 		go a.processEbpf(a.ctx)
 		go a.processEbpfTcp(a.ctx)

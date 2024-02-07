@@ -34,6 +34,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// CGO_ENABLED=0 TEST_MODE=true DISABLE_LOGS=true go test
+
 type SimulatorConfig struct {
 	// number of processes
 	// pod and services
