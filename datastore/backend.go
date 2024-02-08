@@ -595,7 +595,7 @@ func (b *BackendDS) sendConnsInBatch(batchSize uint64) {
 		}
 
 		connsPayload := convertConnsToPayload(batch)
-		log.Logger.Info().Any("conns", connsPayload).Msgf("sending %d conns to backend", len(batch))
+		log.Logger.Debug().Any("conns", connsPayload).Msgf("sending %d conns to backend", len(batch))
 		go b.sendToBackend(http.MethodPost, connsPayload, connEndpoint)
 
 		// return openConns to the pool
