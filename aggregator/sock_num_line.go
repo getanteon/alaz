@@ -101,13 +101,6 @@ func (nl *SocketLine) DeleteUnused() {
 		}
 	}
 
-	if lastMatchedReqTime == 0 {
-		// in case of tracking only tcp sockets without any requests matching them, socketLine will consume memory over time
-		// we need to delete all values in this case
-		nl.Values = make([]TimestampedSocket, 0)
-		return
-	}
-
 	// assumedInterval is inversely proportional to the number of requests being discarded
 	assumedInterval := uint64(1 * time.Minute)
 
