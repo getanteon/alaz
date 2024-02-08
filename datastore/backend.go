@@ -163,19 +163,19 @@ type BackendDS struct {
 }
 
 const (
-	podEndpoint       = "/alaz/k8s/pod/"
-	svcEndpoint       = "/alaz/k8s/svc/"
-	rsEndpoint        = "/alaz/k8s/replicaset/"
-	depEndpoint       = "/alaz/k8s/deployment/"
-	epEndpoint        = "/alaz/k8s/endpoint/"
-	containerEndpoint = "/alaz/k8s/container/"
-	dsEndpoint        = "/alaz/k8s/daemonset/"
-	reqEndpoint       = "/alaz/"
-	connEndpoint      = "/alaz/connections/"
+	podEndpoint       = "/pod/"
+	svcEndpoint       = "/svc/"
+	rsEndpoint        = "/replicaset/"
+	depEndpoint       = "/deployment/"
+	epEndpoint        = "/endpoint/"
+	containerEndpoint = "/container/"
+	dsEndpoint        = "/daemonset/"
+	reqEndpoint       = "/requests/"
+	connEndpoint      = "/connections/"
 
 	traceEventEndpoint = "/dist_tracing/traffic/"
 
-	healthCheckEndpoint = "/alaz/healthcheck/"
+	healthCheckEndpoint = "/healthcheck/"
 )
 
 type LeveledLogger struct {
@@ -345,7 +345,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 							return
 						}
 
-						req, err = http.NewRequest(http.MethodPost, fmt.Sprintf("%s/alaz/metrics/scrape/?instance=%s&monitoring_id=%s", ds.host, NodeID, MonitoringID), resp.Body)
+						req, err = http.NewRequest(http.MethodPost, fmt.Sprintf("%s/metrics/scrape/?instance=%s&monitoring_id=%s", ds.host, NodeID, MonitoringID), resp.Body)
 						if err != nil {
 							log.Logger.Error().Msgf("error creating metrics request: %v", err)
 							return
