@@ -138,8 +138,10 @@ type BackendDS struct {
 	c         *http.Client
 	batchSize uint64
 
-	reqChanBuffer chan *ReqInfo
-	reqInfoPool   *poolutil.Pool[*ReqInfo]
+	reqChanBuffer  chan *ReqInfo
+	connChanBuffer chan *ConnInfo
+	reqInfoPool    *poolutil.Pool[*ReqInfo]
+	aliveConnPool  *poolutil.Pool[*ConnInfo]
 
 	traceEventQueue *list.List
 	traceEventMu    sync.RWMutex
@@ -169,6 +171,7 @@ const (
 	containerEndpoint = "/alaz/k8s/container/"
 	dsEndpoint        = "/alaz/k8s/daemonset/"
 	reqEndpoint       = "/alaz/"
+	connEndpoint      = "/alaz/connections/"
 
 	traceEventEndpoint = "/dist_tracing/traffic/"
 
@@ -279,8 +282,10 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 		c:                  client,
 		batchSize:          bs,
 		reqInfoPool:        newReqInfoPool(func() *ReqInfo { return &ReqInfo{} }, func(r *ReqInfo) {}),
+		aliveConnPool:      newAliveConnPool(func() *ConnInfo { return &ConnInfo{} }, func(r *ConnInfo) {}),
 		traceInfoPool:      newTraceInfoPool(func() *TraceInfo { return &TraceInfo{} }, func(r *TraceInfo) {}),
 		reqChanBuffer:      make(chan *ReqInfo, conf.ReqBufferSize),
+		connChanBuffer:     make(chan *ConnInfo, conf.ConnBufferSize),
 		podEventChan:       make(chan interface{}, 100),
 		svcEventChan:       make(chan interface{}, 100),
 		rsEventChan:        make(chan interface{}, 100),
@@ -292,6 +297,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 	}
 
 	go ds.sendReqsInBatch(bs)
+	go ds.sendConnsInBatch(bs)
 	go ds.sendTraceEventsInBatch(10 * bs)
 
 	eventsInterval := 10 * time.Second
@@ -449,6 +455,18 @@ func convertReqsToPayload(batch []*ReqInfo) RequestsPayload {
 	}
 }
 
+func convertConnsToPayload(batch []*ConnInfo) ConnInfoPayload {
+	return ConnInfoPayload{
+		Metadata: Metadata{
+			MonitoringID:   MonitoringID,
+			IdempotencyKey: string(uuid.NewUUID()),
+			NodeID:         NodeID,
+			AlazVersion:    tag,
+		},
+		Connections: batch,
+	}
+}
+
 func convertTraceEventsToPayload(batch []*TraceInfo) TracePayload {
 	return TracePayload{
 		Metadata: Metadata{
@@ -555,6 +573,49 @@ func (b *BackendDS) sendReqsInBatch(batchSize uint64) {
 
 }
 
+func (b *BackendDS) sendConnsInBatch(batchSize uint64) {
+	t := time.NewTicker(30 * time.Second)
+	defer t.Stop()
+
+	send := func() {
+		batch := make([]*ConnInfo, 0, batchSize)
+		loop := true
+
+		for i := 0; (i < int(batchSize)) && loop; i++ {
+			select {
+			case conn := <-b.connChanBuffer:
+				batch = append(batch, conn)
+			case <-time.After(50 * time.Millisecond):
+				loop = false
+			}
+		}
+
+		if len(batch) == 0 {
+			return
+		}
+
+		connsPayload := convertConnsToPayload(batch)
+		log.Logger.Info().Any("conns", connsPayload).Msgf("sending %d conns to backend", len(batch))
+		go b.sendToBackend(http.MethodPost, connsPayload, connEndpoint)
+
+		// return openConns to the pool
+		for _, conn := range batch {
+			b.aliveConnPool.Put(conn)
+		}
+	}
+
+	for {
+		select {
+		case <-b.ctx.Done():
+			log.Logger.Info().Msg("stopping sending reqs to backend")
+			return
+		case <-t.C:
+			send()
+		}
+	}
+
+}
+
 func (b *BackendDS) send(ch <-chan interface{}, endpoint string) {
 	batch := make([]interface{}, 0, resourceBatchSize)
 	loop := true
@@ -611,6 +672,14 @@ func newReqInfoPool(factory func() *ReqInfo, close func(*ReqInfo)) *poolutil.Poo
 	}
 }
 
+func newAliveConnPool(factory func() *ConnInfo, close func(*ConnInfo)) *poolutil.Pool[*ConnInfo] {
+	return &poolutil.Pool[*ConnInfo]{
+		Items:   make(chan *ConnInfo, 500),
+		Factory: factory,
+		Close:   close,
+	}
+}
+
 func newTraceInfoPool(factory func() *TraceInfo, close func(*TraceInfo)) *poolutil.Pool[*TraceInfo] {
 	return &poolutil.Pool[*TraceInfo]{
 		Items:   make(chan *TraceInfo, 50000),
@@ -619,11 +688,31 @@ func newTraceInfoPool(factory func() *TraceInfo, close func(*TraceInfo)) *poolut
 	}
 }
 
+func (b *BackendDS) PersistAliveConnection(aliveConn *AliveConnection) error {
+	// get a connInfo from the pool
+	oc := b.aliveConnPool.Get()
+
+	// overwrite the connInfo, all fields must be set in order to avoid conflict
+	oc[0] = aliveConn.CheckTime
+	oc[1] = aliveConn.FromIP
+	oc[2] = aliveConn.FromType
+	oc[3] = aliveConn.FromUID
+	oc[4] = aliveConn.FromPort
+	oc[5] = aliveConn.ToIP
+	oc[6] = aliveConn.ToType
+	oc[7] = aliveConn.ToUID
+	oc[8] = aliveConn.ToPort
+
+	b.connChanBuffer <- oc
+
+	return nil
+}
+
 func (b *BackendDS) PersistRequest(request *Request) error {
 	// get a reqInfo from the pool
 	reqInfo := b.reqInfoPool.Get()
 
-	// overwrite the reqInfo, all fields must be set in order to avoid comple
+	// overwrite the reqInfo, all fields must be set in order to avoid conflict
 	reqInfo[0] = request.StartTime
 	reqInfo[1] = request.Latency
 	reqInfo[2] = request.FromIP

@@ -481,6 +481,7 @@ func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
 				Dport: d.DPort,
 			},
 		)
+
 		sockMap.mu.Unlock() // unlock for writing
 
 	} else if d.Type_ == tcp_state.EVENT_TCP_CLOSED {
@@ -833,11 +834,23 @@ func (a *Aggregator) processHttp2Frames() {
 	done <- true // signal cleaning goroutine
 }
 
+func (a *Aggregator) getPodWithIP(addr string) (types.UID, bool) {
+	a.clusterInfo.k8smu.RLock() // lock for reading
+	podUid, ok := a.clusterInfo.PodIPToPodUid[addr]
+	a.clusterInfo.k8smu.RUnlock() // unlock for reading
+	return podUid, ok
+}
+
+func (a *Aggregator) getSvcWithIP(addr string) (types.UID, bool) {
+	a.clusterInfo.k8smu.RLock() // lock for reading
+	svcUid, ok := a.clusterInfo.ServiceIPToServiceUid[addr]
+	a.clusterInfo.k8smu.RUnlock() // unlock for reading
+	return svcUid, ok
+}
+
 func (a *Aggregator) setFromTo(skInfo *SockInfo, d *l7_req.L7Event, reqDto *datastore.Request, hostHeader string) error {
 	// find pod info
-	a.clusterInfo.k8smu.RLock() // lock for reading
-	podUid, ok := a.clusterInfo.PodIPToPodUid[skInfo.Saddr]
-	a.clusterInfo.k8smu.RUnlock() // unlock for reading
+	podUid, ok := a.getPodWithIP(skInfo.Saddr)
 	if !ok {
 		return fmt.Errorf("error finding pod with sockets saddr")
 	}
@@ -848,17 +861,12 @@ func (a *Aggregator) setFromTo(skInfo *SockInfo, d *l7_req.L7Event, reqDto *data
 	reqDto.ToPort = skInfo.Dport
 
 	// find service info
-	a.clusterInfo.k8smu.RLock() // lock for reading
-	svcUid, ok := a.clusterInfo.ServiceIPToServiceUid[skInfo.Daddr]
-	a.clusterInfo.k8smu.RUnlock() // unlock for reading
-
+	svcUid, ok := a.getSvcWithIP(skInfo.Daddr)
 	if ok {
 		reqDto.ToUID = string(svcUid)
 		reqDto.ToType = "service"
 	} else {
-		a.clusterInfo.k8smu.RLock() // lock for reading
-		podUid, ok := a.clusterInfo.PodIPToPodUid[skInfo.Daddr]
-		a.clusterInfo.k8smu.RUnlock() // unlock for reading
+		podUid, ok := a.getPodWithIP(skInfo.Daddr)
 
 		if ok {
 			reqDto.ToUID = string(podUid)
@@ -1144,6 +1152,59 @@ func parseSqlCommand(r []uint8) (string, error) {
 
 }
 
+func (a *Aggregator) SendOpenConnection(sl *SocketLine) {
+	sl.mu.RLock()
+	defer sl.mu.RUnlock()
+
+	if len(sl.Values) == 0 {
+		return
+	}
+
+	// values are sorted by timestamp
+	// get the last value
+	// if it is a socket open, send it to the datastore
+	// if it is a socket close, ignore it
+
+	t := sl.Values[len(sl.Values)-1]
+	if t.SockInfo != nil {
+		podUid, ok := a.getPodWithIP(t.SockInfo.Saddr)
+		if !ok {
+			// ignore if source pod not found, or it is not a pod
+			return
+		}
+
+		ac := &datastore.AliveConnection{
+			CheckTime: time.Now().UnixMilli(),
+			FromIP:    t.SockInfo.Saddr,
+			FromType:  "pod",
+			FromUID:   string(podUid),
+			FromPort:  t.SockInfo.Sport,
+			ToIP:      t.SockInfo.Daddr,
+			ToType:    "",
+			ToUID:     "",
+			ToPort:    t.SockInfo.Dport,
+		}
+
+		// find destination pod or service
+		svcUid, ok := a.getSvcWithIP(t.SockInfo.Daddr)
+		if ok {
+			ac.ToType = "service"
+			ac.ToUID = string(svcUid)
+		} else {
+			podUid, ok := a.getPodWithIP(t.SockInfo.Daddr)
+			if ok {
+				ac.ToUID = string(podUid)
+				ac.ToType = "pod"
+			} else {
+				ac.ToType = "outbound"
+				ac.ToUID = t.SockInfo.Daddr
+			}
+		}
+
+		a.ds.PersistAliveConnection(ac)
+	}
+}
+
 func (a *Aggregator) clearSocketLines(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	skLineCh := make(chan *SocketLine, 1000)
@@ -1153,6 +1214,9 @@ func (a *Aggregator) clearSocketLines(ctx context.Context) {
 		for i := 0; i < 10; i++ {
 			go func() {
 				for skLine := range skLineCh {
+					// send open connections to datastore
+					a.SendOpenConnection(skLine)
+					// clear socket history
 					skLine.DeleteUnused()
 				}
 			}()

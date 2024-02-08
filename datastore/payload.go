@@ -116,12 +116,27 @@ type ContainerEvent struct {
 // 15) Encrypted (bool)
 // 16) Seq
 // 17) Tid
-
 type ReqInfo [18]interface{}
 
 type RequestsPayload struct {
 	Metadata Metadata   `json:"metadata"`
 	Requests []*ReqInfo `json:"requests"`
+}
+
+// 0) CheckTime // connection is alive at that time
+// 1) Source IP
+// 2) Source Type
+// 3) Source ID
+// 4) Source Port
+// 5) Destination IP
+// 6) Destination Type
+// 7) Destination ID
+// 8) Destination Port
+type ConnInfo [9]interface{}
+
+type ConnInfoPayload struct {
+	Metadata    Metadata    `json:"metadata"`
+	Connections []*ConnInfo `json:"connections"`
 }
 
 // 0) Timestamp
