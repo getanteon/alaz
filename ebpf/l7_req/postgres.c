@@ -78,10 +78,13 @@
 
 // prepared statement
 #define POSTGRES_MESSAGE_PARSE 'P' // 'P' + 4 bytes of length + query
+#define POSTGRES_MESSAGE_BIND 'B' // 'P' + 4 bytes of length + query
+
 
 #define METHOD_UNKNOWN      0
 #define METHOD_STATEMENT_CLOSE_OR_CONN_TERMINATE   1
 #define METHOD_SIMPLE_QUERY 2
+#define METHOD_EXTENDED_QUERY 3
 
 #define COMMAND_COMPLETE 1
 #define ERROR_RESPONSE 2
@@ -117,14 +120,30 @@ int parse_client_postgres_data(char *buf, int buf_size, __u8 *request_type) {
         return 1;
     }
 
-    
     // long queries can be split into multiple packets
     // therefore specified length can exceed the buf_size 
     // normally (len + 1 byte of identifier  == buf_size) should be true
 
+    // Simple Query Protocol
     if (identifier == POSTGRES_MESSAGE_SIMPLE_QUERY) {
         *request_type = identifier;
         return 1;
+    }
+
+    // Extended Query Protocol (Prepared Statement)
+    // >P/D/S (Parse/Describe/Sync) creating a prepared statement
+    // >B/E/S (Bind/Execute/Sync) executing a prepared statement
+    if (identifier == POSTGRES_MESSAGE_PARSE || identifier == POSTGRES_MESSAGE_BIND) {
+        // For fine grained parsing check Sync message, Http2 has a similar message starting with 'P' (PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n)
+        // read last 5 bytes of the buffer
+        char sync[5];
+        if (bpf_probe_read(&sync, sizeof(sync), (void *)((char *)buf+buf_size-5)) < 0) {
+            return 0;
+        }
+        if (sync[0] == 'S' && sync[1] == 0 && sync[2] == 0 && sync[3] == 0 && sync[4] == 4) {
+            *request_type = identifier;
+            return 1;
+        }
     }
 
     return 0;

@@ -8,6 +8,7 @@ package aggregator
 // 5. docker (TODO)
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -63,6 +64,10 @@ type Aggregator struct {
 	h2Mu     sync.RWMutex
 	h2Ch     chan *l7_req.L7Event
 	h2Frames map[string]*FrameArrival // pid-fd-streamId -> frame
+
+	// postgres prepared stmt
+	pgStmtsMu sync.RWMutex
+	pgStmts   map[string]string // pid-fd-stmtname -> query
 
 	h2ParserMu sync.RWMutex
 	h2Parsers  map[string]*http2Parser // pid-fd -> http2Parser
@@ -164,11 +169,6 @@ func init() {
 	re = regexp.MustCompile(strings.Join(keywords, "|"))
 }
 
-// Check if a string contains SQL keywords
-func containsSQLKeywords(input string) bool {
-	return re.MatchString(strings.ToUpper(input))
-}
-
 func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{},
 	events chan interface{},
 	procEvents chan interface{},
@@ -200,6 +200,7 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{},
 		h2Frames:            make(map[string]*FrameArrival),
 		liveProcesses:       make(map[uint32]struct{}),
 		rateLimiters:        make(map[uint32]*rate.Limiter),
+		pgStmts:             make(map[string]string),
 	}
 
 	go a.clearSocketLines(ctx)
@@ -947,17 +948,16 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 		Seq:        d.Seq,
 	}
 
-	if d.Protocol == l7_req.L7_PROTOCOL_POSTGRES && d.Method == l7_req.SIMPLE_QUERY {
+	if d.Protocol == l7_req.L7_PROTOCOL_POSTGRES {
 		// parse sql command from payload
 		// path = sql command
 		// method = sql message type
 		var err error
-		reqDto.Path, err = parseSqlCommand(d.Payload[0:d.PayloadSize])
+		reqDto.Path, err = a.parseSqlCommand(d)
 		if err != nil {
 			log.Logger.Error().AnErr("err", err)
 			return
 		}
-
 	}
 	var reqHostHeader string
 	// parse http payload, extract path, query params, headers
@@ -1216,29 +1216,96 @@ func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) *
 
 }
 
-func parseSqlCommand(r []uint8) (string, error) {
-	// Q, 4 bytes of length, sql command
+func (a *Aggregator) parseSqlCommand(d *l7_req.L7Event) (string, error) {
+	r := d.Payload[:d.PayloadSize]
+	var sqlCommand string
+	if d.Method == l7_req.SIMPLE_QUERY {
+		// Q, 4 bytes of length, sql command
 
-	// skip Q, (simple query)
-	r = r[1:]
+		// skip Q, (simple query)
+		r = r[1:]
 
-	// skip 4 bytes of length
-	r = r[4:]
+		// skip 4 bytes of length
+		r = r[4:]
 
-	// get sql command
-	sqlStatement := string(r)
+		// get sql command
+		sqlCommand = string(r)
 
-	// garbage data can come for postgres, we need to filter out
-	// search statement for sql keywords like
-	if containsSQLKeywords(sqlStatement) {
-		return sqlStatement, nil
-	} else {
-		return "", fmt.Errorf("no sql command found")
+		// garbage data can come for postgres, we need to filter out
+		// search statement for sql keywords like
+		if !containsSQLKeywords(sqlCommand) {
+			return "", fmt.Errorf("no sql command found")
+		}
+	} else if d.Method == l7_req.EXTENDED_QUERY { // prepared statement
+		// Parse or Bind message
+		id := r[0]
+		switch id {
+		case 'P':
+			// 1 byte P
+			// 4 bytes len
+			// prepared statement name(str) (null terminated)
+			// query(str) (null terminated)
+			// parameters
+			var stmtName string
+			var query string
+			vars := bytes.Split(r[5:], []byte{0})
+			if len(vars) >= 3 {
+				stmtName = string(vars[0])
+				query = string(vars[1])
+			} else if len(vars) == 2 { // query too long for our buffer
+				stmtName = string(vars[0])
+				query = string(vars[1]) + "..."
+			} else {
+				return "", fmt.Errorf("could not parse 'parse' frame for postgres")
+			}
+
+			a.pgStmtsMu.Lock()
+			a.pgStmts[a.getPgStmtKey(d.Pid, d.Fd, stmtName)] = query
+			a.pgStmtsMu.Unlock()
+			return fmt.Sprintf("PREPARE %s AS %s", stmtName, query), nil
+		case 'B':
+			// 1 byte B
+			// 4 bytes len
+			// portal str (null terminated)
+			// prepared statement name str (null terminated)
+			// https://www.postgresql.org/docs/current/protocol-message-formats.html#PROTOCOL-MESSAGE-FORMATS-BIND
+
+			var stmtName string
+			vars := bytes.Split(r[5:], []byte{0})
+			if len(vars) >= 2 {
+				stmtName = string(vars[1])
+			} else {
+				return "", fmt.Errorf("could not parse bind frame for postgres")
+			}
+
+			a.pgStmtsMu.RLock()
+			query, ok := a.pgStmts[a.getPgStmtKey(d.Pid, d.Fd, stmtName)]
+			a.pgStmtsMu.RUnlock()
+			if !ok { // we don't have the query for the prepared statement
+				// Execute (name of prepared statement) [(parameter)]
+				return fmt.Sprintf("EXECUTE %s *values*", stmtName), nil
+			}
+			return query, nil
+		default:
+			return "", fmt.Errorf("could not parse extended query for postgres")
+		}
+	} else if d.Method == l7_req.CLOSE_OR_TERMINATE {
+		sqlCommand = string(r)
 	}
 
+	return sqlCommand, nil
 }
 
-func (a *Aggregator) SendOpenConnection(sl *SocketLine) {
+func (a *Aggregator) getPgStmtKey(pid uint32, fd uint64, stmtName string) string {
+	return fmt.Sprintf("%s-%s", a.getConnKey(pid, fd), stmtName)
+}
+
+// Check if a string contains SQL keywords
+func containsSQLKeywords(input string) bool {
+	return re.MatchString(strings.ToUpper(input))
+}
+
+func (a *Aggregator) sendOpenConnection(sl *SocketLine) {
 	sl.mu.RLock()
 	defer sl.mu.RUnlock()
 
@@ -1301,7 +1368,7 @@ func (a *Aggregator) clearSocketLines(ctx context.Context) {
 			go func() {
 				for skLine := range skLineCh {
 					// send open connections to datastore
-					a.SendOpenConnection(skLine)
+					a.sendOpenConnection(skLine)
 					// clear socket history
 					skLine.DeleteUnused()
 				}

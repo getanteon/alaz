@@ -103,6 +103,7 @@ const (
 	BPF_POSTGRES_METHOD_UNKNOWN = iota
 	BPF_POSTGRES_METHOD_STATEMENT_CLOSE_OR_CONN_TERMINATE
 	BPF_POSTGRES_METHOD_SIMPLE_QUERY
+	BPF_POSTGRES_METHOD_EXTENDED_QUERY // for prepared statements
 
 	// BPF_POSTGRES_METHOD_QUERY
 	// BPF_POSTGRES_METHOD_EXECUTE
@@ -143,6 +144,7 @@ const (
 const (
 	CLOSE_OR_TERMINATE = "CLOSE_OR_TERMINATE"
 	SIMPLE_QUERY       = "SIMPLE_QUERY"
+	EXTENDED_QUERY     = "EXTENDED_QUERY"
 )
 
 // for http2, user space
@@ -205,6 +207,8 @@ func (e PostgresMethodConversion) String() string {
 		return CLOSE_OR_TERMINATE
 	case BPF_POSTGRES_METHOD_SIMPLE_QUERY:
 		return SIMPLE_QUERY
+	case BPF_POSTGRES_METHOD_EXTENDED_QUERY:
+		return EXTENDED_QUERY
 	default:
 		return "Unknown"
 	}
@@ -559,6 +563,13 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 			// copy payload slice
 			payload := [1024]uint8{}
 			copy(payload[:], l7Event.Payload[:])
+
+			if l7Event.Protocol == BPF_L7_PROTOCOL_POSTGRES {
+				payload = [1024]uint8{}
+				copy(payload[:], l7Event.Payload[:])
+				log.Logger.Info().Uint32("pid", l7Event.Pid).Str("method", method).
+					Str("payload", string(payload[:])).Msg("postgres payload")
+			}
 
 			userspacel7Event := &L7Event{
 				Fd:                  l7Event.Fd,
