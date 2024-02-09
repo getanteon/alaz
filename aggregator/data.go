@@ -269,6 +269,18 @@ func (a *Aggregator) Run() {
 						}
 					}
 					a.h2ParserMu.Unlock()
+
+					a.rateLimitMu.Lock()
+					delete(a.rateLimiters, pid)
+					a.rateLimitMu.Unlock()
+
+					a.pgStmtsMu.Lock()
+					for key, _ := range a.pgStmts {
+						if strings.HasPrefix(key, fmt.Sprint(pid)) {
+							delete(a.pgStmts, key)
+						}
+					}
+					a.pgStmtsMu.Unlock()
 				}
 			}
 
@@ -435,6 +447,14 @@ func (a *Aggregator) processExit(pid uint32) {
 	a.rateLimitMu.Lock()
 	delete(a.rateLimiters, pid)
 	a.rateLimitMu.Unlock()
+
+	a.pgStmtsMu.Lock()
+	for key, _ := range a.pgStmts {
+		if strings.HasPrefix(key, fmt.Sprint(pid)) {
+			delete(a.pgStmts, key)
+		}
+	}
+	a.pgStmtsMu.Unlock()
 }
 
 func (a *Aggregator) signalTlsAttachment(pid uint32) {
@@ -523,16 +543,27 @@ func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
 			nil,         // closed
 		)
 
+		connKey := a.getConnKey(d.Pid, d.Fd)
+
 		// remove h2Parser if exists
 		a.h2ParserMu.Lock()
-		key := a.getConnKey(d.Pid, d.Fd)
-		h2Parser, ok := a.h2Parsers[key]
+		h2Parser, ok := a.h2Parsers[connKey]
 		if ok {
 			h2Parser.clientHpackDecoder.Close()
 			h2Parser.serverHpackDecoder.Close()
 		}
-		delete(a.h2Parsers, key)
+		delete(a.h2Parsers, connKey)
 		a.h2ParserMu.Unlock()
+
+		// remove pgStmt if exists
+		a.pgStmtsMu.Lock()
+		for key, _ := range a.pgStmts {
+			if strings.HasPrefix(key, connKey) {
+				delete(a.pgStmts, key)
+			}
+		}
+		a.pgStmtsMu.Unlock()
+
 	}
 }
 
