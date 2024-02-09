@@ -564,13 +564,6 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 			payload := [1024]uint8{}
 			copy(payload[:], l7Event.Payload[:])
 
-			if l7Event.Protocol == BPF_L7_PROTOCOL_POSTGRES {
-				payload = [1024]uint8{}
-				copy(payload[:], l7Event.Payload[:])
-				log.Logger.Info().Uint32("pid", l7Event.Pid).Str("method", method).
-					Str("payload", string(payload[:])).Msg("postgres payload")
-			}
-
 			userspacel7Event := &L7Event{
 				Fd:                  l7Event.Fd,
 				Pid:                 l7Event.Pid,
