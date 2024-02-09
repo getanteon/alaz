@@ -605,6 +605,8 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
             e->status = parse_postgres_server_resp(read_info->buf, ret);
             if (active_req->request_type == POSTGRES_MESSAGE_SIMPLE_QUERY) {
                 e->method = METHOD_SIMPLE_QUERY;
+            }else if (active_req->request_type == POSTGRES_MESSAGE_PARSE || active_req->request_type == POSTGRES_MESSAGE_BIND){
+                e->method = METHOD_EXTENDED_QUERY;
             }
         }
     }else{
