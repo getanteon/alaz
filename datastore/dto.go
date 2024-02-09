@@ -85,6 +85,18 @@ type Container struct {
 	} `json:"ports"`
 }
 
+type AliveConnection struct {
+	CheckTime int64 // connection is alive at this time, ms
+	FromIP    string
+	FromType  string
+	FromUID   string
+	FromPort  uint16
+	ToIP      string
+	ToType    string
+	ToUID     string
+	ToPort    uint16
+}
+
 type Request struct {
 	StartTime  int64
 	Latency    uint64 // in ns

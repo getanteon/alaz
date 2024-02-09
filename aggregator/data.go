@@ -12,7 +12,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
+	"path"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -226,6 +228,7 @@ func (a *Aggregator) Run() {
 					continue
 				}
 				a.liveProcesses[uint32(pidInt)] = struct{}{}
+				a.getAlreadyExistingSockets(uint32(pidInt))
 			}
 		}
 	}
@@ -481,6 +484,7 @@ func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
 				Dport: d.DPort,
 			},
 		)
+
 		sockMap.mu.Unlock() // unlock for writing
 
 	} else if d.Type_ == tcp_state.EVENT_TCP_CLOSED {
@@ -833,11 +837,23 @@ func (a *Aggregator) processHttp2Frames() {
 	done <- true // signal cleaning goroutine
 }
 
+func (a *Aggregator) getPodWithIP(addr string) (types.UID, bool) {
+	a.clusterInfo.k8smu.RLock() // lock for reading
+	podUid, ok := a.clusterInfo.PodIPToPodUid[addr]
+	a.clusterInfo.k8smu.RUnlock() // unlock for reading
+	return podUid, ok
+}
+
+func (a *Aggregator) getSvcWithIP(addr string) (types.UID, bool) {
+	a.clusterInfo.k8smu.RLock() // lock for reading
+	svcUid, ok := a.clusterInfo.ServiceIPToServiceUid[addr]
+	a.clusterInfo.k8smu.RUnlock() // unlock for reading
+	return svcUid, ok
+}
+
 func (a *Aggregator) setFromTo(skInfo *SockInfo, d *l7_req.L7Event, reqDto *datastore.Request, hostHeader string) error {
 	// find pod info
-	a.clusterInfo.k8smu.RLock() // lock for reading
-	podUid, ok := a.clusterInfo.PodIPToPodUid[skInfo.Saddr]
-	a.clusterInfo.k8smu.RUnlock() // unlock for reading
+	podUid, ok := a.getPodWithIP(skInfo.Saddr)
 	if !ok {
 		return fmt.Errorf("error finding pod with sockets saddr")
 	}
@@ -848,17 +864,12 @@ func (a *Aggregator) setFromTo(skInfo *SockInfo, d *l7_req.L7Event, reqDto *data
 	reqDto.ToPort = skInfo.Dport
 
 	// find service info
-	a.clusterInfo.k8smu.RLock() // lock for reading
-	svcUid, ok := a.clusterInfo.ServiceIPToServiceUid[skInfo.Daddr]
-	a.clusterInfo.k8smu.RUnlock() // unlock for reading
-
+	svcUid, ok := a.getSvcWithIP(skInfo.Daddr)
 	if ok {
 		reqDto.ToUID = string(svcUid)
 		reqDto.ToType = "service"
 	} else {
-		a.clusterInfo.k8smu.RLock() // lock for reading
-		podUid, ok := a.clusterInfo.PodIPToPodUid[skInfo.Daddr]
-		a.clusterInfo.k8smu.RUnlock() // unlock for reading
+		podUid, ok := a.getPodWithIP(skInfo.Daddr)
 
 		if ok {
 			reqDto.ToUID = string(podUid)
@@ -1013,12 +1024,95 @@ func (a *Aggregator) fetchSkLine(sockMap *SocketMap, pid uint32, fd uint64) *Soc
 		log.Logger.Debug().Uint32("pid", pid).Uint64("fd", fd).Msg("error finding skLine, go look for it")
 		// start new socket line, find already established connections
 		skLine = NewSocketLine(pid, fd)
-		skLine.GetAlreadyExistingSockets() // find already established connections
 		sockMap.M[fd] = skLine
 	}
 	sockMap.mu.Unlock() // unlock for writing
 
 	return skLine
+}
+
+// get all tcp sockets for the pid
+// iterate through all sockets
+// create a new socket line for each socket
+// add it to the socket map
+func (a *Aggregator) getAlreadyExistingSockets(pid uint32) {
+	// no need for locking because this is called firstmost and no other goroutine is running
+	_, pidToSocketMap := a.getShard(pid)
+	sockMap, ok := pidToSocketMap[pid]
+	if !ok {
+		sockMap = &SocketMap{
+			M:  make(map[uint64]*SocketLine),
+			mu: sync.RWMutex{},
+		}
+		pidToSocketMap[pid] = sockMap
+	}
+
+	socks := map[string]sock{}
+
+	// Get the sockets for the process.
+	var err error
+	for _, f := range []string{"tcp", "tcp6"} {
+		sockPath := strings.Join([]string{"/proc", fmt.Sprint(pid), "net", f}, "/")
+
+		ss, err := readSockets(sockPath)
+		if err != nil {
+			continue
+		}
+
+		for _, s := range ss {
+			socks[s.Inode] = sock{TcpSocket: s}
+		}
+	}
+
+	// Get the file descriptors for the process.
+	fdDir := strings.Join([]string{"/proc", fmt.Sprint(pid), "fd"}, "/")
+	fdEntries, err := os.ReadDir(fdDir)
+	if err != nil {
+		return
+	}
+
+	fds := make([]Fd, 0, len(fdEntries))
+	for _, entry := range fdEntries {
+		fd, err := strconv.ParseUint(entry.Name(), 10, 64)
+		if err != nil {
+			continue
+		}
+		dest, err := os.Readlink(path.Join(fdDir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		var socketInode string
+		if strings.HasPrefix(dest, "socket:[") && strings.HasSuffix(dest, "]") {
+			socketInode = dest[len("socket:[") : len(dest)-1]
+		}
+		fds = append(fds, Fd{Fd: fd, Dest: dest, SocketInode: socketInode})
+	}
+
+	// Match the sockets to the file descriptors.
+	for _, fd := range fds {
+		if fd.SocketInode != "" {
+			// add to values
+			s := socks[fd.SocketInode].TcpSocket
+			sockInfo := &SockInfo{
+				Pid:   pid,
+				Fd:    fd.Fd,
+				Saddr: s.SAddr.IP().String(),
+				Sport: s.SAddr.Port(),
+				Daddr: s.DAddr.IP().String(),
+				Dport: s.DAddr.Port(),
+			}
+
+			if sockInfo.Saddr == "zero IP" || sockInfo.Daddr == "zero IP" || sockInfo.Sport == 0 || sockInfo.Dport == 0 {
+				continue
+			}
+
+			skLine := NewSocketLine(pid, fd.Fd)
+			skLine.AddValue(0, sockInfo)
+
+			sockMap.M[fd.Fd] = skLine
+		}
+	}
+
 }
 
 func (a *Aggregator) fetchSkInfo(ctx context.Context, skLine *SocketLine, d *l7_req.L7Event) *SockInfo {
@@ -1144,6 +1238,59 @@ func parseSqlCommand(r []uint8) (string, error) {
 
 }
 
+func (a *Aggregator) SendOpenConnection(sl *SocketLine) {
+	sl.mu.RLock()
+	defer sl.mu.RUnlock()
+
+	if len(sl.Values) == 0 {
+		return
+	}
+
+	// values are sorted by timestamp
+	// get the last value
+	// if it is a socket open, send it to the datastore
+	// if it is a socket close, ignore it
+
+	t := sl.Values[len(sl.Values)-1]
+	if t.SockInfo != nil {
+		podUid, ok := a.getPodWithIP(t.SockInfo.Saddr)
+		if !ok {
+			// ignore if source pod not found, or it is not a pod
+			return
+		}
+
+		ac := &datastore.AliveConnection{
+			CheckTime: time.Now().UnixMilli(),
+			FromIP:    t.SockInfo.Saddr,
+			FromType:  "pod",
+			FromUID:   string(podUid),
+			FromPort:  t.SockInfo.Sport,
+			ToIP:      t.SockInfo.Daddr,
+			ToType:    "",
+			ToUID:     "",
+			ToPort:    t.SockInfo.Dport,
+		}
+
+		// find destination pod or service
+		svcUid, ok := a.getSvcWithIP(t.SockInfo.Daddr)
+		if ok {
+			ac.ToType = "service"
+			ac.ToUID = string(svcUid)
+		} else {
+			podUid, ok := a.getPodWithIP(t.SockInfo.Daddr)
+			if ok {
+				ac.ToUID = string(podUid)
+				ac.ToType = "pod"
+			} else {
+				ac.ToType = "outbound"
+				ac.ToUID = t.SockInfo.Daddr
+			}
+		}
+
+		a.ds.PersistAliveConnection(ac)
+	}
+}
+
 func (a *Aggregator) clearSocketLines(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	skLineCh := make(chan *SocketLine, 1000)
@@ -1153,6 +1300,9 @@ func (a *Aggregator) clearSocketLines(ctx context.Context) {
 		for i := 0; i < 10; i++ {
 			go func() {
 				for skLine := range skLineCh {
+					// send open connections to datastore
+					a.SendOpenConnection(skLine)
+					// clear socket history
 					skLine.DeleteUnused()
 				}
 			}()
