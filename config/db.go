@@ -13,5 +13,6 @@ type BackendDSConfig struct {
 	MetricsExport         bool
 	MetricsExportInterval int // in seconds
 
-	ReqBufferSize int
+	ReqBufferSize  int
+	ConnBufferSize int
 }
