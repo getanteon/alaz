@@ -63,7 +63,7 @@ spec:
         - name: DIST_TRACING_ENABLED
           value: "true"
         - name: BACKEND_HOST
-          value: https://api.ddosify.com:443
+          value: https://api-alaz.ddosify.com:443
         - name: LOG_LEVEL
           value: "1"
         - name: MONITORING_ID
@@ -78,7 +78,7 @@ spec:
         - --no-collector.hwmon
         - --collector.filesystem.ignored-mount-points=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/pods/.+)($|/)
         - --collector.netclass.ignored-devices=^(veth.*)$
-        image: ddosify/alaz:v0.5.2
+        image: ddosify/alaz:v0.6.0
         imagePullPolicy: IfNotPresent
         name: alaz-pod
         ports:
