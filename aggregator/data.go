@@ -8,11 +8,14 @@ package aggregator
 // 5. docker (TODO)
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
+	"path"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -61,6 +64,10 @@ type Aggregator struct {
 	h2Mu     sync.RWMutex
 	h2Ch     chan *l7_req.L7Event
 	h2Frames map[string]*FrameArrival // pid-fd-streamId -> frame
+
+	// postgres prepared stmt
+	pgStmtsMu sync.RWMutex
+	pgStmts   map[string]string // pid-fd-stmtname -> query
 
 	h2ParserMu sync.RWMutex
 	h2Parsers  map[string]*http2Parser // pid-fd -> http2Parser
@@ -156,15 +163,10 @@ var re *regexp.Regexp
 func init() {
 	reverseDnsCache = cache.New(defaultExpiration, purgeTime)
 
-	keywords := []string{"SELECT", "INSERT INTO", "UPDATE", "DELETE FROM", "CREATE TABLE", "ALTER TABLE", "DROP TABLE", "TRUNCATE TABLE", "BEGIN", "COMMIT", "ROLLBACK", "SAVEPOINT", "CREATE INDEX", "DROP INDEX", "CREATE VIEW", "DROP VIEW", "GRANT", "REVOKE"}
+	keywords := []string{"SELECT", "INSERT INTO", "UPDATE", "DELETE FROM", "CREATE TABLE", "ALTER TABLE", "DROP TABLE", "TRUNCATE TABLE", "BEGIN", "COMMIT", "ROLLBACK", "SAVEPOINT", "CREATE INDEX", "DROP INDEX", "CREATE VIEW", "DROP VIEW", "GRANT", "REVOKE", "EXECUTE"}
 
 	// Case-insensitive matching
 	re = regexp.MustCompile(strings.Join(keywords, "|"))
-}
-
-// Check if a string contains SQL keywords
-func containsSQLKeywords(input string) bool {
-	return re.MatchString(strings.ToUpper(input))
 }
 
 func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{},
@@ -198,6 +200,7 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{},
 		h2Frames:            make(map[string]*FrameArrival),
 		liveProcesses:       make(map[uint32]struct{}),
 		rateLimiters:        make(map[uint32]*rate.Limiter),
+		pgStmts:             make(map[string]string),
 	}
 
 	go a.clearSocketLines(ctx)
@@ -226,6 +229,7 @@ func (a *Aggregator) Run() {
 					continue
 				}
 				a.liveProcesses[uint32(pidInt)] = struct{}{}
+				a.getAlreadyExistingSockets(uint32(pidInt))
 			}
 		}
 	}
@@ -265,6 +269,18 @@ func (a *Aggregator) Run() {
 						}
 					}
 					a.h2ParserMu.Unlock()
+
+					a.rateLimitMu.Lock()
+					delete(a.rateLimiters, pid)
+					a.rateLimitMu.Unlock()
+
+					a.pgStmtsMu.Lock()
+					for key, _ := range a.pgStmts {
+						if strings.HasPrefix(key, fmt.Sprint(pid)) {
+							delete(a.pgStmts, key)
+						}
+					}
+					a.pgStmtsMu.Unlock()
 				}
 			}
 
@@ -431,6 +447,14 @@ func (a *Aggregator) processExit(pid uint32) {
 	a.rateLimitMu.Lock()
 	delete(a.rateLimiters, pid)
 	a.rateLimitMu.Unlock()
+
+	a.pgStmtsMu.Lock()
+	for key, _ := range a.pgStmts {
+		if strings.HasPrefix(key, fmt.Sprint(pid)) {
+			delete(a.pgStmts, key)
+		}
+	}
+	a.pgStmtsMu.Unlock()
 }
 
 func (a *Aggregator) signalTlsAttachment(pid uint32) {
@@ -481,6 +505,7 @@ func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
 				Dport: d.DPort,
 			},
 		)
+
 		sockMap.mu.Unlock() // unlock for writing
 
 	} else if d.Type_ == tcp_state.EVENT_TCP_CLOSED {
@@ -518,16 +543,27 @@ func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
 			nil,         // closed
 		)
 
+		connKey := a.getConnKey(d.Pid, d.Fd)
+
 		// remove h2Parser if exists
 		a.h2ParserMu.Lock()
-		key := a.getConnKey(d.Pid, d.Fd)
-		h2Parser, ok := a.h2Parsers[key]
+		h2Parser, ok := a.h2Parsers[connKey]
 		if ok {
 			h2Parser.clientHpackDecoder.Close()
 			h2Parser.serverHpackDecoder.Close()
 		}
-		delete(a.h2Parsers, key)
+		delete(a.h2Parsers, connKey)
 		a.h2ParserMu.Unlock()
+
+		// remove pgStmt if exists
+		a.pgStmtsMu.Lock()
+		for key, _ := range a.pgStmts {
+			if strings.HasPrefix(key, connKey) {
+				delete(a.pgStmts, key)
+			}
+		}
+		a.pgStmtsMu.Unlock()
+
 	}
 }
 
@@ -833,11 +869,23 @@ func (a *Aggregator) processHttp2Frames() {
 	done <- true // signal cleaning goroutine
 }
 
+func (a *Aggregator) getPodWithIP(addr string) (types.UID, bool) {
+	a.clusterInfo.k8smu.RLock() // lock for reading
+	podUid, ok := a.clusterInfo.PodIPToPodUid[addr]
+	a.clusterInfo.k8smu.RUnlock() // unlock for reading
+	return podUid, ok
+}
+
+func (a *Aggregator) getSvcWithIP(addr string) (types.UID, bool) {
+	a.clusterInfo.k8smu.RLock() // lock for reading
+	svcUid, ok := a.clusterInfo.ServiceIPToServiceUid[addr]
+	a.clusterInfo.k8smu.RUnlock() // unlock for reading
+	return svcUid, ok
+}
+
 func (a *Aggregator) setFromTo(skInfo *SockInfo, d *l7_req.L7Event, reqDto *datastore.Request, hostHeader string) error {
 	// find pod info
-	a.clusterInfo.k8smu.RLock() // lock for reading
-	podUid, ok := a.clusterInfo.PodIPToPodUid[skInfo.Saddr]
-	a.clusterInfo.k8smu.RUnlock() // unlock for reading
+	podUid, ok := a.getPodWithIP(skInfo.Saddr)
 	if !ok {
 		return fmt.Errorf("error finding pod with sockets saddr")
 	}
@@ -848,17 +896,12 @@ func (a *Aggregator) setFromTo(skInfo *SockInfo, d *l7_req.L7Event, reqDto *data
 	reqDto.ToPort = skInfo.Dport
 
 	// find service info
-	a.clusterInfo.k8smu.RLock() // lock for reading
-	svcUid, ok := a.clusterInfo.ServiceIPToServiceUid[skInfo.Daddr]
-	a.clusterInfo.k8smu.RUnlock() // unlock for reading
-
+	svcUid, ok := a.getSvcWithIP(skInfo.Daddr)
 	if ok {
 		reqDto.ToUID = string(svcUid)
 		reqDto.ToType = "service"
 	} else {
-		a.clusterInfo.k8smu.RLock() // lock for reading
-		podUid, ok := a.clusterInfo.PodIPToPodUid[skInfo.Daddr]
-		a.clusterInfo.k8smu.RUnlock() // unlock for reading
+		podUid, ok := a.getPodWithIP(skInfo.Daddr)
 
 		if ok {
 			reqDto.ToUID = string(podUid)
@@ -936,17 +979,16 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 		Seq:        d.Seq,
 	}
 
-	if d.Protocol == l7_req.L7_PROTOCOL_POSTGRES && d.Method == l7_req.SIMPLE_QUERY {
+	if d.Protocol == l7_req.L7_PROTOCOL_POSTGRES {
 		// parse sql command from payload
 		// path = sql command
 		// method = sql message type
 		var err error
-		reqDto.Path, err = parseSqlCommand(d.Payload[0:d.PayloadSize])
+		reqDto.Path, err = a.parseSqlCommand(d)
 		if err != nil {
 			log.Logger.Error().AnErr("err", err)
 			return
 		}
-
 	}
 	var reqHostHeader string
 	// parse http payload, extract path, query params, headers
@@ -1013,12 +1055,95 @@ func (a *Aggregator) fetchSkLine(sockMap *SocketMap, pid uint32, fd uint64) *Soc
 		log.Logger.Debug().Uint32("pid", pid).Uint64("fd", fd).Msg("error finding skLine, go look for it")
 		// start new socket line, find already established connections
 		skLine = NewSocketLine(pid, fd)
-		skLine.GetAlreadyExistingSockets() // find already established connections
 		sockMap.M[fd] = skLine
 	}
 	sockMap.mu.Unlock() // unlock for writing
 
 	return skLine
+}
+
+// get all tcp sockets for the pid
+// iterate through all sockets
+// create a new socket line for each socket
+// add it to the socket map
+func (a *Aggregator) getAlreadyExistingSockets(pid uint32) {
+	// no need for locking because this is called firstmost and no other goroutine is running
+	_, pidToSocketMap := a.getShard(pid)
+	sockMap, ok := pidToSocketMap[pid]
+	if !ok {
+		sockMap = &SocketMap{
+			M:  make(map[uint64]*SocketLine),
+			mu: sync.RWMutex{},
+		}
+		pidToSocketMap[pid] = sockMap
+	}
+
+	socks := map[string]sock{}
+
+	// Get the sockets for the process.
+	var err error
+	for _, f := range []string{"tcp", "tcp6"} {
+		sockPath := strings.Join([]string{"/proc", fmt.Sprint(pid), "net", f}, "/")
+
+		ss, err := readSockets(sockPath)
+		if err != nil {
+			continue
+		}
+
+		for _, s := range ss {
+			socks[s.Inode] = sock{TcpSocket: s}
+		}
+	}
+
+	// Get the file descriptors for the process.
+	fdDir := strings.Join([]string{"/proc", fmt.Sprint(pid), "fd"}, "/")
+	fdEntries, err := os.ReadDir(fdDir)
+	if err != nil {
+		return
+	}
+
+	fds := make([]Fd, 0, len(fdEntries))
+	for _, entry := range fdEntries {
+		fd, err := strconv.ParseUint(entry.Name(), 10, 64)
+		if err != nil {
+			continue
+		}
+		dest, err := os.Readlink(path.Join(fdDir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		var socketInode string
+		if strings.HasPrefix(dest, "socket:[") && strings.HasSuffix(dest, "]") {
+			socketInode = dest[len("socket:[") : len(dest)-1]
+		}
+		fds = append(fds, Fd{Fd: fd, Dest: dest, SocketInode: socketInode})
+	}
+
+	// Match the sockets to the file descriptors.
+	for _, fd := range fds {
+		if fd.SocketInode != "" {
+			// add to values
+			s := socks[fd.SocketInode].TcpSocket
+			sockInfo := &SockInfo{
+				Pid:   pid,
+				Fd:    fd.Fd,
+				Saddr: s.SAddr.IP().String(),
+				Sport: s.SAddr.Port(),
+				Daddr: s.DAddr.IP().String(),
+				Dport: s.DAddr.Port(),
+			}
+
+			if sockInfo.Saddr == "zero IP" || sockInfo.Daddr == "zero IP" || sockInfo.Sport == 0 || sockInfo.Dport == 0 {
+				continue
+			}
+
+			skLine := NewSocketLine(pid, fd.Fd)
+			skLine.AddValue(0, sockInfo)
+
+			sockMap.M[fd.Fd] = skLine
+		}
+	}
+
 }
 
 func (a *Aggregator) fetchSkInfo(ctx context.Context, skLine *SocketLine, d *l7_req.L7Event) *SockInfo {
@@ -1122,26 +1247,146 @@ func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) *
 
 }
 
-func parseSqlCommand(r []uint8) (string, error) {
-	// Q, 4 bytes of length, sql command
+func (a *Aggregator) parseSqlCommand(d *l7_req.L7Event) (string, error) {
+	r := d.Payload[:d.PayloadSize]
+	var sqlCommand string
+	if d.Method == l7_req.SIMPLE_QUERY {
+		// Q, 4 bytes of length, sql command
 
-	// skip Q, (simple query)
-	r = r[1:]
+		// skip Q, (simple query)
+		r = r[1:]
 
-	// skip 4 bytes of length
-	r = r[4:]
+		// skip 4 bytes of length
+		r = r[4:]
 
-	// get sql command
-	sqlStatement := string(r)
+		// get sql command
+		sqlCommand = string(r)
 
-	// garbage data can come for postgres, we need to filter out
-	// search statement for sql keywords like
-	if containsSQLKeywords(sqlStatement) {
-		return sqlStatement, nil
-	} else {
-		return "", fmt.Errorf("no sql command found")
+		// garbage data can come for postgres, we need to filter out
+		// search statement for sql keywords like
+		if !containsSQLKeywords(sqlCommand) {
+			return "", fmt.Errorf("no sql command found")
+		}
+	} else if d.Method == l7_req.EXTENDED_QUERY { // prepared statement
+		// Parse or Bind message
+		id := r[0]
+		switch id {
+		case 'P':
+			// 1 byte P
+			// 4 bytes len
+			// prepared statement name(str) (null terminated)
+			// query(str) (null terminated)
+			// parameters
+			var stmtName string
+			var query string
+			vars := bytes.Split(r[5:], []byte{0})
+			if len(vars) >= 3 {
+				stmtName = string(vars[0])
+				query = string(vars[1])
+			} else if len(vars) == 2 { // query too long for our buffer
+				stmtName = string(vars[0])
+				query = string(vars[1]) + "..."
+			} else {
+				return "", fmt.Errorf("could not parse 'parse' frame for postgres")
+			}
+
+			a.pgStmtsMu.Lock()
+			a.pgStmts[a.getPgStmtKey(d.Pid, d.Fd, stmtName)] = query
+			a.pgStmtsMu.Unlock()
+			return fmt.Sprintf("PREPARE %s AS %s", stmtName, query), nil
+		case 'B':
+			// 1 byte B
+			// 4 bytes len
+			// portal str (null terminated)
+			// prepared statement name str (null terminated)
+			// https://www.postgresql.org/docs/current/protocol-message-formats.html#PROTOCOL-MESSAGE-FORMATS-BIND
+
+			var stmtName string
+			vars := bytes.Split(r[5:], []byte{0})
+			if len(vars) >= 2 {
+				stmtName = string(vars[1])
+			} else {
+				return "", fmt.Errorf("could not parse bind frame for postgres")
+			}
+
+			a.pgStmtsMu.RLock()
+			query, ok := a.pgStmts[a.getPgStmtKey(d.Pid, d.Fd, stmtName)]
+			a.pgStmtsMu.RUnlock()
+			if !ok { // we don't have the query for the prepared statement
+				// Execute (name of prepared statement) [(parameter)]
+				return fmt.Sprintf("EXECUTE %s *values*", stmtName), nil
+			}
+			return query, nil
+		default:
+			return "", fmt.Errorf("could not parse extended query for postgres")
+		}
+	} else if d.Method == l7_req.CLOSE_OR_TERMINATE {
+		sqlCommand = string(r)
 	}
 
+	return sqlCommand, nil
+}
+
+func (a *Aggregator) getPgStmtKey(pid uint32, fd uint64, stmtName string) string {
+	return fmt.Sprintf("%s-%s", a.getConnKey(pid, fd), stmtName)
+}
+
+// Check if a string contains SQL keywords
+func containsSQLKeywords(input string) bool {
+	return re.MatchString(strings.ToUpper(input))
+}
+
+func (a *Aggregator) sendOpenConnection(sl *SocketLine) {
+	sl.mu.RLock()
+	defer sl.mu.RUnlock()
+
+	if len(sl.Values) == 0 {
+		return
+	}
+
+	// values are sorted by timestamp
+	// get the last value
+	// if it is a socket open, send it to the datastore
+	// if it is a socket close, ignore it
+
+	t := sl.Values[len(sl.Values)-1]
+	if t.SockInfo != nil {
+		podUid, ok := a.getPodWithIP(t.SockInfo.Saddr)
+		if !ok {
+			// ignore if source pod not found, or it is not a pod
+			return
+		}
+
+		ac := &datastore.AliveConnection{
+			CheckTime: time.Now().UnixMilli(),
+			FromIP:    t.SockInfo.Saddr,
+			FromType:  "pod",
+			FromUID:   string(podUid),
+			FromPort:  t.SockInfo.Sport,
+			ToIP:      t.SockInfo.Daddr,
+			ToType:    "",
+			ToUID:     "",
+			ToPort:    t.SockInfo.Dport,
+		}
+
+		// find destination pod or service
+		svcUid, ok := a.getSvcWithIP(t.SockInfo.Daddr)
+		if ok {
+			ac.ToType = "service"
+			ac.ToUID = string(svcUid)
+		} else {
+			podUid, ok := a.getPodWithIP(t.SockInfo.Daddr)
+			if ok {
+				ac.ToUID = string(podUid)
+				ac.ToType = "pod"
+			} else {
+				ac.ToType = "outbound"
+				ac.ToUID = t.SockInfo.Daddr
+			}
+		}
+
+		a.ds.PersistAliveConnection(ac)
+	}
 }
 
 func (a *Aggregator) clearSocketLines(ctx context.Context) {
@@ -1153,6 +1398,9 @@ func (a *Aggregator) clearSocketLines(ctx context.Context) {
 		for i := 0; i < 10; i++ {
 			go func() {
 				for skLine := range skLineCh {
+					// send open connections to datastore
+					a.sendOpenConnection(skLine)
+					// clear socket history
 					skLine.DeleteUnused()
 				}
 			}()

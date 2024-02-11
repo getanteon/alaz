@@ -8,14 +8,10 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/ddosify/alaz/log"
 
 	"inet.af/netaddr"
 )
@@ -105,13 +101,6 @@ func (nl *SocketLine) DeleteUnused() {
 		}
 	}
 
-	if lastMatchedReqTime == 0 {
-		// in case of tracking only tcp sockets without any requests matching them, socketLine will consume memory over time
-		// we need to delete all values in this case
-		nl.Values = make([]TimestampedSocket, 0)
-		return
-	}
-
 	// assumedInterval is inversely proportional to the number of requests being discarded
 	assumedInterval := uint64(1 * time.Minute)
 
@@ -128,82 +117,6 @@ func (nl *SocketLine) DeleteUnused() {
 		}
 	}
 
-}
-
-func (nl *SocketLine) GetAlreadyExistingSockets() {
-	nl.mu.Lock()
-	defer nl.mu.Unlock()
-
-	log.Logger.Debug().Msgf("getting already existing sockets for pid %d, fd %d", nl.pid, nl.fd)
-
-	socks := map[string]sock{}
-
-	// Get the sockets for the process.
-	var err error
-	for _, f := range []string{"tcp", "tcp6"} {
-		sockPath := strings.Join([]string{"/proc", fmt.Sprint(nl.pid), "net", f}, "/")
-
-		ss, err := readSockets(sockPath)
-		if err != nil {
-			continue
-		}
-
-		for _, s := range ss {
-			socks[s.Inode] = sock{TcpSocket: s}
-		}
-	}
-
-	// Get the file descriptors for the process.
-	fdDir := strings.Join([]string{"/proc", fmt.Sprint(nl.pid), "fd"}, "/")
-	fdEntries, err := os.ReadDir(fdDir)
-	if err != nil {
-		return
-	}
-
-	fds := make([]Fd, 0, len(fdEntries))
-	for _, entry := range fdEntries {
-		fd, err := strconv.ParseUint(entry.Name(), 10, 64)
-		if err != nil {
-			log.Logger.Warn().Err(err).Uint32("pid", nl.pid).
-				Uint64("fd", nl.fd).Msgf("failed to parse %s as uint", entry.Name())
-			continue
-		}
-		dest, err := os.Readlink(path.Join(fdDir, entry.Name()))
-		if err != nil {
-			log.Logger.Warn().Err(err).
-				Uint32("pid", nl.pid).
-				Uint64("fd", nl.fd).Msgf("failed to read link %s", path.Join(fdDir, entry.Name()))
-			continue
-		}
-		var socketInode string
-		if strings.HasPrefix(dest, "socket:[") && strings.HasSuffix(dest, "]") {
-			socketInode = dest[len("socket:[") : len(dest)-1]
-		}
-		fds = append(fds, Fd{Fd: fd, Dest: dest, SocketInode: socketInode})
-	}
-
-	// Match the sockets to the file descriptors.
-	for _, fd := range fds {
-		if fd.SocketInode != "" && nl.fd == fd.Fd {
-			// add to values
-			s := socks[fd.SocketInode].TcpSocket
-			ts := TimestampedSocket{
-				Timestamp: 0, // start time unknown
-				LastMatch: 0,
-				SockInfo: &SockInfo{
-					Pid:   nl.pid,
-					Fd:    fd.Fd,
-					Saddr: s.SAddr.IP().String(),
-					Sport: s.SAddr.Port(),
-					Daddr: s.DAddr.IP().String(),
-					Dport: s.DAddr.Port(),
-				},
-			}
-			log.Logger.Debug().Any("skInfo", ts).Uint32("pid", nl.pid).
-				Uint64("fd", nl.fd).Msg("adding already established socket")
-			nl.Values = append(nl.Values, ts)
-		}
-	}
 }
 
 type sock struct {

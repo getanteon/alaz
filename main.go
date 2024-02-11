@@ -64,6 +64,7 @@ func main() {
 		MetricsExport:         metricsEnabled,
 		MetricsExportInterval: 10,
 		ReqBufferSize:         40000, // TODO: get from a conf file
+		ConnBufferSize:        1000,  // TODO: get from a conf file
 	})
 	go dsBackend.SendHealthCheck(ebpfEnabled, metricsEnabled, distTracingEnabled, k8sVersion)
 
