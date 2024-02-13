@@ -72,11 +72,12 @@ func main() {
 	var ec *ebpf.EbpfCollector
 	if ebpfEnabled {
 		ec = ebpf.NewEbpfCollector(ctx)
-		ec.Init()
-		go ec.ListenEvents()
 
 		a := aggregator.NewAggregator(ctx, kubeEvents, ec.EbpfEvents(), ec.EbpfProcEvents(), ec.EbpfTcpEvents(), ec.TlsAttachQueue(), dsBackend)
 		a.Run()
+
+		ec.Init()
+		go ec.ListenEvents()
 	}
 
 	go http.ListenAndServe(":8181", nil)
