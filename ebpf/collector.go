@@ -72,7 +72,7 @@ func NewEbpfCollector(parentCtx context.Context) *EbpfCollector {
 		ctx:                 ctx,
 		done:                make(chan struct{}),
 		ebpfEvents:          make(chan interface{}, 100000), // interface is 16 bytes, 16 * 100000 = 8 Megabytes
-		ebpfProcEvents:      make(chan interface{}, 100),
+		ebpfProcEvents:      make(chan interface{}, 2000),
 		ebpfTcpEvents:       make(chan interface{}, 1000),
 		tlsPidMap:           make(map[uint32]struct{}),
 		sslWriteUprobes:     make(map[uint32]link.Link),
