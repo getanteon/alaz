@@ -11,6 +11,7 @@ import (
 	"os"
 	"runtime/metrics"
 	"runtime/pprof"
+	"strconv"
 
 	"sync"
 	"sync/atomic"
@@ -383,20 +384,25 @@ func (s *Simulator) Setup() {
 	// Create Kubernetes Workloads
 	// K8sResourceMessage
 
+	maxPid, err := getPidMax()
+	if err != nil {
+		simLog.Fatal().Err(err).Msg("could not get pid max")
+	}
+
 	for i := 0; i < s.conf.PodCount; i++ {
 		// TODO: namespace
 		podName := fake.Name()
 		podIP := fake.IP(fake.WithIPv4())
 		mainContainerImage := fake.Name()
 		uid := types.UID(fake.Name())
-		pid := rand.Uint32()
+		pid := rand.Int31n(int32(maxPid))
 
 		s.pods[podName] = &FakePod{
 			Name:            podName,
 			IP:              podIP,
 			Image:           mainContainerImage,
 			Uid:             uid,
-			Pid:             pid,
+			Pid:             uint32(pid),
 			Fds:             map[uint64]struct{}{},
 			OpenConnections: map[uint64]uint64{},
 		}
@@ -695,4 +701,26 @@ func ToText(number uint32) string {
 	}
 	return fmt.Sprintf("%d", number)
 
+}
+
+func getPidMax() (int, error) {
+	// Read the contents of the file
+	f, err := os.Open("/proc/sys/kernel/pid_max")
+	if err != nil {
+		fmt.Println("Error opening file:", err)
+		return 0, err
+	}
+	content, err := io.ReadAll(f)
+	if err != nil {
+		fmt.Println("Error reading file:", err)
+		return 0, err
+	}
+
+	// Convert the content to an integer
+	pidMax, err := strconv.Atoi(string(content[:len(content)-1])) // trim newline
+	if err != nil {
+		fmt.Println("Error converting to integer:", err)
+		return 0, err
+	}
+	return pidMax, nil
 }
