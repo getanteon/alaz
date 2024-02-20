@@ -295,11 +295,11 @@ func (a *Aggregator) Run() {
 	for i := 0; i < numWorker; i++ {
 		go a.processEbpf(a.ctx)
 		go a.processEbpfTcp(a.ctx)
+		go a.processEbpfProc(a.ctx)
 	}
 
 	for i := 0; i < 2*cpuCount; i++ {
 		go a.processHttp2Frames()
-		go a.processEbpfProc(a.ctx)
 	}
 }
 
@@ -1127,8 +1127,6 @@ func (a *Aggregator) fetchSkInfo(ctx context.Context, skLine *SocketLine, d *l7_
 	var skInfo *SockInfo
 	var err error
 
-	// skInfo, _ = skLine.GetValue(d.WriteTimeNs)
-
 	for {
 		skInfo, err = skLine.GetValue(d.WriteTimeNs)
 		if err == nil && skInfo != nil {
@@ -1172,18 +1170,31 @@ func (a *Aggregator) fetchSocketMap(pid uint32) *SocketMap {
 }
 
 func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) *SockInfo {
-	sockMap := a.fetchSocketMap(d.Pid)
-	skLine := a.fetchSkLine(sockMap, d.Pid, d.Fd)
-	skInfo := a.fetchSkInfo(ctx, skLine, d)
+	sockMap := a.clusterInfo.SocketMaps[d.Pid]
+	// acquire sockMap lock
+	sockMap.mu.Lock()
 
+	if sockMap.M == nil {
+		sockMap.M = make(map[uint64]*SocketLine)
+	}
+
+	skLine, ok := sockMap.M[d.Fd]
+	if !ok {
+		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("error finding skLine, go look for it")
+		// start new socket line, find already established connections
+		skLine = NewSocketLine(d.Pid, d.Fd)
+		sockMap.M[d.Fd] = skLine
+	}
+
+	// release sockMap lock
+	sockMap.mu.Unlock()
+
+	skInfo := a.fetchSkInfo(ctx, skLine, d)
 	if skInfo == nil {
 		return nil
 	}
 
-	// TODO: zero IP address check ??
-
 	return skInfo
-
 }
 
 func (a *Aggregator) parseSqlCommand(d *l7_req.L7Event) (string, error) {
