@@ -133,10 +133,10 @@ type ClusterInfo struct {
 
 var (
 	// default exponential backoff (*2)
-	// when retryLimit is increased, we are blocking the events that we wait it to be processed more
-	retryInterval = 50 * time.Millisecond
-	retryLimit    = 2
-	// 400 + 800 + 1600 + 3200 + 6400 = 12400 ms
+	// when attemptLimit is increased, we are blocking the events that we wait it to be processed more
+	retryInterval = 20 * time.Millisecond
+	attemptLimit  = 3 // total attempt
+	// 1st try - 20ms - 2nd try - 40ms - 3rd try
 
 	defaultExpiration = 5 * time.Minute
 	purgeTime         = 10 * time.Minute
@@ -368,7 +368,6 @@ func (a *Aggregator) processEbpfTcp(ctx context.Context) {
 				a.processTcpConnect(d)
 			}
 		}
-
 	}
 }
 
@@ -460,6 +459,7 @@ func (a *Aggregator) signalTlsAttachment(pid uint32) {
 func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
 	go a.signalTlsAttachment(d.Pid)
 	if d.Type_ == tcp_state.EVENT_TCP_ESTABLISHED {
+
 		// filter out localhost connections
 		if d.SAddr == "127.0.0.1" || d.DAddr == "127.0.0.1" {
 			return
@@ -499,6 +499,11 @@ func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
 	} else if d.Type_ == tcp_state.EVENT_TCP_CLOSED {
 		var sockMap *SocketMap
 		var ok bool
+
+		// filter out localhost connections
+		if d.SAddr == "127.0.0.1" || d.DAddr == "127.0.0.1" {
+			return
+		}
 
 		sockMap = a.clusterInfo.SocketMaps[d.Pid]
 
@@ -934,13 +939,26 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 		return
 	}
 
-	skInfo := a.findRelatedSocket(ctx, d)
-	if skInfo == nil {
-		return
+	var path string
+	if d.Protocol == l7_req.L7_PROTOCOL_POSTGRES {
+		// parse sql command from payload
+		// path = sql command
+		// method = sql message type
+		var err error
+		path, err = a.parseSqlCommand(d)
+		if err != nil {
+			log.Logger.Error().AnErr("err", err)
+			return
+		}
 	}
 
-	// Since we process events concurrently
-	// TCP events and L7 events can be processed out of order
+	skInfo := a.findRelatedSocket(ctx, d)
+	if skInfo == nil {
+		log.Logger.Debug().Uint32("pid", d.Pid).
+			Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
+			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:])).Msg("socket not found")
+		return
+	}
 
 	reqDto := datastore.Request{
 		StartTime:  d.EventReadTime,
@@ -957,21 +975,13 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 		Seq:        d.Seq,
 	}
 
-	if d.Protocol == l7_req.L7_PROTOCOL_POSTGRES {
-		// parse sql command from payload
-		// path = sql command
-		// method = sql message type
-		var err error
-		reqDto.Path, err = a.parseSqlCommand(d)
-		if err != nil {
-			log.Logger.Error().AnErr("err", err)
-			return
-		}
-	}
+	// Since we process events concurrently
+	// TCP events and L7 events can be processed out of order
+
 	var reqHostHeader string
 	// parse http payload, extract path, query params, headers
 	if d.Protocol == l7_req.L7_PROTOCOL_HTTP {
-		_, reqDto.Path, _, reqHostHeader = parseHttpPayload(string(d.Payload[0:d.PayloadSize]))
+		_, path, _, reqHostHeader = parseHttpPayload(string(d.Payload[0:d.PayloadSize]))
 	}
 
 	err := a.setFromTo(skInfo, d, &reqDto, reqHostHeader)
@@ -979,6 +989,7 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 		return
 	}
 
+	reqDto.Path = path
 	reqDto.Completed = !d.Failed
 
 	// In AMQP-DELIVER event, we are capturing from read syscall,
@@ -1122,7 +1133,7 @@ func (a *Aggregator) getAlreadyExistingSockets(pid uint32) {
 }
 
 func (a *Aggregator) fetchSkInfo(ctx context.Context, skLine *SocketLine, d *l7_req.L7Event) *SockInfo {
-	rc := retryLimit
+	rc := attemptLimit
 	rt := retryInterval
 	var skInfo *SockInfo
 	var err error
@@ -1132,6 +1143,7 @@ func (a *Aggregator) fetchSkInfo(ctx context.Context, skLine *SocketLine, d *l7_
 		if err == nil && skInfo != nil {
 			break
 		}
+		log.Logger.Debug().Err(err).Uint32("pid", d.Pid).Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).Msg("retry to get skInfo...")
 		rc--
 		if rc == 0 {
 			break

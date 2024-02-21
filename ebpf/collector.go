@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"strings"
 	"sync"
 	"time"
 	"unsafe"
@@ -186,10 +187,10 @@ func (e *EbpfCollector) AttachUprobesForEncrypted() {
 		e.tlsPidMap[pid] = struct{}{}
 		e.mu.Unlock()
 
-		go func() {
+		go func(pid uint32) {
 			// attach to libssl uprobes if process is using libssl
 			errs := e.AttachSslUprobesOnProcess("/proc", pid)
-			if errs != nil && len(errs) > 0 {
+			if len(errs) > 0 {
 				for _, err := range errs {
 					if errorspkg.Is(err, fs.ErrNotExist) {
 						// no such file or directory error
@@ -203,7 +204,7 @@ func (e *EbpfCollector) AttachUprobesForEncrypted() {
 			}
 
 			go_errs := e.AttachGoTlsUprobesOnProcess("/proc", pid)
-			if go_errs != nil && len(go_errs) > 0 {
+			if len(go_errs) > 0 {
 				for _, err := range go_errs {
 					if errorspkg.Is(err, fs.ErrNotExist) {
 						// no such file or directory error
@@ -211,12 +212,12 @@ func (e *EbpfCollector) AttachUprobesForEncrypted() {
 						// it's probably a kernel thread, or a very short lived process
 						continue
 					}
-					log.Logger.Error().Err(err).Uint32("pid", pid).
+					log.Logger.Error().Err(err).
 						Msgf("error attaching go tls for pid: %d", pid)
 				}
 			}
 
-		}()
+		}(pid)
 
 	}
 }
@@ -261,7 +262,10 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 	// read build info of a go executable
 	bi, err := buildinfo.ReadFile(path)
 	if err != nil {
-		// TODO: check if error is "not a Go executable"
+		if strings.HasSuffix(err.Error(), "not a Go executable") || strings.Contains(err.Error(), "no such file or directory") {
+			log.Logger.Debug().Str("reason", "gotls").Uint32("pid", pid).Msg("not a Go executable")
+			return errors
+		}
 		log.Logger.Debug().Err(err).Uint32("pid", pid).Msg("error reading build info")
 		errors = append(errors, err)
 		return errors
