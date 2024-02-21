@@ -215,10 +215,9 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{},
 	// but on 64-bit systems, maxPid can be 4194304
 	// and we don't want to allocate 4194304 mutexes, it adds up to 4194304 * 24 bytes = 100MB
 	// So, some process will have to share the mutex
-	// 1 mutex per 100 pid is a good trade-off
-	// 4194304 / 100 = 41943
-	// 41943 * 24 bytes = 1MB
 
+	// assume liveprocesses can increase up to 100 times of current count
+	// if processes exceeds the count of mutex, they will share the mutex
 	countMuArray := countLiveProcesses * 100
 	if countMuArray > maxPid {
 		countMuArray = maxPid
