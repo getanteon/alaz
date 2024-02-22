@@ -1,19 +1,28 @@
 package cri
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"io"
+	"net"
+	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/ddosify/alaz/log"
 
 	// "github.com/gogo/protobuf/jsonpb"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/golang/protobuf/jsonpb" //nolint:staticcheck
 	"github.com/golang/protobuf/proto"  //nolint:staticcheck
 	internalapi "k8s.io/cri-api/pkg/apis"
@@ -26,9 +35,15 @@ var defaultRuntimeEndpoints = []string{"unix:///run/containerd/containerd.sock",
 type CRITool struct {
 	rs      internalapi.RuntimeService
 	timeout time.Duration
+
+	connPool *sync.Pool
+	watcher  *fsnotify.Watcher
+
+	logPathToFile          map[string]*bufio.Reader
+	logPathToContainerMeta map[string]string
 }
 
-func NewCRITool(t time.Duration) (*CRITool, error) {
+func NewCRITool(ctx context.Context, t time.Duration) (*CRITool, error) {
 	var res internalapi.RuntimeService
 	var err error
 	for _, endPoint := range defaultRuntimeEndpoints {
@@ -37,7 +52,7 @@ func NewCRITool(t time.Duration) (*CRITool, error) {
 			continue
 		}
 
-		fmt.Println("Connected successfully using endpoint", endPoint)
+		log.Logger.Info().Msgf("Connected successfully to CRI using endpoint %s", endPoint)
 		break
 	}
 
@@ -45,8 +60,42 @@ func NewCRITool(t time.Duration) (*CRITool, error) {
 		return nil, err
 	}
 
+	logBackend := os.Getenv("LOG_BACKEND")
+	if logBackend == "" {
+		logBackend = "log-backend.ddosify:8282"
+	}
+
+	connPool := &sync.Pool{
+		New: func() interface{} {
+			conn, err := net.Dial("tcp", logBackend)
+			if err != nil {
+				log.Logger.Error().Err(err).Msg("Failed to dial log backend")
+				return nil
+			}
+			log.Logger.Debug().Msg("Connected to log backend")
+			return conn
+		},
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("failed to create fsnotify watcher")
+	}
+
+	go func() {
+		<-ctx.Done()
+		watcher.Close()
+	}()
+
+	logPathToFile := make(map[string]*bufio.Reader, 0)
+	logPathToContainerMeta := make(map[string]string, 0)
+
 	return &CRITool{
-		rs: res,
+		rs:                     res,
+		connPool:               connPool,
+		watcher:                watcher,
+		logPathToFile:          logPathToFile,
+		logPathToContainerMeta: logPathToContainerMeta,
 	}, nil
 }
 
@@ -87,10 +136,16 @@ func (ct *CRITool) getLogPath(id string) (string, error) {
 		return "", fmt.Errorf("log path is empty for %s", id)
 	}
 
-	return r.Status.LogPath, nil
+	return fmt.Sprintf("/proc/1/root%s", r.Status.LogPath), nil
 }
 
-func (ct *CRITool) containerStatus(id string) (map[string]interface{}, error) {
+type ContainerStatusResponse struct {
+	podUid  string
+	podName string
+	podNs   string
+}
+
+func (ct *CRITool) containerStatus(id string) (*ContainerStatusResponse, error) {
 	if id == "" {
 		return nil, fmt.Errorf("ID cannot be empty")
 	}
@@ -112,15 +167,20 @@ func (ct *CRITool) containerStatus(id string) (map[string]interface{}, error) {
 
 	podRes, err := ct.rs.PodSandboxStatus(context.TODO(), sandBoxID, verbose)
 	if err != nil {
-		return info, err
+		return nil, err
 	}
+
 	podUid := podRes.Status.Metadata.Uid
 	podName := podRes.Status.Metadata.Name
 	podNamespace := podRes.Status.Metadata.Namespace
-	fmt.Printf("containerID:%s\n", id)
-	fmt.Printf("podUid:%s podName:%s podNs:%s\n", podUid, podName, podNamespace)
+	// fmt.Printf("containerID:%s\n", id)
+	// fmt.Printf("podUid:%s podName:%s podNs:%s\n", podUid, podName, podNamespace)
 
-	return info, nil
+	return &ContainerStatusResponse{
+		podUid:  podUid,
+		podName: podName,
+		podNs:   podNamespace,
+	}, nil
 }
 
 func (ct *CRITool) getContainersOfPod(podSandboxId string) ([]*pb.Container, error) {
@@ -160,6 +220,155 @@ func (ct *CRITool) getPods(podUid string) ([]*pb.PodSandbox, error) {
 	filter.State = st
 
 	return ct.rs.ListPodSandbox(context.Background(), filter)
+}
+
+// podUid
+// containerName
+// which version of container, 0,1,2...
+func getContainerMetadataLine(podNs, podName, podUid, containerName string, num int) string {
+	return fmt.Sprintf("**AlazLogs_%s_%s_%s_%s_%d**\n", podNs, podName, podUid, containerName, num)
+}
+
+func (ct *CRITool) readerForLogPath(logPath string) (*bufio.Reader, error) {
+	// TODO: refactor
+	if reader, ok := ct.logPathToFile[logPath]; ok {
+		return reader, nil
+	}
+
+	file, err := os.Open(logPath)
+	if err != nil {
+		return nil, err
+	}
+
+	reader := bufio.NewReader(file)
+	ct.logPathToFile[logPath] = reader
+
+	return reader, nil
+}
+
+func (ct *CRITool) StreamLogs() error {
+	containers, err := ct.getAllContainers()
+	if err != nil {
+		return err
+	}
+
+	for _, c := range containers {
+		logPath, err := ct.getLogPath(c.Id)
+		if err != nil {
+			log.Logger.Error().Err(err).Msgf("Failed to get log path for container %s, %s", c.Id, c.Metadata.Name)
+			continue
+		}
+		_, err = ct.readerForLogPath(logPath)
+		if err != nil {
+			log.Logger.Error().Err(err).Msgf("Failed to get reader for log path %s", logPath)
+			continue
+		}
+
+		err = ct.watcher.Add(logPath)
+		if err != nil {
+			log.Logger.Error().Err(err).Msgf("Failed to add log path %s to watcher", logPath)
+			continue
+		}
+
+		fileName := filepath.Base(logPath)
+		fileNameWithoutExt := strings.TrimSuffix(fileName, filepath.Ext(fileName))
+		suffixNum, err := strconv.Atoi(fileNameWithoutExt)
+		if err != nil {
+			log.Logger.Error().Err(err).Msgf("Failed to parse numeric part of log file name %s", fileName)
+		}
+
+		// /var/log/pods/ddosify_log-pod-a_e77e90d7-c071-4e08-a467-76771bc399a0/log-container/0.log
+		// TODO: parse logPath, direct metadataline
+
+		resp, err := ct.containerStatus(c.Id)
+		if err != nil {
+			log.Logger.Error().Err(err).Msgf("Failed to get container status for container %s", c.Id)
+			continue
+		}
+
+		ct.logPathToContainerMeta[logPath] = getContainerMetadataLine(resp.podNs, resp.podName, resp.podUid, c.Metadata.Name, suffixNum)
+	}
+
+	// start listening for fsnotify events
+	go func() {
+		for {
+			select {
+			case event, ok := <-ct.watcher.Events:
+				if !ok {
+					return
+				}
+
+				if event.Has(fsnotify.Rename) { // logrotate case
+					logPath := event.Name
+					ct.watcher.Add(logPath)
+
+					// TODO: on an error, and restart event log suffix is incremented
+					// we need to know a way to handle this case
+					// we need know about stopped containers, and new containers
+
+					// at first try it can still not existent
+					// so we need to wait for it to be created
+					for {
+						_, err := os.Stat(logPath)
+						if err == nil {
+							break
+						} else {
+							log.Logger.Info().Msgf("waiting for file to be created on rename: %s", logPath)
+						}
+						time.Sleep(1 * time.Second)
+					}
+
+					logFile, err := os.Open(logPath) // reopen file
+					if err != nil {
+						log.Logger.Error().Err(err).Msgf("Failed to reopen file on rename event: %s", logPath)
+						continue
+					}
+
+					logFile.Seek(0, io.SeekEnd) // seek to end of file
+					ct.logPathToFile[logPath] = bufio.NewReader(logFile)
+
+					log.Logger.Info().Msgf("reopened file for rename: %s", logPath)
+					continue
+				} else if event.Has(fsnotify.Write) {
+					var err error
+					logPath := event.Name
+					conn := ct.connPool.Get()
+
+					// send metadata first
+					metaLine := ct.logPathToContainerMeta[logPath]
+					_, err = io.Copy(conn.(net.Conn), bytes.NewBufferString(metaLine))
+					if err != nil {
+						log.Logger.Error().Err(err).Msgf("metadata could not be sent to backend: %v", err)
+						log.Logger.Error().Msgf("TODO: handle this error, backend may be down, connection may be closed for any reason, etc.")
+						continue
+					}
+
+					// send logs
+					reader, ok := ct.logPathToFile[logPath]
+					if !ok || reader == nil {
+						log.Logger.Error().Msgf("reader for log path %s is not found", logPath)
+						continue
+					}
+
+					n, err := io.Copy(conn.(net.Conn), reader)
+					if err != nil {
+						log.Logger.Error().Err(err).Msgf("logs could not be sent to backend: %v", err)
+						log.Logger.Error().Msgf("TODO: handle this error, backend may be down, connection may be closed for any reason, etc.")
+						// TODO: try to reconnect
+					}
+					log.Logger.Debug().Msgf("written %d bytes to conn for %s", logPath)
+					ct.connPool.Put(conn)
+				}
+			case err, ok := <-ct.watcher.Errors:
+				if !ok {
+					return
+				}
+				log.Logger.Error().Err(err).Msgf("fsnotify error")
+			}
+		}
+	}()
+
+	return nil
 }
 
 type listOptions struct {
