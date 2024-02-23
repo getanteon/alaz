@@ -75,8 +75,10 @@ type Aggregator struct {
 	liveProcesses   map[uint32]struct{} // pid -> struct{}
 
 	// Used to rate limit and drop trace events based on pid
-	rateLimiters map[uint32]*rate.Limiter // pid -> rateLimiter
-	rateLimitMu  sync.RWMutex
+	rateLimiters   map[uint32]*rate.Limiter // pid -> rateLimiter
+	rateLimitMu    sync.RWMutex
+	rateLimitCount int
+	rateLimitBurst int
 
 	// Used to find the correct mutex for the pid, some pids can share the same mutex
 	muIndex int
@@ -144,6 +146,9 @@ var (
 
 	defaultExpiration = 5 * time.Minute
 	purgeTime         = 10 * time.Minute
+
+	defaultRateLimitCount = 100
+	defaultRateLimitBurst = 1000
 )
 
 var reverseDnsCache *cache.Cache
@@ -170,6 +175,27 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{},
 		ServiceIPToServiceUid: map[string]types.UID{},
 	}
 
+	rateLimitCount, rateLimitBurst := defaultRateLimitCount, defaultRateLimitBurst
+
+	rateLimitCountEnv := os.Getenv("RATE_LIMIT_COUNT")
+	if rateLimitCountEnv != "" {
+		count, err := strconv.Atoi(rateLimitCountEnv)
+		if err != nil {
+			log.Logger.Error().Err(err).Msg("error parsing RATE_LIMIT_COUNT")
+		} else {
+			rateLimitCount = count
+		}
+	}
+	rateLimitBurstEnv := os.Getenv("RATE_LIMIT_BURST")
+	if rateLimitBurstEnv != "" {
+		burst, err := strconv.Atoi(rateLimitBurstEnv)
+		if err != nil {
+			log.Logger.Error().Err(err).Msg("error parsing RATE_LIMIT_BURST")
+		} else {
+			rateLimitBurst = burst
+		}
+	}
+
 	a := &Aggregator{
 		ctx:                 ctx,
 		k8sChan:             k8sChan,
@@ -187,6 +213,8 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{},
 		pgStmts:             make(map[string]string),
 		muIndex:             0,
 		muArray:             nil,
+		rateLimitCount:      rateLimitCount,
+		rateLimitBurst:      rateLimitBurst,
 	}
 
 	maxPid, err := getPidMax()
@@ -442,7 +470,7 @@ func (a *Aggregator) getRateLimiterForPid(pid uint32) *rate.Limiter {
 		a.rateLimitMu.Lock()
 		// r means number of token added to bucket per second, maximum number of token in bucket is b, if bucket is full, token will be dropped
 		// b means the initial and max number of token in bucket
-		limiter = rate.NewLimiter(100, 1000)
+		limiter = rate.NewLimiter(rate.Limit(a.rateLimitCount), a.rateLimitBurst)
 		a.rateLimiters[pid] = limiter
 		a.rateLimitMu.Unlock()
 	}
