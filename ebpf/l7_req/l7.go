@@ -11,6 +11,7 @@ import (
 	"github.com/ddosify/alaz/log"
 
 	"github.com/cilium/ebpf/link"
+	"github.com/cilium/ebpf/linux"
 	"github.com/cilium/ebpf/perf"
 	"github.com/cilium/ebpf/rlimit"
 )
@@ -343,6 +344,8 @@ func (l7p *L7Prog) Load() {
 	if err := loadBpfObjects(&L7BpfProgsAndMaps, nil); err != nil {
 		log.Logger.Fatal().Err(err).Msg("loading objects")
 	}
+
+	linux.FlushCaches()
 }
 
 func (l7p *L7Prog) Attach() {

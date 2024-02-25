@@ -11,6 +11,8 @@ import (
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/perf"
 	"github.com/cilium/ebpf/rlimit"
+
+	"github.com/cilium/ebpf/linux"
 )
 
 // match with values in tcp_state.c
@@ -138,6 +140,8 @@ func (tsp *TcpStateProg) Load() {
 	if err := loadBpfObjects(&objs, nil); err != nil {
 		log.Logger.Fatal().Err(err).Msg("loading objects")
 	}
+
+	linux.FlushCaches()
 }
 
 func (tsp *TcpStateProg) Attach() {

@@ -1181,7 +1181,7 @@ func (a *Aggregator) fetchSkInfo(ctx context.Context, skLine *SocketLine, d *l7_
 		if err == nil && skInfo != nil {
 			break
 		}
-		log.Logger.Debug().Err(err).Uint32("pid", d.Pid).Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).Msg("retry to get skInfo...")
+		// log.Logger.Debug().Err(err).Uint32("pid", d.Pid).Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).Msg("retry to get skInfo...")
 		rc--
 		if rc == 0 {
 			break
