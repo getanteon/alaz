@@ -324,7 +324,6 @@ func (ct *CRITool) sendLogs(logPath string) error {
 			t *= 2
 			continue
 		}
-		log.Logger.Info().Msgf("connected to backend")
 		break
 	}
 
