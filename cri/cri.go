@@ -30,7 +30,7 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/cri/remote"
 )
 
-var defaultRuntimeEndpoints = []string{"unix:///run/containerd/containerd.sock", "unix:///run/crio/crio.sock", "unix:///var/run/cri-dockerd.sock"}
+var defaultRuntimeEndpoints = []string{"unix:///proc/1/root/run/containerd/containerd.sock", "unix:///proc/1/root/run/crio/crio.sock", "unix:///proc/1/root/var/run/cri-dockerd.sock"}
 
 type CRITool struct {
 	rs      internalapi.RuntimeService
