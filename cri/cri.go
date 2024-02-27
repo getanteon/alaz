@@ -40,7 +40,7 @@ type containerPodInfo struct {
 type CRITool struct {
 	rs internalapi.RuntimeService
 
-	connPool *sync.Pool
+	connPool *channelPool
 	watcher  *fsnotify.Watcher
 
 	logPathToFile          map[string]*fileReader
@@ -71,16 +71,16 @@ func NewCRITool(ctx context.Context) (*CRITool, error) {
 		logBackend = "log-backend.ddosify:8282"
 	}
 
-	connPool := &sync.Pool{
-		New: func() interface{} {
-			conn, err := net.Dial("tcp", logBackend)
-			if err != nil {
-				log.Logger.Error().Err(err).Msg("Failed to dial log backend")
-				return nil
-			}
-			log.Logger.Debug().Msg("Connected to log backend")
-			return conn
-		},
+	dialer := &net.Dialer{
+		Timeout: 5 * time.Second,
+	}
+
+	connPool, err := NewChannelPool(5, 30, func() (net.Conn, error) {
+		return dialer.Dial("tcp", logBackend)
+	})
+
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("failed to create connection pool")
 	}
 
 	watcher, err := fsnotify.NewWatcher()
@@ -307,22 +307,43 @@ func (ct *CRITool) unwatchContainer(id string) {
 
 func (ct *CRITool) sendLogs(logPath string) error {
 	var err error
-	var conn net.Conn = nil
+	var poolConn *PoolConn = nil
+
+	t := 1
 	for {
-		c := ct.connPool.Get()
-		if c == nil {
-			log.Logger.Error().Msgf("connection is nil, retrying..")
+		poolConn, err = ct.connPool.Get()
+		if err != nil {
+			log.Logger.Error().Err(err).Msgf("connect failed, retryconn..")
+			time.Sleep(time.Duration(t) * time.Second)
+			t *= 2
 			continue
 		}
-		conn = c.(net.Conn)
+		if poolConn == nil {
+			log.Logger.Error().Msgf("poolConn is nil, retryconn..")
+			time.Sleep(time.Duration(t) * time.Second)
+			t *= 2
+			continue
+		}
+		log.Logger.Info().Msgf("connected to backend")
 		break
 	}
 
+	defer func() {
+		if poolConn != nil && poolConn.unusable {
+			log.Logger.Error().Msgf("connection is unusable, closing..")
+			err := poolConn.Close()
+			if err != nil {
+				log.Logger.Error().Err(err).Msgf("Failed to close connection")
+			}
+		}
+	}()
+
 	// send metadata first
 	metaLine := ct.logPathToContainerMeta[logPath]
-	_, err = io.Copy(conn, bytes.NewBufferString(metaLine))
+	_, err = io.Copy(poolConn, bytes.NewBufferString(metaLine))
 	if err != nil {
 		log.Logger.Error().Err(err).Msgf("metadata could not be sent to backend: %v", err)
+		poolConn.MarkUnusable()
 		return err
 	}
 
@@ -334,14 +355,17 @@ func (ct *CRITool) sendLogs(logPath string) error {
 	}
 
 	reader.mu.Lock()
-	_, err = io.Copy(conn, reader)
+	_, err = io.Copy(poolConn, reader)
 	if err != nil {
 		log.Logger.Error().Err(err).Msgf("logs could not be sent to backend: %v", err)
+		poolConn.MarkUnusable()
+		reader.mu.Unlock()
 		return err
 	}
 	reader.mu.Unlock()
 
-	ct.connPool.Put(conn)
+	// put the connection back to the pool, closes if unusable
+	poolConn.Close()
 	return nil
 }
 
@@ -350,6 +374,7 @@ func (ct *CRITool) StreamLogs() error {
 	if err != nil {
 		return err
 	}
+	log.Logger.Info().Msg("watching containers")
 
 	for _, c := range containers {
 		err := ct.watchContainer(c.Id, c.Metadata.Name)
@@ -403,7 +428,7 @@ func (ct *CRITool) StreamLogs() error {
 
 	// start listening for fsnotify events
 	go func() {
-		worker := 50
+		worker := 10
 		// start workers
 		for i := 0; i < worker; i++ {
 			go func() {
