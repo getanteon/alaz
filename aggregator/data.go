@@ -77,6 +77,10 @@ type Aggregator struct {
 	// Used to rate limit and drop trace events based on pid
 	rateLimiters map[uint32]*rate.Limiter // pid -> rateLimiter
 	rateLimitMu  sync.RWMutex
+
+	// Used to find the correct mutex for the pid, some pids can share the same mutex
+	muIndex int
+	muArray []*sync.RWMutex
 }
 
 // We need to keep track of the following
@@ -106,7 +110,7 @@ type http2Parser struct {
 
 // type SocketMap
 type SocketMap struct {
-	mu sync.RWMutex
+	mu *sync.RWMutex
 	M  map[uint64]*SocketLine `json:"fdToSockLine"` // fd -> SockLine
 }
 
@@ -133,10 +137,10 @@ type ClusterInfo struct {
 
 var (
 	// default exponential backoff (*2)
-	// when retryLimit is increased, we are blocking the events that we wait it to be processed more
-	retryInterval = 50 * time.Millisecond
-	retryLimit    = 2
-	// 400 + 800 + 1600 + 3200 + 6400 = 12400 ms
+	// when attemptLimit is increased, we are blocking the events that we wait it to be processed more
+	retryInterval = 20 * time.Millisecond
+	attemptLimit  = 3 // total attempt
+	// 1st try - 20ms - 2nd try - 40ms - 3rd try
 
 	defaultExpiration = 5 * time.Minute
 	purgeTime         = 10 * time.Minute
@@ -166,22 +170,6 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{},
 		ServiceIPToServiceUid: map[string]types.UID{},
 	}
 
-	maxPid, err := getPidMax()
-	if err != nil {
-		log.Logger.Fatal().Err(err).Msg("error getting max pid")
-	}
-	sockMaps := make([]*SocketMap, maxPid+1) // index=pid
-
-	// initialize sockMaps
-	for i := range sockMaps {
-		sockMaps[i] = &SocketMap{
-			M:  nil, // initialized on demand later
-			mu: sync.RWMutex{},
-		}
-	}
-
-	clusterInfo.SocketMaps = sockMaps
-
 	a := &Aggregator{
 		ctx:                 ctx,
 		k8sChan:             k8sChan,
@@ -197,14 +185,61 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{},
 		liveProcesses:       make(map[uint32]struct{}),
 		rateLimiters:        make(map[uint32]*rate.Limiter),
 		pgStmts:             make(map[string]string),
+		muIndex:             0,
+		muArray:             nil,
+	}
+
+	maxPid, err := getPidMax()
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("error getting max pid")
+	}
+	sockMaps := make([]*SocketMap, maxPid+1) // index=pid
+	// initialize sockMaps
+	for i := range sockMaps {
+		sockMaps[i] = &SocketMap{
+			M:  nil, // initialized on demand later
+			mu: nil,
+		}
+	}
+	clusterInfo.SocketMaps = sockMaps
+
+	a.getLiveProcesses()
+
+	a.liveProcessesMu.RLock()
+	countLiveProcesses := len(a.liveProcesses)
+	a.liveProcessesMu.RUnlock()
+
+	// normally, mutex per pid is straightforward solution
+	// on regular systems, maxPid is around 32768
+	// so, we allocate 32768 mutexes, which is 32768 * 24 bytes = 786KB
+	// but on 64-bit systems, maxPid can be 4194304
+	// and we don't want to allocate 4194304 mutexes, it adds up to 4194304 * 24 bytes = 100MB
+	// So, some process will have to share the mutex
+
+	// assume liveprocesses can increase up to 100 times of current count
+	// if processes exceeds the count of mutex, they will share the mutex
+	countMuArray := countLiveProcesses * 100
+	if countMuArray > maxPid {
+		countMuArray = maxPid
+	}
+	// for 2k processes, 200k mutex => 200k * 24 bytes = 4.80MB
+	// in case of maxPid is 32678, 32678 * 24 bytes = 784KB, pick the smaller one
+	a.muArray = make([]*sync.RWMutex, countMuArray)
+
+	// set distinct mutex for every live process
+	a.muIndex = 0
+	for pid := range a.liveProcesses {
+		a.muArray[a.muIndex] = &sync.RWMutex{}
+		sockMaps[pid].mu = a.muArray[a.muIndex]
+		a.muIndex++
+		a.getAlreadyExistingSockets(pid)
 	}
 
 	go a.clearSocketLines(ctx)
-
 	return a
 }
 
-func (a *Aggregator) Run() {
+func (a *Aggregator) getLiveProcesses() {
 	// get all alive processes, populate liveProcesses
 	cmd := exec.Command("ps", "-e", "-o", "pid=")
 	output, err := cmd.Output()
@@ -225,11 +260,12 @@ func (a *Aggregator) Run() {
 					continue
 				}
 				a.liveProcesses[uint32(pidInt)] = struct{}{}
-				a.getAlreadyExistingSockets(uint32(pidInt))
 			}
 		}
 	}
+}
 
+func (a *Aggregator) Run() {
 	go func() {
 		// every 2 minutes, check alive processes, and clear the ones left behind
 		// since we process events concurrently, some short-lived processes exit event can come before exec events
@@ -295,11 +331,11 @@ func (a *Aggregator) Run() {
 	for i := 0; i < numWorker; i++ {
 		go a.processEbpf(a.ctx)
 		go a.processEbpfTcp(a.ctx)
+		go a.processEbpfProc(a.ctx)
 	}
 
 	for i := 0; i < 2*cpuCount; i++ {
 		go a.processHttp2Frames()
-		go a.processEbpfProc(a.ctx)
 	}
 }
 
@@ -368,7 +404,6 @@ func (a *Aggregator) processEbpfTcp(ctx context.Context) {
 				a.processTcpConnect(d)
 			}
 		}
-
 	}
 }
 
@@ -416,16 +451,21 @@ func (a *Aggregator) getRateLimiterForPid(pid uint32) *rate.Limiter {
 
 func (a *Aggregator) processExec(d *proc.ProcEvent) {
 	a.liveProcessesMu.Lock()
+	defer a.liveProcessesMu.Unlock()
+
 	a.liveProcesses[d.Pid] = struct{}{}
-	a.liveProcessesMu.Unlock()
+
+	// create lock on demand
+	a.muArray[a.muIndex%len(a.muArray)] = &sync.RWMutex{}
+	a.muIndex++
+	a.clusterInfo.SocketMaps[d.Pid].mu = a.muArray[a.muIndex%len(a.muArray)]
 }
 
 func (a *Aggregator) processExit(pid uint32) {
 	a.liveProcessesMu.Lock()
 	delete(a.liveProcesses, pid)
-	a.liveProcessesMu.Unlock()
-
 	a.removeFromClusterInfo(pid)
+	a.liveProcessesMu.Unlock()
 
 	a.h2ParserMu.Lock()
 	pid_s := fmt.Sprint(pid)
@@ -460,6 +500,7 @@ func (a *Aggregator) signalTlsAttachment(pid uint32) {
 func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
 	go a.signalTlsAttachment(d.Pid)
 	if d.Type_ == tcp_state.EVENT_TCP_ESTABLISHED {
+
 		// filter out localhost connections
 		if d.SAddr == "127.0.0.1" || d.DAddr == "127.0.0.1" {
 			return
@@ -470,6 +511,10 @@ func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
 
 		sockMap = a.clusterInfo.SocketMaps[d.Pid]
 		var skLine *SocketLine
+
+		if sockMap.mu == nil {
+			return
+		}
 
 		sockMap.mu.Lock() // lock for reading
 		if sockMap.M == nil {
@@ -500,9 +545,18 @@ func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
 		var sockMap *SocketMap
 		var ok bool
 
+		// filter out localhost connections
+		if d.SAddr == "127.0.0.1" || d.DAddr == "127.0.0.1" {
+			return
+		}
+
 		sockMap = a.clusterInfo.SocketMaps[d.Pid]
 
 		var skLine *SocketLine
+
+		if sockMap.mu == nil {
+			return
+		}
 
 		sockMap.mu.Lock() // lock for reading
 		if sockMap.M == nil {
@@ -934,13 +988,26 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 		return
 	}
 
-	skInfo := a.findRelatedSocket(ctx, d)
-	if skInfo == nil {
-		return
+	var path string
+	if d.Protocol == l7_req.L7_PROTOCOL_POSTGRES {
+		// parse sql command from payload
+		// path = sql command
+		// method = sql message type
+		var err error
+		path, err = a.parseSqlCommand(d)
+		if err != nil {
+			log.Logger.Error().AnErr("err", err)
+			return
+		}
 	}
 
-	// Since we process events concurrently
-	// TCP events and L7 events can be processed out of order
+	skInfo := a.findRelatedSocket(ctx, d)
+	if skInfo == nil {
+		log.Logger.Debug().Uint32("pid", d.Pid).
+			Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
+			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:])).Msg("socket not found")
+		return
+	}
 
 	reqDto := datastore.Request{
 		StartTime:  d.EventReadTime,
@@ -957,21 +1024,13 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 		Seq:        d.Seq,
 	}
 
-	if d.Protocol == l7_req.L7_PROTOCOL_POSTGRES {
-		// parse sql command from payload
-		// path = sql command
-		// method = sql message type
-		var err error
-		reqDto.Path, err = a.parseSqlCommand(d)
-		if err != nil {
-			log.Logger.Error().AnErr("err", err)
-			return
-		}
-	}
+	// Since we process events concurrently
+	// TCP events and L7 events can be processed out of order
+
 	var reqHostHeader string
 	// parse http payload, extract path, query params, headers
 	if d.Protocol == l7_req.L7_PROTOCOL_HTTP {
-		_, reqDto.Path, _, reqHostHeader = parseHttpPayload(string(d.Payload[0:d.PayloadSize]))
+		_, path, _, reqHostHeader = parseHttpPayload(string(d.Payload[0:d.PayloadSize]))
 	}
 
 	err := a.setFromTo(skInfo, d, &reqDto, reqHostHeader)
@@ -979,6 +1038,7 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 		return
 	}
 
+	reqDto.Path = path
 	reqDto.Completed = !d.Failed
 
 	// In AMQP-DELIVER event, we are capturing from read syscall,
@@ -1023,21 +1083,6 @@ func getHostnameFromIP(ipAddr string) (string, error) {
 		}
 		return "", fmt.Errorf("no hostname found for IP address: %s", ipAddr)
 	}
-}
-
-func (a *Aggregator) fetchSkLine(sockMap *SocketMap, pid uint32, fd uint64) *SocketLine {
-	sockMap.mu.Lock() // lock for reading
-	skLine, ok := sockMap.M[fd]
-
-	if !ok {
-		log.Logger.Debug().Uint32("pid", pid).Uint64("fd", fd).Msg("error finding skLine, go look for it")
-		// start new socket line, find already established connections
-		skLine = NewSocketLine(pid, fd)
-		sockMap.M[fd] = skLine
-	}
-	sockMap.mu.Unlock() // unlock for writing
-
-	return skLine
 }
 
 // get all tcp sockets for the pid
@@ -1110,6 +1155,10 @@ func (a *Aggregator) getAlreadyExistingSockets(pid uint32) {
 			skLine := NewSocketLine(pid, fd.Fd)
 			skLine.AddValue(0, sockInfo)
 
+			if sockMap.mu == nil {
+				return
+			}
+
 			sockMap.mu.Lock()
 			if sockMap.M == nil {
 				sockMap.M = make(map[uint64]*SocketLine)
@@ -1122,18 +1171,17 @@ func (a *Aggregator) getAlreadyExistingSockets(pid uint32) {
 }
 
 func (a *Aggregator) fetchSkInfo(ctx context.Context, skLine *SocketLine, d *l7_req.L7Event) *SockInfo {
-	rc := retryLimit
+	rc := attemptLimit
 	rt := retryInterval
 	var skInfo *SockInfo
 	var err error
-
-	// skInfo, _ = skLine.GetValue(d.WriteTimeNs)
 
 	for {
 		skInfo, err = skLine.GetValue(d.WriteTimeNs)
 		if err == nil && skInfo != nil {
 			break
 		}
+		// log.Logger.Debug().Err(err).Uint32("pid", d.Pid).Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).Msg("retry to get skInfo...")
 		rc--
 		if rc == 0 {
 			break
@@ -1155,6 +1203,9 @@ func (a *Aggregator) fetchSkInfo(ctx context.Context, skLine *SocketLine, d *l7_
 
 func (a *Aggregator) removeFromClusterInfo(pid uint32) {
 	sockMap := a.clusterInfo.SocketMaps[pid]
+	if sockMap.mu == nil {
+		return
+	}
 	sockMap.mu.Lock()
 	sockMap.M = nil
 	sockMap.mu.Unlock()
@@ -1162,6 +1213,11 @@ func (a *Aggregator) removeFromClusterInfo(pid uint32) {
 
 func (a *Aggregator) fetchSocketMap(pid uint32) *SocketMap {
 	sockMap := a.clusterInfo.SocketMaps[pid]
+
+	if sockMap.mu == nil {
+		return nil
+	}
+
 	sockMap.mu.Lock()
 	if sockMap.M == nil {
 		sockMap.M = make(map[uint64]*SocketLine)
@@ -1172,18 +1228,36 @@ func (a *Aggregator) fetchSocketMap(pid uint32) *SocketMap {
 }
 
 func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) *SockInfo {
-	sockMap := a.fetchSocketMap(d.Pid)
-	skLine := a.fetchSkLine(sockMap, d.Pid, d.Fd)
-	skInfo := a.fetchSkInfo(ctx, skLine, d)
+	sockMap := a.clusterInfo.SocketMaps[d.Pid]
+	// acquire sockMap lock
 
+	if sockMap.mu == nil {
+		return nil
+	}
+
+	sockMap.mu.Lock()
+
+	if sockMap.M == nil {
+		sockMap.M = make(map[uint64]*SocketLine)
+	}
+
+	skLine, ok := sockMap.M[d.Fd]
+	if !ok {
+		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("error finding skLine, go look for it")
+		// start new socket line, find already established connections
+		skLine = NewSocketLine(d.Pid, d.Fd)
+		sockMap.M[d.Fd] = skLine
+	}
+
+	// release sockMap lock
+	sockMap.mu.Unlock()
+
+	skInfo := a.fetchSkInfo(ctx, skLine, d)
 	if skInfo == nil {
 		return nil
 	}
 
-	// TODO: zero IP address check ??
-
 	return skInfo
-
 }
 
 func (a *Aggregator) parseSqlCommand(d *l7_req.L7Event) (string, error) {
@@ -1348,6 +1422,9 @@ func (a *Aggregator) clearSocketLines(ctx context.Context) {
 
 	for range ticker.C {
 		for _, sockMap := range a.clusterInfo.SocketMaps {
+			if sockMap.mu == nil {
+				continue
+			}
 			sockMap.mu.Lock()
 			if sockMap.M != nil {
 				for _, skLine := range sockMap.M {
