@@ -9,6 +9,7 @@ import (
 
 	"github.com/ddosify/alaz/aggregator"
 	"github.com/ddosify/alaz/config"
+	"github.com/ddosify/alaz/cri"
 	"github.com/ddosify/alaz/datastore"
 	"github.com/ddosify/alaz/ebpf"
 	"github.com/ddosify/alaz/k8s"
@@ -57,6 +58,7 @@ func main() {
 
 	metricsEnabled, _ := strconv.ParseBool(os.Getenv("METRICS_ENABLED"))
 	distTracingEnabled, _ := strconv.ParseBool(os.Getenv("DIST_TRACING_ENABLED"))
+	logsEnabled, _ := strconv.ParseBool(os.Getenv("LOGS_ENABLED"))
 
 	// datastore backend
 	dsBackend := datastore.NewBackendDS(ctx, config.BackendDSConfig{
@@ -78,6 +80,20 @@ func main() {
 
 		ec.Init()
 		go ec.ListenEvents()
+	}
+
+	if logsEnabled {
+		ct, err := cri.NewCRITool(ctx)
+		if err != nil {
+			log.Logger.Error().Err(err).Msg("failed to create cri tool")
+		} else {
+			go func() {
+				err := ct.StreamLogs()
+				if err != nil {
+					log.Logger.Error().Err(err).Msg("failed to stream logs")
+				}
+			}()
+		}
 	}
 
 	go http.ListenAndServe(":8181", nil)
