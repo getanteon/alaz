@@ -47,6 +47,8 @@ type CRITool struct {
 	logPathToFile          map[string]*fileReader
 	logPathToContainerMeta map[string]string
 	containerIdToLogPath   map[string]string
+
+	done chan struct{}
 }
 
 func NewCRITool(ctx context.Context) (*CRITool, error) {
@@ -89,9 +91,12 @@ func NewCRITool(ctx context.Context) (*CRITool, error) {
 		log.Logger.Fatal().Err(err).Msg("failed to create fsnotify watcher")
 	}
 
+	done := make(chan struct{})
 	go func() {
 		<-ctx.Done()
 		watcher.Close()
+		connPool.Close()
+		close(done)
 	}()
 
 	logPathToFile := make(map[string]*fileReader, 0)
@@ -105,7 +110,12 @@ func NewCRITool(ctx context.Context) (*CRITool, error) {
 		logPathToFile:          logPathToFile,
 		logPathToContainerMeta: logPathToContainerMeta,
 		containerIdToLogPath:   containerIdToLogPath,
+		done:                   done,
 	}, nil
+}
+
+func (ct *CRITool) Done() chan struct{} {
+	return ct.done
 }
 
 func (ct *CRITool) getAllContainers() ([]*pb.Container, error) {

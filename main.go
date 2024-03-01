@@ -37,7 +37,14 @@ func main() {
 	var k8sCollector *k8s.K8sCollector
 	kubeEvents := make(chan interface{}, 1000)
 	var k8sVersion string
-	if os.Getenv("K8S_COLLECTOR_ENABLED") != "false" {
+
+	var k8sCollectorEnabled bool = true
+	k8sEnabled, err := strconv.ParseBool(os.Getenv("K8S_COLLECTOR_ENABLED"))
+	if err == nil && !k8sEnabled {
+		k8sCollectorEnabled = false
+	}
+
+	if k8sCollectorEnabled {
 		// k8s collector
 		var err error
 		k8sCollector, err = k8s.NewK8sCollector(ctx)
@@ -82,8 +89,9 @@ func main() {
 		go ec.ListenEvents()
 	}
 
+	var ct *cri.CRITool
 	if logsEnabled {
-		ct, err := cri.NewCRITool(ctx)
+		ct, err = cri.NewCRITool(ctx)
 		if err != nil {
 			log.Logger.Error().Err(err).Msg("failed to create cri tool")
 		} else {
@@ -98,11 +106,20 @@ func main() {
 
 	go http.ListenAndServe(":8181", nil)
 
-	<-k8sCollector.Done()
-	log.Logger.Info().Msg("k8sCollector done")
+	if k8sCollectorEnabled {
+		<-k8sCollector.Done()
+		log.Logger.Info().Msg("k8sCollector done")
+	}
 
-	<-ec.Done()
-	log.Logger.Info().Msg("ebpfCollector done")
+	if ebpfEnabled {
+		<-ec.Done()
+		log.Logger.Info().Msg("ebpfCollector done")
+	}
+
+	if logsEnabled {
+		<-ct.Done()
+		log.Logger.Info().Msg("cri done")
+	}
 
 	log.Logger.Info().Msg("alaz exiting...")
 }
