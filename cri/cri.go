@@ -330,7 +330,7 @@ func (ct *CRITool) sendLogs(logPath string) error {
 			continue
 		}
 		if poolConn == nil {
-			log.Logger.Error().Msgf("poolConn is nil, retryconn..")
+			log.Logger.Info().Msgf("poolConn is nil, retryconn..")
 			time.Sleep(time.Duration(t) * time.Second)
 			t *= 2
 			continue
@@ -340,7 +340,7 @@ func (ct *CRITool) sendLogs(logPath string) error {
 
 	defer func() {
 		if poolConn != nil && poolConn.unusable {
-			log.Logger.Error().Msgf("connection is unusable, closing..")
+			log.Logger.Info().Msgf("connection is unusable, closing..")
 			err := poolConn.Close()
 			if err != nil {
 				log.Logger.Error().Err(err).Msgf("Failed to close connection")
