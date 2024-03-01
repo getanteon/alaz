@@ -241,7 +241,6 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
                 args.write_start_ns = timestamp;
                 bpf_map_update_elem(&active_writes, &id, &args, BPF_ANY);
             }
-            unsigned char log_msg[] = "parse_client_postgres_data -- count||";
             log_to_userspace(ctx, DEBUG, func_name, log_msg, count, 0, 0);
             req->protocol = PROTOCOL_POSTGRES;
         }else if (is_rabbitmq_publish(buf,count)){
