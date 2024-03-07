@@ -119,7 +119,7 @@ MONITORING_ID=XXXXX
 BACKEND_HOST=XXXXX
 curl -sSL https://raw.githubusercontent.com/ddosify/alaz/master/resources/alaz.yaml -o alaz.yaml
 sed -i"" -e "s/<MONITORING_ID>/$MONITORING_ID/g" alaz.yaml
-sed -i"" -e "s/https:\/\/api.ddosify.com:443/http:\/\/$BACKEND_HOST\/api/g" alaz.yaml
+sed -i"" -e "s/https:\/\/api-alaz.ddosify.com:443/http:\/\/$BACKEND_HOST\/api/g" alaz.yaml
 kubectl create namespace ddosify
 kubectl apply -f alaz.yaml
 ```
