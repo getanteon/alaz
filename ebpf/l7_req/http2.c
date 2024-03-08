@@ -1,3 +1,4 @@
+//go:build ignore
 #define CLIENT_FRAME        1
 #define SERVER_FRAME        2
 

@@ -1,3 +1,4 @@
+//go:build ignore
 // https://www.postgresql.org/docs/current/protocol.html
 // PostgreSQL uses a message-based protocol for communication between frontends and backends (clients and servers).
 // The protocol is supported over TCP/IP and also over Unix-domain sockets

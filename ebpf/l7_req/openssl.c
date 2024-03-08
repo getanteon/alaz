@@ -1,3 +1,4 @@
+//go:build ignore
 struct padding {};
 typedef long (*padding_fn)();
 
