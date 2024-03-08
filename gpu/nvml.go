@@ -208,7 +208,6 @@ func buildID(id [32]int8) string {
 // DeviceInfoByIndex returns DeviceInfo for index GPU in system device list.
 func (n *nvmlDriver) DeviceInfoByIndex(index uint) (*DeviceInfo, error) {
 	device, code := nvml.DeviceGetHandleByIndex(int(index))
-	// TODO: if only one fails, remainder should be retrieved
 
 	if code != nvml.SUCCESS {
 		return nil, decode("failed to get device info", code)
