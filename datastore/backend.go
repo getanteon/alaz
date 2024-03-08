@@ -18,6 +18,7 @@ import (
 
 	"github.com/ddosify/alaz/config"
 	"github.com/ddosify/alaz/ebpf/l7_req"
+	"github.com/ddosify/alaz/gpu"
 	"github.com/ddosify/alaz/log"
 
 	"github.com/alecthomas/kingpin/v2"
@@ -129,6 +130,7 @@ func getCloudProvider() CloudProvider {
 
 var resourceBatchSize int64 = 50
 var innerMetricsPort int = 8182
+var innerGpuMetricsPort int = 8183
 
 // BackendDS is a backend datastore
 type BackendDS struct {
@@ -311,7 +313,6 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 
 	if conf.MetricsExport {
 		go ds.exportNodeMetrics()
-
 		go func() {
 			t := time.NewTicker(time.Duration(conf.MetricsExportInterval) * time.Second)
 			for {
@@ -320,7 +321,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 					return
 				case <-t.C:
 					// make a request to /inner/metrics
-					// forward the response to /github.com/ddosify/alaz/metrics
+					// forward response to /metrics/scrape
 					func() {
 						req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://localhost:%d/inner/metrics", innerMetricsPort), nil)
 						if err != nil {
@@ -379,6 +380,82 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 				}
 			}
 		}()
+	}
+
+	if conf.GpuMetricsExport {
+		err := ds.exportGpuMetrics()
+		if err != nil {
+			log.Logger.Error().Msgf("error exporting gpu metrics: %v", err)
+		} else {
+			go func() {
+				t := time.NewTicker(time.Duration(conf.MetricsExportInterval) * time.Second)
+				for {
+					select {
+					case <-ds.ctx.Done():
+						return
+					case <-t.C:
+						// make a request to /inner/gpu-metrics
+						// forward response to /metrics/scrape
+						func() {
+							req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://localhost:%d/inner/gpu-metrics", innerGpuMetricsPort), nil)
+							if err != nil {
+								log.Logger.Error().Msgf("error creating inner gpu metrics request: %v", err)
+								return
+							}
+
+							ctx, cancel := context.WithTimeout(ds.ctx, 5*time.Second)
+							defer cancel()
+
+							// use the default client, ds client reads response on success to look for failed events,
+							// therefore body here will be empty
+							resp, err := http.DefaultClient.Do(req.WithContext(ctx))
+
+							if err != nil {
+								log.Logger.Error().Msgf("error sending gpu inner metrics request: %v", err)
+								return
+							}
+
+							if resp.StatusCode != http.StatusOK {
+								log.Logger.Error().Msgf("gpu inner metrics request not success: %d", resp.StatusCode)
+								return
+							}
+
+							req, err = http.NewRequest(http.MethodPost, fmt.Sprintf("%s/metrics/scrape/?instance=%s&monitoring_id=%s", ds.host, NodeID, MonitoringID), resp.Body)
+							if err != nil {
+								log.Logger.Error().Msgf("error creating gpu metrics request: %v", err)
+								return
+							}
+
+							ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+							defer cancel()
+
+							resp, err = ds.c.Do(req.WithContext(ctx))
+
+							if err != nil {
+								log.Logger.Error().Msgf("error sending gpu metrics request: %v", err)
+								return
+							}
+
+							if resp.StatusCode != http.StatusOK {
+								log.Logger.Error().Msgf("gpu metrics request not success: %d", resp.StatusCode)
+
+								// log response body
+								rb, err := io.ReadAll(resp.Body)
+								if err != nil {
+									log.Logger.Error().Msgf("error reading gpu metrics response body: %v", err)
+								}
+								log.Logger.Error().Msgf("gpu metrics response body: %s", string(rb))
+
+								return
+							} else {
+								log.Logger.Debug().Msg("gpu-metrics sent successfully")
+							}
+						}()
+					}
+				}
+			}()
+		}
+
 	}
 
 	go func() {
@@ -855,6 +932,22 @@ func (b *BackendDS) exportNodeMetrics() {
 	h := newHandler(nodeExportLogger{logger: log.Logger})
 	http.Handle(metricsPath, h)
 	http.ListenAndServe(fmt.Sprintf(":%d", innerMetricsPort), nil)
+}
+
+func (b *BackendDS) exportGpuMetrics() error {
+	gpuMetricsPath := "/inner/gpu-metrics"
+	gpuCollector, err := gpu.NewGpuCollector()
+	if err != nil {
+		return err
+	}
+
+	r := prometheus.NewRegistry()
+	r.MustRegister(gpuCollector)
+	r.MustRegister(version.NewCollector("alaz_nvidia_gpu_exporter"))
+
+	http.Handle(gpuMetricsPath, promhttp.HandlerFor(r, promhttp.HandlerOpts{}))
+	go http.ListenAndServe(fmt.Sprintf(":%d", innerGpuMetricsPort), nil)
+	return nil
 }
 
 type nodeExporterHandler struct {
