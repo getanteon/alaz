@@ -2,8 +2,9 @@ package gpu
 
 import (
 	"fmt"
-	"log"
 	"sync"
+
+	"github.com/ddosify/alaz/log"
 
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 )
@@ -30,9 +31,12 @@ func getNvmlDriver(soPath string) (*nvmlDriver, error) {
 			n := &nvmlDriver{}
 			var opt nvml.LibraryOption
 			if soPath != "" {
+				log.Logger.Info().Str("soPath", soPath).Msg("getNvmlDriver")
 				opt = nvml.WithLibraryPath(soPath)
 			}
-			if !n.init(opt) {
+			initSuccess := n.init(opt)
+			log.Logger.Info().Bool("initSuccess", initSuccess).Msg("getNvmlDriver")
+			if !initSuccess {
 				return nil, fmt.Errorf("failed to initialize nvml")
 			}
 			singleInstance = n
@@ -311,14 +315,14 @@ func (n *nvmlDriver) DeviceInfoByIndex(index uint) (*DeviceInfo, error) {
 func (n *nvmlDriver) printAllDeviceData() {
 	dv, err := n.SystemDriverVersion()
 	if err != nil {
-		log.Fatal(err)
+		log.Logger.Fatal().Err(err).Msg("failed to get driver version")
 	}
 	fmt.Println("driver version: ", dv)
 	fmt.Println("---------------------------------------------------------------------------------")
 
 	count, err := n.DeviceCount()
 	if err != nil {
-		log.Fatal(err)
+		log.Logger.Fatal().Err(err).Msg("failed to get device count")
 	}
 	fmt.Println("device count: ", count)
 	n.deviceCount = count
@@ -328,7 +332,7 @@ func (n *nvmlDriver) printAllDeviceData() {
 	for i := uint(0); i < count; i++ {
 		devInfo, devStatus, err := n.DeviceInfoAndStatusByIndex(i)
 		if err != nil {
-			log.Fatal(err)
+			log.Logger.Fatal().Err(err).Msg("failed to get device info")
 		}
 		// fmt.Println("deviceInfo: ", *devInfo.Name, *devInfo.MemoryMiB, *devInfo.PowerW, *devInfo.BAR1MiB, *devInfo.PCIBandwidthMBPerS, devInfo.PCIBusID, *devInfo.CoresClockMHz, *devInfo.MemoryClockMHz, devInfo.DisplayState, devInfo.PersistenceMode)
 		fmt.Printf(" name: %s \n memory: %d MB \n power: %d W \n bar1: %d MB \n pci bandwidth: %d MB/s \n pci bus id: %s \n core clock: %d MHz \n memory clock: %d MHz \n display state: %s \n persistence mode: %s\n", *devInfo.Name, *devInfo.MemoryMiB, *devInfo.PowerW, *devInfo.BAR1MiB, *devInfo.PCIBandwidthMBPerS, devInfo.PCIBusID, *devInfo.CoresClockMHz, *devInfo.MemoryClockMHz, devInfo.DisplayState, devInfo.PersistenceMode)

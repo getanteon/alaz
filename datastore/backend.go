@@ -938,6 +938,7 @@ func (b *BackendDS) exportGpuMetrics() error {
 	gpuMetricsPath := "/inner/gpu-metrics"
 	gpuCollector, err := gpu.NewGpuCollector()
 	if err != nil {
+		log.Logger.Error().Msgf("error creating gpu collector: %v", err)
 		return err
 	}
 
@@ -946,6 +947,7 @@ func (b *BackendDS) exportGpuMetrics() error {
 	r.MustRegister(version.NewCollector("alaz_nvidia_gpu_exporter"))
 
 	http.Handle(gpuMetricsPath, promhttp.HandlerFor(r, promhttp.HandlerOpts{}))
+	log.Logger.Info().Msgf("exporting gpu metrics at %s, on port %d", gpuMetricsPath, innerGpuMetricsPort)
 	go http.ListenAndServe(fmt.Sprintf(":%d", innerGpuMetricsPort), nil)
 	return nil
 }

@@ -143,6 +143,8 @@ func (e *EbpfCollector) close() {
 	e.probesMu.Lock()
 	defer e.probesMu.Unlock()
 
+	log.Logger.Info().Msg("closing ebpf uprobes")
+
 	for pid := range e.sslWriteUprobes {
 		e.sslWriteUprobes[pid].Close()
 	}
@@ -163,6 +165,7 @@ func (e *EbpfCollector) close() {
 			l.Close()
 		}
 	}
+	log.Logger.Info().Msg("ebpf collector closed")
 }
 
 // in order to prevent the memory peak at the beginning
