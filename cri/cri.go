@@ -25,7 +25,9 @@ import (
 )
 
 // https://kubernetes.io/docs/setup/production-environment/container-runtimes/#cri-versions
-var defaultRuntimeEndpoints = []string{"unix:///proc/1/root/run/containerd/containerd.sock", "unix:///proc/1/root/var/run/crio/crio.sock", "unix:///proc/1/root/run/cri-dockerd.sock"}
+var defaultRuntimeEndpoints = []string{"unix:///proc/1/root/run/containerd/containerd.sock", "unix:///proc/1/root/var/run/containerd/containerd.sock",
+	"unix:///proc/1/root/var/run/crio/crio.sock", "unix:///proc/1/root/run/crio/crio.sock",
+	"unix:///proc/1/root/run/cri-dockerd.sock", "unix:///proc/1/root/var/run/cri-dockerd.sock"}
 
 type fileReader struct {
 	mu sync.Mutex
