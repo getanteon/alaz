@@ -311,197 +311,59 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 	go ds.sendEventsInBatch(ds.containerEventChan, containerEndpoint, eventsInterval)
 	go ds.sendEventsInBatch(ds.dsEventChan, dsEndpoint, eventsInterval)
 
-	if conf.MetricsExport {
-		go ds.exportNodeMetrics()
-		var gpuCollectorConnected bool
+	// send node-exporter and nvidia-gpu metrics
+	go func() {
+		if !(conf.MetricsExport || conf.GpuMetricsExport) {
+			return
+		}
+
+		var nodeMetrics, gpuMetrics bool
+		if conf.MetricsExport {
+			go ds.exportNodeMetrics()
+			nodeMetrics = true // by default
+		}
+
 		if conf.GpuMetricsExport {
 			err := ds.exportGpuMetrics()
 			if err != nil {
 				log.Logger.Error().Msgf("error exporting gpu metrics: %v", err)
 			} else {
-				gpuCollectorConnected = true
+				gpuMetrics = true
 			}
 		}
 
-		send := func(r io.Reader) {
-			req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/metrics/scrape/?instance=%s&monitoring_id=%s", ds.host, NodeID, MonitoringID), r)
-			if err != nil {
-				log.Logger.Error().Msgf("error creating metrics request: %v", err)
+		t := time.NewTicker(time.Duration(conf.MetricsExportInterval) * time.Second)
+		for {
+			select {
+			case <-ds.ctx.Done():
 				return
-			}
-
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-
-			resp, err := ds.c.Do(req.WithContext(ctx))
-
-			if err != nil {
-				log.Logger.Error().Msgf("error sending metrics request: %v", err)
-				return
-			}
-
-			if resp.StatusCode != http.StatusOK {
-				log.Logger.Error().Msgf("metrics request not success: %d", resp.StatusCode)
-
-				// log response body
-				rb, err := io.ReadAll(resp.Body)
-				if err != nil {
-					log.Logger.Error().Msgf("error reading metrics response body: %v", err)
+			case <-t.C:
+				payloads := []io.Reader{}
+				if nodeMetrics {
+					nodeMetrics, err := ds.scrapeNodeMetrics()
+					if err != nil {
+						log.Logger.Error().Msgf("error scraping node metrics: %v", err)
+					} else {
+						log.Logger.Debug().Msg("node-metrics scraped successfully")
+						payloads = append(payloads, nodeMetrics)
+					}
 				}
-				log.Logger.Error().Msgf("metrics response body: %s", string(rb))
+				if gpuMetrics {
+					gpuMetrics, err := ds.scrapeGpuMetrics()
+					if err != nil {
+						log.Logger.Error().Msgf("error scraping gpu metrics: %v", err)
+					} else {
+						log.Logger.Debug().Msg("gpu-metrics scraped successfully")
+						payloads = append(payloads, gpuMetrics)
+					}
+				}
 
-				return
-			} else {
-				log.Logger.Debug().Msg("metrics sent successfully")
+				if len(payloads) > 0 {
+					ds.sendMetricsToBackend(io.MultiReader(payloads...))
+				}
 			}
 		}
-
-		go func() {
-			t := time.NewTicker(time.Duration(conf.MetricsExportInterval) * time.Second)
-			for {
-				select {
-				case <-ds.ctx.Done():
-					return
-				case <-t.C:
-					// make a request to /inner/metrics
-					// forward response to /metrics/scrape
-					readers := []io.Reader{}
-					func() {
-						// get node metrics from node-exporter
-						req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://localhost:%d/inner/metrics", innerMetricsPort), nil)
-						if err != nil {
-							log.Logger.Error().Msgf("error creating inner metrics request: %v", err)
-							return
-						}
-
-						ctx, cancel := context.WithTimeout(ds.ctx, 5*time.Second)
-						defer cancel()
-
-						// use the default client, ds client reads response on success to look for failed events,
-						// therefore body here will be empty
-						resp, err := http.DefaultClient.Do(req.WithContext(ctx))
-
-						if err != nil {
-							log.Logger.Error().Msgf("error sending inner metrics request: %v", err)
-							return
-						}
-
-						if resp.StatusCode != http.StatusOK {
-							log.Logger.Error().Msgf("inner metrics request not success: %d", resp.StatusCode)
-							return
-						}
-
-						readers = append(readers, resp.Body)
-
-						// get nvidia gpu metrics
-						if gpuCollectorConnected {
-							req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://localhost:%d/inner/gpu-metrics", innerGpuMetricsPort), nil)
-							if err != nil {
-								log.Logger.Error().Msgf("error creating inner gpu metrics request: %v", err)
-								return
-							}
-
-							ctx, cancel := context.WithTimeout(ds.ctx, 5*time.Second)
-							defer cancel()
-
-							// use the default client, ds client reads response on success to look for failed events,
-							// therefore body here will be empty
-							resp, err := http.DefaultClient.Do(req.WithContext(ctx))
-
-							if err != nil {
-								log.Logger.Error().Msgf("error sending gpu inner metrics request: %v", err)
-								return
-							}
-
-							if resp.StatusCode != http.StatusOK {
-								log.Logger.Error().Msgf("gpu inner metrics request not success: %d", resp.StatusCode)
-								return
-							}
-							readers = append(readers, resp.Body)
-						}
-
-						send(io.MultiReader(readers...))
-					}()
-				}
-			}
-		}()
-	}
-
-	// if conf.GpuMetricsExport {
-	// 	err := ds.exportGpuMetrics()
-	// 	if err != nil {
-	// 		log.Logger.Error().Msgf("error exporting gpu metrics: %v", err)
-	// 	} else {
-	// 		go func() {
-	// 			t := time.NewTicker(time.Duration(conf.MetricsExportInterval) * time.Second)
-	// 			for {
-	// 				select {
-	// 				case <-ds.ctx.Done():
-	// 					return
-	// 				case <-t.C:
-	// 					// make a request to /inner/gpu-metrics
-	// 					// forward response to /metrics/scrape
-	// 					func() {
-	// 						req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://localhost:%d/inner/gpu-metrics", innerGpuMetricsPort), nil)
-	// 						if err != nil {
-	// 							log.Logger.Error().Msgf("error creating inner gpu metrics request: %v", err)
-	// 							return
-	// 						}
-
-	// 						ctx, cancel := context.WithTimeout(ds.ctx, 5*time.Second)
-	// 						defer cancel()
-
-	// 						// use the default client, ds client reads response on success to look for failed events,
-	// 						// therefore body here will be empty
-	// 						resp, err := http.DefaultClient.Do(req.WithContext(ctx))
-
-	// 						if err != nil {
-	// 							log.Logger.Error().Msgf("error sending gpu inner metrics request: %v", err)
-	// 							return
-	// 						}
-
-	// 						if resp.StatusCode != http.StatusOK {
-	// 							log.Logger.Error().Msgf("gpu inner metrics request not success: %d", resp.StatusCode)
-	// 							return
-	// 						}
-
-	// 						req, err = http.NewRequest(http.MethodPost, fmt.Sprintf("%s/metrics/scrape/?instance=%s&monitoring_id=%s", ds.host, NodeID, MonitoringID), resp.Body)
-	// 						if err != nil {
-	// 							log.Logger.Error().Msgf("error creating gpu metrics request: %v", err)
-	// 							return
-	// 						}
-
-	// 						ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
-	// 						defer cancel()
-
-	// 						resp, err = ds.c.Do(req.WithContext(ctx))
-
-	// 						if err != nil {
-	// 							log.Logger.Error().Msgf("error sending gpu metrics request: %v", err)
-	// 							return
-	// 						}
-
-	// 						if resp.StatusCode != http.StatusOK {
-	// 							log.Logger.Error().Msgf("gpu metrics request not success: %d", resp.StatusCode)
-
-	// 							// log response body
-	// 							rb, err := io.ReadAll(resp.Body)
-	// 							if err != nil {
-	// 								log.Logger.Error().Msgf("error reading gpu metrics response body: %v", err)
-	// 							}
-	// 							log.Logger.Error().Msgf("gpu metrics response body: %s", string(rb))
-
-	// 							return
-	// 						} else {
-	// 							log.Logger.Debug().Msg("gpu-metrics sent successfully")
-	// 						}
-	// 					}()
-	// 				}
-	// 			}
-	// 		}()
-	// 	}
-
-	// }
+	}()
 
 	go func() {
 		<-ds.ctx.Done()
@@ -598,6 +460,39 @@ func convertTraceEventsToPayload(batch []*TraceInfo) TracePayload {
 			AlazVersion:    tag,
 		},
 		Traces: batch,
+	}
+}
+
+func (b *BackendDS) sendMetricsToBackend(r io.Reader) {
+	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/metrics/scrape/?instance=%s&monitoring_id=%s", b.host, NodeID, MonitoringID), r)
+	if err != nil {
+		log.Logger.Error().Msgf("error creating metrics request: %v", err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	resp, err := b.c.Do(req.WithContext(ctx))
+
+	if err != nil {
+		log.Logger.Error().Msgf("error sending metrics request: %v", err)
+		return
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		log.Logger.Error().Msgf("metrics request not success: %d", resp.StatusCode)
+
+		// log response body
+		rb, err := io.ReadAll(resp.Body)
+		if err != nil {
+			log.Logger.Error().Msgf("error reading metrics response body: %v", err)
+		}
+		log.Logger.Error().Msgf("metrics response body: %s", string(rb))
+
+		return
+	} else {
+		log.Logger.Debug().Msg("metrics sent successfully")
 	}
 }
 
@@ -965,6 +860,63 @@ func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool, dist bool, k8sVersi
 			b.sendToBackend(http.MethodPut, createHealthCheckPayload(), healthCheckEndpoint)
 		}
 	}
+}
+
+func (b *BackendDS) scrapeNodeMetrics() (io.Reader, error) {
+	// get node metrics from node-exporter
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://localhost:%d/inner/metrics", innerMetricsPort), nil)
+	if err != nil {
+		return nil, fmt.Errorf("error creating inner metrics request: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(b.ctx, 5*time.Second)
+	// defer cancel()
+	// do not defer cancel here, since we return the reader to the caller on success
+	// if deferred, there will be a race condition between the caller and the defer
+
+	// use the default client, ds client reads response on success to look for failed events,
+	// therefore body here will be empty
+	resp, err := http.DefaultClient.Do(req.WithContext(ctx))
+
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("error sending inner metrics request: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		cancel()
+		return nil, fmt.Errorf("inner metrics request not success: %d", resp.StatusCode)
+	}
+
+	return resp.Body, nil
+}
+
+func (b *BackendDS) scrapeGpuMetrics() (io.Reader, error) {
+	// get gpu metrics from nvml
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://localhost:%d/inner/gpu-metrics", innerGpuMetricsPort), nil)
+	if err != nil {
+		return nil, fmt.Errorf("error creating inner gpu metrics request: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(b.ctx, 5*time.Second)
+	// defer cancel()
+	// do not defer cancel here, since we return the reader to the caller on success
+	// if deferred, there will be a race condition between the caller and the defer
+
+	// use the default client, ds client reads response on success to look for failed events,
+	// therefore body here will be empty
+	resp, err := http.DefaultClient.Do(req.WithContext(ctx))
+
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("error sending gpu inner metrics request: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		cancel()
+		return nil, fmt.Errorf("gpu inner metrics request not success: %d", resp.StatusCode)
+	}
+	return resp.Body, nil
 }
 
 func (b *BackendDS) exportNodeMetrics() {
