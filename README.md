@@ -13,7 +13,7 @@
 </p>
 
 <h2 align="center">
-    <a href="https://demo.ddosify.com/" target="_blank">Live Demo</a> •
+    <a href="https://demo.ddosify.com/clusters/0ce2ef05-ef64-459d-90d9-7f2cbd65fff8" target="_blank">Live Demo</a> •
     <a href="https://docs.ddosify.com/" target="_blank">Documentation</a> •
     <a href="https://docs.ddosify.com/ddosify/deployment" target="_blank">Deployment</a> •
     <a href="https://docs.ddosify.com/ddosify/deployment" target="_blank">Discord</a>
