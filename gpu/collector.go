@@ -2,6 +2,9 @@ package gpu
 
 import (
 	"fmt"
+	"io/fs"
+	"path/filepath"
+	"strings"
 
 	"github.com/ddosify/alaz/log"
 
@@ -26,17 +29,59 @@ type GpuCollector struct {
 	mu sync.Mutex
 }
 
-var nvidiaPaths = []string{"/proc/1/root/run/nvidia/driver/lib64/libnvidia-ml.so", "/proc/1/root/lib64/libnvidia-ml.so", "/proc/1/root/lib/libnvidia-ml.so"}
+// for searching nvidia ml library
+var rootPaths = []string{"/proc/1/root/usr/lib", "/proc/1/root/lib", "/proc/1/root/run/nvidia", "proc/1/root/usr/local/nvidia", "/proc/1/root/run/nvidia/driver/lib64",
+	"proc/1/root/usr/lib64", "proc/1/root/lib64", "proc/1/root"}
+
+func findNvidiaLibPaths(searchDir string) ([]string, error) {
+	foundPaths := make([]string, 0)
+	filenamePart := "libnvidia-ml.so"
+
+	fn := func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+
+		if !d.IsDir() && strings.Contains(d.Name(), filenamePart) {
+			foundPaths = append(foundPaths, path)
+		}
+
+		return nil
+	}
+
+	filepath.WalkDir(searchDir, fn)
+
+	if len(foundPaths) == 0 {
+		return nil, fmt.Errorf("no nvidia ml found in %s", searchDir)
+	}
+
+	return foundPaths, nil
+}
 
 func NewGpuCollector() (*GpuCollector, error) {
 	var nvmlDriver *nvmlDriver
 	var err error
-	for _, path := range nvidiaPaths {
-		nvmlDriver, err = getNvmlDriver(path)
+
+	// search for nvidia ml library
+	for _, searchDir := range rootPaths {
+		nvidiaPaths, err := findNvidiaLibPaths(searchDir)
 		if err != nil {
 			continue
 		}
-		break
+
+		found := false
+		for _, path := range nvidiaPaths {
+			nvmlDriver, err = getNvmlDriver(path)
+			if err != nil {
+				continue
+			}
+			// found the driver
+			found = true
+			break
+		}
+		if found {
+			break
+		}
 	}
 
 	if err != nil {
