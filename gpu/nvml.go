@@ -119,6 +119,7 @@ type DeviceStatus struct {
 	DecoderUtilization *uint // %
 	PowerLimit         *uint
 	FanCount           *uint
+	FanSpeeds          map[int]uint // index = fanID, value = speed
 	BAR1UsedMiB        *uint64
 	UsedMemoryMiB      *uint64
 	TotalMemoryMiB     *uint64
@@ -228,13 +229,15 @@ func (n *nvmlDriver) DeviceInfoAndStatusByIndex(index uint) (*DeviceInfo, *Devic
 		fanCountU = &t
 	}
 
-	// for i := 0; i < fanCount; i++ {
-	// 	fanSpeed, code := nvml.DeviceGetFanSpeed_v2(device, i)
-	// 	if code != nvml.SUCCESS {
-	// 		return nil, nil, decode("failed to get device fan speed", code)
-	// 	}
-	// 	fanSpeedU := uint(fanSpeed)
-	// }
+	fanSpeeds := make(map[int]uint, 0)
+	for i := 0; i < int(fanCount); i++ {
+		speed, err := n.GetFanSpeed(device, i)
+		if err != nil {
+			log.Logger.Error().Str("ctx", "gpu").Msgf("failed to get fan speed : %s", err)
+			continue
+		}
+		fanSpeeds[i] = speed
+	}
 
 	// note: ecc memory error stats removed; couldn't figure out the API
 	return di, &DeviceStatus{
@@ -250,6 +253,7 @@ func (n *nvmlDriver) DeviceInfoAndStatusByIndex(index uint) (*DeviceInfo, *Devic
 		BAR1UsedMiB:        barUsed,
 		PowerLimit:         pwLimitU,
 		FanCount:           fanCountU,
+		FanSpeeds:          fanSpeeds,
 	}, nil
 }
 
@@ -259,6 +263,21 @@ func buildID(id [32]int8) string {
 		b[i] = byte(id[i])
 	}
 	return string(b)
+}
+
+func (n *nvmlDriver) GetFanSpeed(device nvml.Device, fanID int) (uint, error) {
+	fanSpeed, code := nvml.DeviceGetFanSpeed_v2(device, fanID)
+	if code != nvml.SUCCESS {
+		log.Logger.Error().Str("ctx", "gpu").Str("binding", "nvml.DeviceGetFanSpeed_v2").Msgf("failed to get fan speed : %s", nvml.ErrorString(code))
+		fanSpeed, code = nvml.DeviceGetFanSpeed(device)
+		if code != nvml.SUCCESS {
+			log.Logger.Error().Str("ctx", "gpu").Str("binding", "nvml.DeviceGetFanSpeed").Msgf("failed to get fan speed : %s", nvml.ErrorString(code))
+		} else {
+			return uint(fanSpeed), nil
+		}
+		return 0, fmt.Errorf("failed to get fan speed: %s", nvml.ErrorString(code))
+	}
+	return uint(fanSpeed), nil
 }
 
 // DeviceInfoByIndex returns DeviceInfo for index GPU in system device list.

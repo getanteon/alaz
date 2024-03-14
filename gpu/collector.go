@@ -166,6 +166,10 @@ func NewGpuCollector() (*GpuCollector, error) {
 				desc:  prometheus.NewDesc(prometheus.BuildFQName("alaz_nvml", "", "fan_count"), "fan_count_desc", uuidLabel, nil),
 				type_: prometheus.GaugeValue,
 			},
+			"fan_speed": {
+				desc:  prometheus.NewDesc(prometheus.BuildFQName("alaz_nvml", "", "fan_speed"), "fan_speed_desc", []string{"uuid", "fanID"}, nil),
+				type_: prometheus.GaugeValue,
+			},
 		},
 		gpuDriverDesc: prometheus.NewDesc(
 			prometheus.BuildFQName("alaz_nvml", "", "gpu_driver"),
@@ -224,18 +228,16 @@ func (g *GpuCollector) Collect(ch chan<- prometheus.Metric) {
 			log.Logger.Warn().Str("ctx", "gpu").Msgf("device name is nil for device index %d", i)
 		}
 
-		infoMetric := prometheus.MustNewConstMetric(g.fieldDesc["gpu_info"].desc, g.fieldDesc["gpu_info"].type_, float64(i), devInfo.UUID,
+		ch <- prometheus.MustNewConstMetric(g.fieldDesc["gpu_info"].desc, g.fieldDesc["gpu_info"].type_, float64(i), devInfo.UUID,
 			deviceName,
 			devInfo.DisplayState, devInfo.PersistenceMode)
-		ch <- infoMetric
 
 		if devInfo.PowerW != nil {
 			powerWF, err := strconv.ParseFloat(fmt.Sprintf("%d", *devInfo.PowerW), 64)
 			if err != nil {
 				log.Logger.Error().Str("ctx", "gpu").Err(err).Msg("failed to parse power in watts")
 			} else {
-				temp := prometheus.MustNewConstMetric(g.fieldDesc["power"].desc, g.fieldDesc["power"].type_, powerWF, devInfo.UUID)
-				ch <- temp
+				ch <- prometheus.MustNewConstMetric(g.fieldDesc["power"].desc, g.fieldDesc["power"].type_, powerWF, devInfo.UUID)
 			}
 		} else {
 			log.Logger.Warn().Str("ctx", "gpu").Msgf("device power is nil for device index %d", i)
@@ -246,8 +248,7 @@ func (g *GpuCollector) Collect(ch chan<- prometheus.Metric) {
 			if err != nil {
 				log.Logger.Error().Str("ctx", "gpu").Err(err).Msg("failed to parse bar1 in mib")
 			} else {
-				temp := prometheus.MustNewConstMetric(g.fieldDesc["bar1"].desc, g.fieldDesc["bar1"].type_, bar1F, devInfo.UUID)
-				ch <- temp
+				ch <- prometheus.MustNewConstMetric(g.fieldDesc["bar1"].desc, g.fieldDesc["bar1"].type_, bar1F, devInfo.UUID)
 			}
 		} else {
 			log.Logger.Warn().Str("ctx", "gpu").Msgf("device bar1 is nil for device index %d", i)
@@ -258,8 +259,7 @@ func (g *GpuCollector) Collect(ch chan<- prometheus.Metric) {
 			if err != nil {
 				log.Logger.Error().Str("ctx", "gpu").Err(err).Msg("failed to parse pci bandwidth in mb per s")
 			} else {
-				temp := prometheus.MustNewConstMetric(g.fieldDesc["pci_bandwidth"].desc, g.fieldDesc["pci_bandwidth"].type_, pciBandwidthMBPerSF, devInfo.UUID)
-				ch <- temp
+				ch <- prometheus.MustNewConstMetric(g.fieldDesc["pci_bandwidth"].desc, g.fieldDesc["pci_bandwidth"].type_, pciBandwidthMBPerSF, devInfo.UUID)
 			}
 		} else {
 			log.Logger.Warn().Str("ctx", "gpu").Msgf("device pci bandwidth is nil for device index %d", i)
@@ -270,8 +270,7 @@ func (g *GpuCollector) Collect(ch chan<- prometheus.Metric) {
 			if err != nil {
 				log.Logger.Error().Str("ctx", "gpu").Err(err).Msg("failed to parse core clock mhz")
 			} else {
-				temp := prometheus.MustNewConstMetric(g.fieldDesc["core_clock_mhz"].desc, g.fieldDesc["core_clock_mhz"].type_, coreClockMhzF, devInfo.UUID)
-				ch <- temp
+				ch <- prometheus.MustNewConstMetric(g.fieldDesc["core_clock_mhz"].desc, g.fieldDesc["core_clock_mhz"].type_, coreClockMhzF, devInfo.UUID)
 			}
 		} else {
 			log.Logger.Warn().Str("ctx", "gpu").Msgf("device core clock mhz is nil for device index %d", i)
@@ -282,8 +281,7 @@ func (g *GpuCollector) Collect(ch chan<- prometheus.Metric) {
 			if err != nil {
 				log.Logger.Error().Str("ctx", "gpu").Err(err).Msg("failed to parse memory clock mhz")
 			} else {
-				temp := prometheus.MustNewConstMetric(g.fieldDesc["mem_clock_mhz"].desc, g.fieldDesc["mem_clock_mhz"].type_, memClockMhzF, devInfo.UUID)
-				ch <- temp
+				ch <- prometheus.MustNewConstMetric(g.fieldDesc["mem_clock_mhz"].desc, g.fieldDesc["mem_clock_mhz"].type_, memClockMhzF, devInfo.UUID)
 			}
 		} else {
 			log.Logger.Warn().Str("ctx", "gpu").Msgf("device memory clock mhz is nil for device index %d", i)
@@ -300,8 +298,7 @@ func (g *GpuCollector) Collect(ch chan<- prometheus.Metric) {
 			if err != nil {
 				log.Logger.Error().Str("ctx", "gpu").Err(err).Msg("failed to parse temperature in celcius")
 			} else {
-				temp := prometheus.MustNewConstMetric(g.fieldDesc["temp_celcius"].desc, g.fieldDesc["temp_celcius"].type_, tempF, devInfo.UUID)
-				ch <- temp
+				ch <- prometheus.MustNewConstMetric(g.fieldDesc["temp_celcius"].desc, g.fieldDesc["temp_celcius"].type_, tempF, devInfo.UUID)
 			}
 		} else {
 			log.Logger.Warn().Str("ctx", "gpu").Msgf("device temperature is nil for device index %d", i)
@@ -312,8 +309,7 @@ func (g *GpuCollector) Collect(ch chan<- prometheus.Metric) {
 			if err != nil {
 				log.Logger.Error().Str("ctx", "gpu").Err(err).Msg("failed to parse gpu utilization")
 			} else {
-				temp := prometheus.MustNewConstMetric(g.fieldDesc["gpu_utz"].desc, g.fieldDesc["gpu_utz"].type_, gpuUtzF, devInfo.UUID)
-				ch <- temp
+				ch <- prometheus.MustNewConstMetric(g.fieldDesc["gpu_utz"].desc, g.fieldDesc["gpu_utz"].type_, gpuUtzF, devInfo.UUID)
 			}
 		} else {
 			log.Logger.Warn().Str("ctx", "gpu").Msgf("device gpu utilization is nil for device index %d", i)
@@ -324,8 +320,7 @@ func (g *GpuCollector) Collect(ch chan<- prometheus.Metric) {
 			if err != nil {
 				log.Logger.Error().Str("ctx", "gpu").Err(err).Msg("failed to parse memory utilization")
 			} else {
-				temp := prometheus.MustNewConstMetric(g.fieldDesc["mem_utz"].desc, g.fieldDesc["mem_utz"].type_, memUtzF, devInfo.UUID)
-				ch <- temp
+				ch <- prometheus.MustNewConstMetric(g.fieldDesc["mem_utz"].desc, g.fieldDesc["mem_utz"].type_, memUtzF, devInfo.UUID)
 			}
 		} else {
 			log.Logger.Warn().Str("ctx", "gpu").Msgf("device memory utilization is nil for device index %d", i)
@@ -336,8 +331,7 @@ func (g *GpuCollector) Collect(ch chan<- prometheus.Metric) {
 			if err != nil {
 				log.Logger.Error().Str("ctx", "gpu").Err(err).Msg("failed to parse encoder utilization")
 			} else {
-				temp := prometheus.MustNewConstMetric(g.fieldDesc["enc_utz"].desc, g.fieldDesc["enc_utz"].type_, encF, devInfo.UUID)
-				ch <- temp
+				ch <- prometheus.MustNewConstMetric(g.fieldDesc["enc_utz"].desc, g.fieldDesc["enc_utz"].type_, encF, devInfo.UUID)
 			}
 		} else {
 			log.Logger.Warn().Str("ctx", "gpu").Msgf("device encoder utilization is nil for device index %d", i)
@@ -348,8 +342,7 @@ func (g *GpuCollector) Collect(ch chan<- prometheus.Metric) {
 			if err != nil {
 				log.Logger.Error().Str("ctx", "gpu").Err(err).Msg("failed to parse decoder utilization")
 			} else {
-				temp := prometheus.MustNewConstMetric(g.fieldDesc["dec_utz"].desc, g.fieldDesc["dec_utz"].type_, decF, devInfo.UUID)
-				ch <- temp
+				ch <- prometheus.MustNewConstMetric(g.fieldDesc["dec_utz"].desc, g.fieldDesc["dec_utz"].type_, decF, devInfo.UUID)
 			}
 		} else {
 			log.Logger.Warn().Str("ctx", "gpu").Msgf("device decoder utilization is nil for device index %d", i)
@@ -360,8 +353,7 @@ func (g *GpuCollector) Collect(ch chan<- prometheus.Metric) {
 			if err != nil {
 				log.Logger.Error().Str("ctx", "gpu").Err(err).Msg("failed to parse used memory in mib")
 			} else {
-				temp := prometheus.MustNewConstMetric(g.fieldDesc["used_mem"].desc, g.fieldDesc["used_mem"].type_, usedMemF, devInfo.UUID)
-				ch <- temp
+				ch <- prometheus.MustNewConstMetric(g.fieldDesc["used_mem"].desc, g.fieldDesc["used_mem"].type_, usedMemF, devInfo.UUID)
 			}
 		} else {
 			log.Logger.Warn().Str("ctx", "gpu").Msgf("device used memory is nil for device index %d", i)
@@ -372,8 +364,7 @@ func (g *GpuCollector) Collect(ch chan<- prometheus.Metric) {
 			if err != nil {
 				log.Logger.Error().Str("ctx", "gpu").Err(err).Msg("failed to parse free memory in mib")
 			} else {
-				temp := prometheus.MustNewConstMetric(g.fieldDesc["free_mem"].desc, g.fieldDesc["free_mem"].type_, freeMemF, devInfo.UUID)
-				ch <- temp
+				ch <- prometheus.MustNewConstMetric(g.fieldDesc["free_mem"].desc, g.fieldDesc["free_mem"].type_, freeMemF, devInfo.UUID)
 			}
 		} else {
 			log.Logger.Warn().Str("ctx", "gpu").Msgf("device free memory is nil for device index %d", i)
@@ -384,8 +375,7 @@ func (g *GpuCollector) Collect(ch chan<- prometheus.Metric) {
 			if err != nil {
 				log.Logger.Error().Str("ctx", "gpu").Err(err).Msg("failed to parse total memory in mib")
 			} else {
-				total_mem := prometheus.MustNewConstMetric(g.fieldDesc["total_mem"].desc, g.fieldDesc["total_mem"].type_, memF, devInfo.UUID)
-				ch <- total_mem
+				ch <- prometheus.MustNewConstMetric(g.fieldDesc["total_mem"].desc, g.fieldDesc["total_mem"].type_, memF, devInfo.UUID)
 			}
 		} else {
 			log.Logger.Warn().Str("ctx", "gpu").Msgf("device total memory is nil for device index %d", i)
@@ -396,8 +386,7 @@ func (g *GpuCollector) Collect(ch chan<- prometheus.Metric) {
 			if err != nil {
 				log.Logger.Error().Str("ctx", "gpu").Err(err).Msg("failed to parse power usage in watts")
 			} else {
-				total_mem := prometheus.MustNewConstMetric(g.fieldDesc["power_usage"].desc, g.fieldDesc["power_usage"].type_, powerUsageF, devInfo.UUID)
-				ch <- total_mem
+				ch <- prometheus.MustNewConstMetric(g.fieldDesc["power_usage"].desc, g.fieldDesc["power_usage"].type_, powerUsageF, devInfo.UUID)
 			}
 		} else {
 			log.Logger.Warn().Str("ctx", "gpu").Msgf("device power usage is nil for device index %d", i)
@@ -408,8 +397,7 @@ func (g *GpuCollector) Collect(ch chan<- prometheus.Metric) {
 			if err != nil {
 				log.Logger.Error().Str("ctx", "gpu").Err(err).Msg("failed to parse power limit in watts")
 			} else {
-				total_mem := prometheus.MustNewConstMetric(g.fieldDesc["power_limit"].desc, g.fieldDesc["power_limit"].type_, powerLimitF, devInfo.UUID)
-				ch <- total_mem
+				ch <- prometheus.MustNewConstMetric(g.fieldDesc["power_limit"].desc, g.fieldDesc["power_limit"].type_, powerLimitF, devInfo.UUID)
 			}
 		} else {
 			log.Logger.Warn().Str("ctx", "gpu").Msgf("device power limit is nil for device index %d", i)
@@ -420,8 +408,7 @@ func (g *GpuCollector) Collect(ch chan<- prometheus.Metric) {
 			if err != nil {
 				log.Logger.Error().Str("ctx", "gpu").Err(err).Msg("failed to parse bar1 used in mib")
 			} else {
-				total_mem := prometheus.MustNewConstMetric(g.fieldDesc["bar1_used"].desc, g.fieldDesc["bar1_used"].type_, bar1UsedF, devInfo.UUID)
-				ch <- total_mem
+				ch <- prometheus.MustNewConstMetric(g.fieldDesc["bar1_used"].desc, g.fieldDesc["bar1_used"].type_, bar1UsedF, devInfo.UUID)
 			}
 		} else {
 			log.Logger.Warn().Str("ctx", "gpu").Msgf("device bar1 used is nil for device index %d", i)
@@ -432,8 +419,19 @@ func (g *GpuCollector) Collect(ch chan<- prometheus.Metric) {
 			if err != nil {
 				log.Logger.Error().Str("ctx", "gpu").Err(err).Msg("failed to parse fan count")
 			} else {
-				total_mem := prometheus.MustNewConstMetric(g.fieldDesc["fan_count"].desc, g.fieldDesc["fan_count"].type_, fanCountF, devInfo.UUID)
-				ch <- total_mem
+				ch <- prometheus.MustNewConstMetric(g.fieldDesc["fan_count"].desc, g.fieldDesc["fan_count"].type_, fanCountF, devInfo.UUID)
+
+				// send fan speeds too if available
+				if devStatus.FanSpeeds != nil && len(devStatus.FanSpeeds) > 0 {
+					for i, fanSpeed := range devStatus.FanSpeeds {
+						fanSpeedF, err := strconv.ParseFloat(fmt.Sprintf("%d", fanSpeed), 64)
+						if err != nil {
+							log.Logger.Error().Str("ctx", "gpu").Err(err).Msg("failed to parse fan speed")
+						} else {
+							ch <- prometheus.MustNewConstMetric(g.fieldDesc["fan_speed"].desc, g.fieldDesc["fan_speed"].type_, fanSpeedF, devInfo.UUID, fmt.Sprintf("fan-%d", i))
+						}
+					}
+				}
 			}
 		} else {
 			log.Logger.Warn().Str("ctx", "gpu").Msgf("device fan count is nil for device index %d", i)
