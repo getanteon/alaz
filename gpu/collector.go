@@ -167,7 +167,7 @@ func NewGpuCollector() (*GpuCollector, error) {
 				type_: prometheus.GaugeValue,
 			},
 			"fan_speed": {
-				desc:  prometheus.NewDesc(prometheus.BuildFQName("alaz_nvml", "", "fan_speed"), "fan_speed_desc", []string{"uuid", "fanID"}, nil),
+				desc:  prometheus.NewDesc(prometheus.BuildFQName("alaz_nvml", "", "fan_speed"), "fan_speed_desc", []string{"uuid", "fan_id"}, nil),
 				type_: prometheus.GaugeValue,
 			},
 		},
@@ -428,7 +428,7 @@ func (g *GpuCollector) Collect(ch chan<- prometheus.Metric) {
 						if err != nil {
 							log.Logger.Error().Str("ctx", "gpu").Err(err).Msg("failed to parse fan speed")
 						} else {
-							ch <- prometheus.MustNewConstMetric(g.fieldDesc["fan_speed"].desc, g.fieldDesc["fan_speed"].type_, fanSpeedF, devInfo.UUID, fmt.Sprintf("fan-%d", i))
+							ch <- prometheus.MustNewConstMetric(g.fieldDesc["fan_speed"].desc, g.fieldDesc["fan_speed"].type_, fanSpeedF, devInfo.UUID, fmt.Sprintf("%d", i))
 						}
 					}
 				}
