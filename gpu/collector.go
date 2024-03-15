@@ -62,6 +62,7 @@ func NewGpuCollector() (*GpuCollector, error) {
 	var nvmlDriver *nvmlDriver
 	var err error
 
+	var found bool
 	// search for nvidia ml library
 	for _, searchDir := range rootPaths {
 		nvidiaPaths, err := findNvidiaLibPaths(searchDir)
@@ -69,7 +70,6 @@ func NewGpuCollector() (*GpuCollector, error) {
 			continue
 		}
 
-		found := false
 		for _, path := range nvidiaPaths {
 			nvmlDriver, err = getNvmlDriver(path)
 			if err != nil {
@@ -84,7 +84,7 @@ func NewGpuCollector() (*GpuCollector, error) {
 		}
 	}
 
-	if err != nil {
+	if err != nil || !found {
 		return nil, fmt.Errorf("failed to load nvidia driver: %v", err)
 	}
 
