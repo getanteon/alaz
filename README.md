@@ -13,7 +13,7 @@
 </p>
 
 <h2 align="center">
-    <a href="https://demo.ddosify.com/" target="_blank">Live Demo</a> •
+    <a href="https://demo.ddosify.com/clusters/0ce2ef05-ef64-459d-90d9-7f2cbd65fff8" target="_blank">Live Demo</a> •
     <a href="https://docs.ddosify.com/" target="_blank">Documentation</a> •
     <a href="https://docs.ddosify.com/ddosify/deployment" target="_blank">Deployment</a> •
     <a href="https://docs.ddosify.com/ddosify/deployment" target="_blank">Discord</a>
@@ -119,7 +119,7 @@ MONITORING_ID=XXXXX
 BACKEND_HOST=XXXXX
 curl -sSL https://raw.githubusercontent.com/ddosify/alaz/master/resources/alaz.yaml -o alaz.yaml
 sed -i"" -e "s/<MONITORING_ID>/$MONITORING_ID/g" alaz.yaml
-sed -i"" -e "s/https:\/\/api.ddosify.com:443/http:\/\/$BACKEND_HOST\/api/g" alaz.yaml
+sed -i"" -e "s/https:\/\/api-alaz.ddosify.com:443/http:\/\/$BACKEND_HOST\/api/g" alaz.yaml
 kubectl create namespace ddosify
 kubectl apply -f alaz.yaml
 ```
