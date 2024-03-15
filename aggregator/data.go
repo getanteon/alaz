@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 
 	"golang.org/x/time/rate"
@@ -79,7 +80,7 @@ type Aggregator struct {
 	rateLimitMu  sync.RWMutex
 
 	// Used to find the correct mutex for the pid, some pids can share the same mutex
-	muIndex int
+	muIndex atomic.Uint64
 	muArray []*sync.RWMutex
 }
 
@@ -185,7 +186,7 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{},
 		liveProcesses:       make(map[uint32]struct{}),
 		rateLimiters:        make(map[uint32]*rate.Limiter),
 		pgStmts:             make(map[string]string),
-		muIndex:             0,
+		muIndex:             atomic.Uint64{},
 		muArray:             nil,
 	}
 
@@ -227,11 +228,10 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{},
 	a.muArray = make([]*sync.RWMutex, countMuArray)
 
 	// set distinct mutex for every live process
-	a.muIndex = 0
 	for pid := range a.liveProcesses {
-		a.muArray[a.muIndex] = &sync.RWMutex{}
-		sockMaps[pid].mu = a.muArray[a.muIndex]
-		a.muIndex++
+		a.muArray[a.muIndex.Load()] = &sync.RWMutex{}
+		sockMaps[pid].mu = a.muArray[a.muIndex.Load()]
+		a.muIndex.Add(1)
 		a.getAlreadyExistingSockets(pid)
 	}
 
@@ -456,9 +456,16 @@ func (a *Aggregator) processExec(d *proc.ProcEvent) {
 	a.liveProcesses[d.Pid] = struct{}{}
 
 	// create lock on demand
-	a.muArray[a.muIndex%len(a.muArray)] = &sync.RWMutex{}
-	a.muIndex++
-	a.clusterInfo.SocketMaps[d.Pid].mu = a.muArray[a.muIndex%len(a.muArray)]
+	a.muArray[(a.muIndex.Load())%uint64(len(a.muArray))] = &sync.RWMutex{}
+	a.muIndex.Add(1)
+
+	// if duplicate exec event comes, underlying mutex will be changed
+	// if first assigned mutex is locked and another exec event comes, mutex will be changed
+	// and unlock of unlocked mutex now is a possibility
+	// to avoid this case, if a socket map already has a mutex, don't change it
+	if a.clusterInfo.SocketMaps[d.Pid].mu == nil {
+		a.clusterInfo.SocketMaps[d.Pid].mu = a.muArray[(a.muIndex.Load())%uint64(len(a.muArray))]
+	}
 }
 
 func (a *Aggregator) processExit(pid uint32) {
