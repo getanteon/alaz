@@ -1,3 +1,4 @@
+//go:build ignore
 // AMQP is a binary protocol. Information is organised into "frames", of various types. Frames carry
 // protocol methods and other information. All frames have the same general format: 
 // frame header, payload and frame end. The frame payload format depends on the frame type.

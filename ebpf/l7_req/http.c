@@ -1,3 +1,4 @@
+//go:build ignore
 #define METHOD_UNKNOWN      0
 #define METHOD_GET          1
 #define METHOD_POST         2

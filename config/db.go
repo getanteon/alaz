@@ -11,6 +11,7 @@ type PostgresConfig struct {
 type BackendDSConfig struct {
 	Host                  string
 	MetricsExport         bool
+	GpuMetricsExport      bool
 	MetricsExportInterval int // in seconds
 
 	ReqBufferSize  int
