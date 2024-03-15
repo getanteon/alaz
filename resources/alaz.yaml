@@ -61,7 +61,7 @@ spec:
         - name: METRICS_ENABLED
           value: "true"
         - name: DIST_TRACING_ENABLED
-          value: "true"
+          value: "false"
         - name: BACKEND_HOST
           value: https://api-alaz.ddosify.com:443
         - name: LOG_LEVEL
