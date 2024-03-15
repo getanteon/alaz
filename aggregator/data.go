@@ -463,7 +463,7 @@ func (a *Aggregator) processExec(d *proc.ProcEvent) {
 	// if first assigned mutex is locked and another exec event comes, mutex will be changed
 	// and unlock of unlocked mutex now is a possibility
 	// to avoid this case, if a socket map already has a mutex, don't change it
-	if a.clusterInfo.SocketMaps[d.Pid] == nil {
+	if a.clusterInfo.SocketMaps[d.Pid].mu == nil {
 		a.clusterInfo.SocketMaps[d.Pid].mu = a.muArray[(a.muIndex.Load())%uint64(len(a.muArray))]
 	}
 }
