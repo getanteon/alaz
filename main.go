@@ -58,6 +58,12 @@ func main() {
 	metricsEnabled, _ := strconv.ParseBool(os.Getenv("METRICS_ENABLED"))
 	distTracingEnabled, _ := strconv.ParseBool(os.Getenv("DIST_TRACING_ENABLED"))
 
+	if metricsEnabled {
+		if k8sCollector != nil {
+			k8sCollector.ExportContainerMetrics()
+		}
+	}
+
 	// datastore backend
 	dsBackend := datastore.NewBackendDS(ctx, config.BackendDSConfig{
 		Host:                  os.Getenv("BACKEND_HOST"),

@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
@@ -49,6 +50,7 @@ type K8sCollector struct {
 	ctx              context.Context
 	informersFactory informers.SharedInformerFactory
 	watchers         map[K8SResourceType]cache.SharedIndexInformer
+	clientset        *kubernetes.Clientset
 	stopper          chan struct{} // stop signal for the informers
 	doneChan         chan struct{} // done signal for k8sCollector
 	// watchers
@@ -62,6 +64,14 @@ type K8sCollector struct {
 	Events chan interface{}
 }
 
+var nodeName string
+
+func init() {
+	nodeName = os.Getenv("NODE_NAME")
+	if nodeName == "" {
+		log.Logger.Fatal().Msg("NODE_NAME is not set")
+	}
+}
 func (k *K8sCollector) Init(events chan interface{}) error {
 	log.Logger.Info().Msg("k8sCollector initializing...")
 	k.Events = events
@@ -148,6 +158,8 @@ func (k *K8sCollector) Done() <-chan struct{} {
 	return k.doneChan
 }
 
+var innerContainerMetricsPort int = 8184
+
 func NewK8sCollector(parentCtx context.Context) (*K8sCollector, error) {
 	ctx, _ := context.WithCancel(parentCtx)
 	// get incluster kubeconfig
@@ -196,6 +208,7 @@ func NewK8sCollector(parentCtx context.Context) (*K8sCollector, error) {
 		stopper:          make(chan struct{}),
 		doneChan:         make(chan struct{}),
 		informersFactory: factory,
+		clientset:        clientset,
 		watchers:         map[K8SResourceType]cache.SharedIndexInformer{},
 	}
 
@@ -205,6 +218,48 @@ func NewK8sCollector(parentCtx context.Context) (*K8sCollector, error) {
 	}(collector)
 
 	return collector, nil
+}
+
+func (k *K8sCollector) ExportContainerMetrics() error {
+	metricsPath := "/inner/container-metrics"
+	http.Handle(metricsPath, k)
+	go func() {
+		err := http.ListenAndServe(fmt.Sprintf(":%d", innerContainerMetricsPort), nil)
+		if err != nil {
+			log.Logger.Error().Err(err).Msg("failed to start inner container metrics server")
+		}
+	}()
+	// TODO: check health
+	return nil
+}
+
+func (k *K8sCollector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	log.Logger.Debug().Msg("serving inner container metrics")
+	// forward request to cadvisor
+	// curl https://kubernetes.default.svc/api/v1/nodes/ip-192-168-68-164.eu-central-1.compute.internal/proxy/metrics/cadvisor --header "
+
+	path := fmt.Sprintf("/api/v1/nodes/%s/proxy/metrics/cadvisor", nodeName)
+	metrics, err := k.clientset.CoreV1().RESTClient().Get().AbsPath(path).Param("format", "text").DoRaw(r.Context())
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(w, "error getting kubelet cadvisor metrics request: %v", err)
+		return
+	}
+
+	if len(metrics) == 0 {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(w, "empty response from cadvisor")
+		return
+	}
+
+	n, err := w.Write(metrics)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Logger.Error().Err(err).Msg("error forwarding container metrics")
+	} else if n == 0 {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Logger.Error().Msg("could not write any bytes to response")
+	}
 }
 
 func (k *K8sCollector) GetK8sVersion() string {
