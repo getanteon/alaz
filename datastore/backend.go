@@ -44,6 +44,10 @@ var tag string
 var kernelVersion string
 var cloudProvider CloudProvider
 
+var resourceBatchSize int64 = 1000 // maximum batch size for resources, it must be bigger or at least equal to chan sizes in order to avoid blocking
+var innerMetricsPort int = 8182
+var innerGpuMetricsPort int = 8183
+
 func init() {
 
 	TestMode := os.Getenv("TEST_MODE")
@@ -128,10 +132,6 @@ func getCloudProvider() CloudProvider {
 	return CloudProviderUnknown
 }
 
-var resourceBatchSize int64 = 50
-var innerMetricsPort int = 8182
-var innerGpuMetricsPort int = 8183
-
 // BackendDS is a backend datastore
 type BackendDS struct {
 	ctx       context.Context
@@ -206,7 +206,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 	retryClient.Backoff = retryablehttp.DefaultBackoff
 	retryClient.RetryWaitMin = 1 * time.Second
 	retryClient.RetryWaitMax = 5 * time.Second
-	retryClient.RetryMax = 4
+	retryClient.RetryMax = 2
 
 	retryClient.CheckRetry = func(ctx context.Context, resp *http.Response, err error) (bool, error) {
 		var shouldRetry bool
@@ -278,6 +278,8 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 		bs = defaultBatchSize
 	}
 
+	resourceChanSize := 200
+
 	ds := &BackendDS{
 		ctx:                ctx,
 		host:               conf.Host,
@@ -288,13 +290,13 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 		traceInfoPool:      newTraceInfoPool(func() *TraceInfo { return &TraceInfo{} }, func(r *TraceInfo) {}),
 		reqChanBuffer:      make(chan *ReqInfo, conf.ReqBufferSize),
 		connChanBuffer:     make(chan *ConnInfo, conf.ConnBufferSize),
-		podEventChan:       make(chan interface{}, 100),
-		svcEventChan:       make(chan interface{}, 100),
-		rsEventChan:        make(chan interface{}, 100),
-		depEventChan:       make(chan interface{}, 50),
-		epEventChan:        make(chan interface{}, 100),
-		containerEventChan: make(chan interface{}, 100),
-		dsEventChan:        make(chan interface{}, 20),
+		podEventChan:       make(chan interface{}, 5*resourceChanSize),
+		svcEventChan:       make(chan interface{}, 2*resourceChanSize),
+		rsEventChan:        make(chan interface{}, 2*resourceChanSize),
+		depEventChan:       make(chan interface{}, 2*resourceChanSize),
+		epEventChan:        make(chan interface{}, resourceChanSize),
+		containerEventChan: make(chan interface{}, 5*resourceChanSize),
+		dsEventChan:        make(chan interface{}, resourceChanSize),
 		traceEventQueue:    list.New(),
 	}
 
@@ -302,7 +304,13 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 	go ds.sendConnsInBatch(bs)
 	go ds.sendTraceEventsInBatch(10 * bs)
 
-	eventsInterval := 10 * time.Second
+	// events are resynced every 60 seconds on k8s informers
+	// resourceBatchSize ~ burst size, if more than resourceBatchSize events are sent in a moment, blocking can occur
+	// resync period / event interval = 60 / 5 = 12
+	// 12 * resourceBatchSize = 12 * 1000 = 12000
+	// it can send upto 12k events in 60 seconds
+	// seems safe enough, if not, we can increase the buffer size
+	eventsInterval := 5 * time.Second
 	go ds.sendEventsInBatch(ds.podEventChan, podEndpoint, eventsInterval)
 	go ds.sendEventsInBatch(ds.svcEventChan, svcEndpoint, eventsInterval)
 	go ds.sendEventsInBatch(ds.rsEventChan, rsEndpoint, eventsInterval)
@@ -641,7 +649,7 @@ func (b *BackendDS) send(ch <-chan interface{}, endpoint string) {
 		select {
 		case ev := <-ch:
 			batch = append(batch, ev)
-		case <-time.After(1 * time.Second):
+		case <-time.After(100 * time.Millisecond):
 			loop = false
 		}
 	}

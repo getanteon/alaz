@@ -43,7 +43,7 @@ const (
 )
 
 var k8sVersion string
-var resynPeriod time.Duration = 60 * time.Second
+var resyncPeriod time.Duration = 120 * time.Second
 
 type K8sCollector struct {
 	ctx              context.Context
@@ -189,7 +189,7 @@ func NewK8sCollector(parentCtx context.Context) (*K8sCollector, error) {
 
 	k8sVersion = version.String()
 
-	factory := informers.NewSharedInformerFactory(clientset, resynPeriod)
+	factory := informers.NewSharedInformerFactory(clientset, resyncPeriod)
 
 	collector := &K8sCollector{
 		ctx:              ctx,
