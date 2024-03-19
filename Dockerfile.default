@@ -1,10 +1,12 @@
 FROM golang:1.20.14-bullseye as builder
 WORKDIR /app
 COPY . ./
-RUN apt update 
+RUN go mod download
+
+ENV GOCACHE=/root/.cache/go-build
 
 ARG VERSION
-RUN GOOS=linux go build -ldflags="-X 'github.com/ddosify/alaz/datastore.tag=$VERSION'" -o alaz
+RUN --mount=type=cache,target="/root/.cache/go-build" GOOS=linux go build -ldflags="-X 'github.com/ddosify/alaz/datastore.tag=$VERSION'" -o alaz
 
 FROM debian:12.5-slim
 RUN apt-get update && apt-get install -y procps ca-certificates && rm -rf /var/lib/apt/lists/*
