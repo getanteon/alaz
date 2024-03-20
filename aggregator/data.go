@@ -1332,7 +1332,7 @@ func (a *Aggregator) parseSqlCommand(d *l7_req.L7Event) (string, error) {
 			a.pgStmtsMu.RLock()
 			query, ok := a.pgStmts[a.getPgStmtKey(d.Pid, d.Fd, stmtName)]
 			a.pgStmtsMu.RUnlock()
-			if !ok { // we don't have the query for the prepared statement
+			if !ok || query == "" { // we don't have the query for the prepared statement
 				// Execute (name of prepared statement) [(parameter)]
 				return fmt.Sprintf("EXECUTE %s *values*", stmtName), nil
 			}
