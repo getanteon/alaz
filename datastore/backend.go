@@ -326,15 +326,18 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig, kubeCo
 
 	// send node-exporter and nvidia-gpu metrics
 	go func() {
-		if !(conf.MetricsExport || conf.GpuMetricsExport) {
+		if !(conf.NodeMetricsExport || conf.GpuMetricsExport) {
 			return
 		}
 
 		var nodeMetrics, gpuMetrics, containerMetrics bool
-		if conf.MetricsExport {
+		if conf.NodeMetricsExport {
 			go ds.exportNodeMetrics()
-			nodeMetrics = true      // by default
-			containerMetrics = true // by default
+			nodeMetrics = true
+		}
+
+		if conf.ContainerMetricsExport {
+			containerMetrics = true
 		}
 
 		if conf.GpuMetricsExport {
@@ -886,6 +889,9 @@ func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool, dist bool, k8sVersi
 }
 
 func (b *BackendDS) scrapeContainerMetrics() (io.Reader, error) {
+	if b.kubeCollector == nil {
+		return nil, fmt.Errorf("kubeCollector is nil")
+	}
 	reader, err := b.kubeCollector.GetContainerMetrics(b.ctx)
 	if err != nil {
 		return nil, fmt.Errorf("error getting container metrics: %v", err)
