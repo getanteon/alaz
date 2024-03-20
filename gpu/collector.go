@@ -436,6 +436,18 @@ func (g *GpuCollector) Collect(ch chan<- prometheus.Metric) {
 		} else {
 			log.Logger.Warn().Str("ctx", "gpu").Msgf("device fan count is nil for device index %d", i)
 		}
+
+		// get processes running on the gpu
+		processes := g.n.getRunningProcesses(i)
+		if processes == nil || len(processes) == 0 {
+			continue
+		}
+
+		for _, p := range processes {
+			// send process metrics
+			log.Logger.Info().Str("ctx", "gpu-process").Uint32("pid", p.Pid).Uint64("UsedGpuMemory", p.UsedGpuMemory).
+				Uint32("GpuInstanceId", p.GpuInstanceId).Uint32("ComputeInstanceId", p.ComputeInstanceId).Msg("running process on gpu")
+		}
 	}
 }
 
