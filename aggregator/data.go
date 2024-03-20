@@ -1012,7 +1012,7 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 	if skInfo == nil {
 		log.Logger.Debug().Uint32("pid", d.Pid).
 			Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
-			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:])).Msg("socket not found")
+			Str("protocol", d.Protocol).Uint32("payloadSize", d.PayloadSize).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("socket not found")
 		return
 	}
 

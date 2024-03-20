@@ -19,6 +19,7 @@ import (
 	"github.com/ddosify/alaz/config"
 	"github.com/ddosify/alaz/ebpf/l7_req"
 	"github.com/ddosify/alaz/gpu"
+	"github.com/ddosify/alaz/k8s"
 	"github.com/ddosify/alaz/log"
 
 	"github.com/alecthomas/kingpin/v2"
@@ -159,6 +160,8 @@ type BackendDS struct {
 	containerEventChan chan interface{} // *ContainerEvent
 	dsEventChan        chan interface{} // *DaemonSetEvent
 
+	kubeCollector *k8s.K8sCollector
+
 	// TODO add:
 	// statefulset
 	// job
@@ -198,7 +201,7 @@ func (ll LeveledLogger) Warn(msg string, keysAndValues ...interface{}) {
 	ll.l.Warn().Fields(keysAndValues).Msg(msg)
 }
 
-func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *BackendDS {
+func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig, kubeCollector *k8s.K8sCollector) *BackendDS {
 	ctx, _ := context.WithCancel(parentCtx)
 	rand.Seed(time.Now().UnixNano())
 
@@ -299,6 +302,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 		containerEventChan: make(chan interface{}, 5*resourceChanSize),
 		dsEventChan:        make(chan interface{}, resourceChanSize),
 		traceEventQueue:    list.New(),
+		kubeCollector:      kubeCollector,
 	}
 
 	go ds.sendReqsInBatch(bs)
@@ -882,32 +886,38 @@ func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool, dist bool, k8sVersi
 }
 
 func (b *BackendDS) scrapeContainerMetrics() (io.Reader, error) {
-	// get container metrics from cAdvisor
-	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://localhost:%d/inner/container-metrics", innerContainerMetricsPort), nil)
+	reader, err := b.kubeCollector.GetContainerMetrics(b.ctx)
 	if err != nil {
-		return nil, fmt.Errorf("error creating inner container metrics request: %v", err)
+		return nil, fmt.Errorf("error getting container metrics: %v", err)
 	}
+	return reader, nil
 
-	ctx, cancel := context.WithTimeout(b.ctx, 5*time.Second)
-	// defer cancel()
-	// do not defer cancel here, since we return the reader to the caller on success
-	// if deferred, there will be a race condition between the caller and the defer
+	// // get container metrics from cAdvisor
+	// req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://localhost:%d/inner/container-metrics", innerContainerMetricsPort), nil)
+	// if err != nil {
+	// 	return nil, fmt.Errorf("error creating inner container metrics request: %v", err)
+	// }
 
-	// use the default client, ds client reads response on success to look for failed events,
-	// therefore body here will be empty
-	resp, err := http.DefaultClient.Do(req.WithContext(ctx))
+	// ctx, cancel := context.WithTimeout(b.ctx, 60*time.Second)
+	// // defer cancel()
+	// // do not defer cancel here, since we return the reader to the caller on success
+	// // if deferred, there will be a race condition between the caller and the defer
 
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("error sending inner container metrics request: %v", err)
-	}
+	// // use the default client, ds client reads response on success to look for failed events,
+	// // therefore body here will be empty
+	// resp, err := http.DefaultClient.Do(req.WithContext(ctx))
 
-	if resp.StatusCode != http.StatusOK {
-		cancel()
-		return nil, fmt.Errorf("inner container metrics request not success: %d", resp.StatusCode)
-	}
+	// if err != nil {
+	// 	cancel()
+	// 	return nil, fmt.Errorf("error sending inner container metrics request: %v", err)
+	// }
 
-	return resp.Body, nil
+	// if resp.StatusCode != http.StatusOK {
+	// 	cancel()
+	// 	return nil, fmt.Errorf("inner container metrics request not success: %d", resp.StatusCode)
+	// }
+
+	// return resp.Body, nil
 }
 
 func (b *BackendDS) scrapeNodeMetrics() (io.Reader, error) {

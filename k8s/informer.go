@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -231,6 +232,23 @@ func (k *K8sCollector) ExportContainerMetrics() error {
 	}()
 	// TODO: check health
 	return nil
+}
+
+// get container metrics from kubelet cadvisor in prometheus format
+// return a reader for backend to stream metrics directly
+func (k *K8sCollector) GetContainerMetrics(ctx context.Context) (io.Reader, error) {
+	log.Logger.Debug().Msg("serving inner container metrics")
+	// forward request to cadvisor
+	// curl https://kubernetes.default.svc/api/v1/nodes/ip-192-168-68-164.eu-central-1.compute.internal/proxy/metrics/cadvisor --header "
+
+	path := fmt.Sprintf("/api/v1/nodes/%s/proxy/metrics/cadvisor", nodeName)
+	metrics, err := k.clientset.CoreV1().RESTClient().Get().AbsPath(path).Param("format", "text").Stream(ctx)
+
+	if err != nil {
+		return nil, fmt.Errorf("error getting kubelet cadvisor metrics request: %w", err)
+	}
+
+	return metrics, nil
 }
 
 func (k *K8sCollector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
