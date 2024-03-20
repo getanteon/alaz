@@ -36,7 +36,13 @@ func main() {
 	var k8sCollector *k8s.K8sCollector
 	kubeEvents := make(chan interface{}, 1000)
 	var k8sVersion string
-	if os.Getenv("K8S_COLLECTOR_ENABLED") != "false" {
+	var k8sCollectorEnabled = true
+	// enabled, err := strconv.ParseBool(os.Getenv("K8S_COLLECTOR_ENABLED"))
+	// if err != nil {
+	// 	k8sCollectorEnabled = enabled
+	// }
+
+	if k8sCollectorEnabled {
 		// k8s collector
 		var err error
 		k8sCollector, err = k8s.NewK8sCollector(ctx)
@@ -59,9 +65,7 @@ func main() {
 	distTracingEnabled, _ := strconv.ParseBool(os.Getenv("DIST_TRACING_ENABLED"))
 
 	if metricsEnabled {
-		if k8sCollector != nil {
-			k8sCollector.ExportContainerMetrics()
-		}
+		k8sCollector.ExportContainerMetrics()
 	}
 
 	// datastore backend
@@ -72,7 +76,7 @@ func main() {
 		MetricsExportInterval: 10,
 		ReqBufferSize:         40000, // TODO: get from a conf file
 		ConnBufferSize:        1000,  // TODO: get from a conf file
-	})
+	}, k8sCollector)
 	go dsBackend.SendHealthCheck(ebpfEnabled, metricsEnabled, distTracingEnabled, k8sVersion)
 
 	// deploy ebpf programs
