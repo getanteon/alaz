@@ -78,7 +78,7 @@ spec:
         - --no-collector.hwmon
         - --collector.filesystem.ignored-mount-points=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/pods/.+)($|/)
         - --collector.netclass.ignored-devices=^(veth.*)$
-        image: ddosify/alaz:v0.7.1
+        image: ddosify/alaz:v0.7.2
         imagePullPolicy: IfNotPresent
         name: alaz-pod
         ports:
