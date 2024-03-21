@@ -23,9 +23,10 @@ var defaultRuntimeEndpoints = []string{"unix:///proc/1/root/run/containerd/conta
 	"unix:///proc/1/root/run/cri-dockerd.sock", "unix:///proc/1/root/var/run/cri-dockerd.sock"}
 
 type ContainerPodInfo struct {
-	PodUid  string
-	PodName string
-	PodNs   string
+	PodUid        string
+	PodName       string
+	PodNs         string
+	ContainerName string
 }
 
 type CRITool struct {
@@ -96,10 +97,11 @@ func (ct *CRITool) GetLogPath(id string) (string, error) {
 }
 
 type ContainerInfo struct {
-	PodID        string
-	ContainerID  string
-	PodName      string
-	PodNamespace string
+	ContainerID   string
+	ContainerName string
+	PodID         string
+	PodName       string
+	PodNamespace  string
 }
 
 func (ct *CRITool) GetContainerInfoWithPid(pid uint32) (*ContainerInfo, error) {
@@ -119,13 +121,17 @@ func (ct *CRITool) GetContainerInfoWithPid(pid uint32) (*ContainerInfo, error) {
 	}
 
 	var containerID, podID string
-	line := string(bytes)
+	// trim newline
+	line := string(bytes[:len(bytes)-1])
 
-	if !strings.HasPrefix(line, "/sys/fs/cgroup/system.slice") {
+	// 0::/system.slice/kubepods-besteffort-pod511a4124_d284_4787_9678_ef15acfa5783.slice:cri-containerd:8cd2ad2d1d5f5b3a95de3e78fdabb667d17214e0dd2427ac033162159793db46\n
+	log.Logger.Info().Str("line", line).Msg("GetContainerInfoWithPid")
+
+	if !strings.HasPrefix(line, "0::/system.slice/") {
 		return nil, fmt.Errorf("not a container cgroup")
 	}
 
-	line = strings.TrimPrefix(line, "/sys/fs/cgroup/system.slice/")
+	line = strings.TrimPrefix(line, "0::/system.slice/")
 
 	fields := strings.Split(line, ":")
 
@@ -155,20 +161,21 @@ func (ct *CRITool) GetContainerInfoWithPid(pid uint32) (*ContainerInfo, error) {
 
 	containerID = fields[len(fields)-1]
 
-	info, err := ct.containerStatus(containerID)
+	info, err := ct.ContainerStatus(containerID)
 	if err != nil {
 		return nil, fmt.Errorf("could not get container info with id %s", containerID)
 	}
 
 	return &ContainerInfo{
-		PodID:        podID,
-		ContainerID:  containerID,
-		PodName:      info.PodName,
-		PodNamespace: info.PodNs,
+		PodID:         podID,
+		ContainerID:   containerID,
+		PodName:       info.PodName,
+		PodNamespace:  info.PodNs,
+		ContainerName: info.ContainerName,
 	}, nil
 }
 
-func (ct *CRITool) containerStatus(id string) (*ContainerPodInfo, error) {
+func (ct *CRITool) ContainerStatus(id string) (*ContainerPodInfo, error) {
 	if id == "" {
 		return nil, fmt.Errorf("ID cannot be empty")
 	}
@@ -179,6 +186,8 @@ func (ct *CRITool) containerStatus(id string) (*ContainerPodInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	containerName := r.Status.Metadata.Name
 
 	info := map[string]interface{}{}
 	json.Unmarshal([]byte(r.Info["info"]), &info)
@@ -195,9 +204,10 @@ func (ct *CRITool) containerStatus(id string) (*ContainerPodInfo, error) {
 	podNamespace := podRes.Status.Metadata.Namespace
 
 	return &ContainerPodInfo{
-		PodUid:  podUid,
-		PodName: podName,
-		PodNs:   podNamespace,
+		PodUid:        podUid,
+		PodName:       podName,
+		PodNs:         podNamespace,
+		ContainerName: containerName,
 	}, nil
 }
 

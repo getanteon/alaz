@@ -173,6 +173,10 @@ func NewGpuCollector(ct *cri.CRITool) (*GpuCollector, error) {
 				desc:  prometheus.NewDesc(prometheus.BuildFQName("alaz_nvml", "", "fan_speed"), "fan_speed_desc", []string{"uuid", "fan_id"}, nil),
 				type_: prometheus.GaugeValue,
 			},
+			"container_used_gpu_memory": {
+				desc:  prometheus.NewDesc(prometheus.BuildFQName("alaz_nvml", "", "container_used_gpu_memory"), "container_used_gpu_memory_desc", []string{"uuid", "proc_type", "pod_uid", "pod_name", "namespace", "container_id", "container_name", "gpu_instance_id", "compute_instance_id"}, nil),
+				type_: prometheus.GaugeValue,
+			},
 		},
 		gpuDriverDesc: prometheus.NewDesc(
 			prometheus.BuildFQName("alaz_nvml", "", "gpu_driver"),
@@ -441,32 +445,69 @@ func (g *GpuCollector) Collect(ch chan<- prometheus.Metric) {
 		}
 
 		// get processes running on the gpu
-		processes := g.n.getRunningProcesses(i)
-		if processes == nil || len(processes) == 0 {
-			continue
-		}
+		computeProcs, graphicProcs := g.n.getRunningProcesses(i)
 
-		for _, p := range processes {
+		if !(computeProcs == nil || len(computeProcs) == 0) {
+			for _, p := range computeProcs {
+				var info *cri.ContainerInfo
+				if g.ct != nil {
+					// get container name from pid
+					info, err = g.ct.GetContainerInfoWithPid(p.Pid)
+					if err != nil {
+						log.Logger.Error().Str("ctx", "gpu-process").Err(err).Uint32("pid", p.Pid).Msg("failed to get container and pod id from pid")
+					} else {
+						// send process metrics
+						log.Logger.Debug().Str("ctx", "gpu-process").Uint32("pid", p.Pid).
+							Uint64("UsedGpuMemory", p.UsedGpuMemory).
+							Str("podName", info.PodName).
+							Str("podNs", info.PodNamespace).
+							Uint32("GpuInstanceId", p.GpuInstanceId).Uint32("ComputeInstanceId", p.ComputeInstanceId).Msg("running compute procs on gpu")
 
-			var info *cri.ContainerInfo
-			if g.ct != nil {
-				// get container name from pid
-				info, err = g.ct.GetContainerInfoWithPid(p.Pid)
-				if err != nil {
-					log.Logger.Error().Str("ctx", "gpu-process").Err(err).Uint32("pid", p.Pid).Msg("failed to get container and pod id from pid")
+						usedGpuMemoryF, err := strconv.ParseFloat(fmt.Sprintf("%d", p.UsedGpuMemory), 64)
+						if err != nil {
+							log.Logger.Error().Str("ctx", "gpu-process").Err(err).Uint32("pid", p.Pid).Msg("failed to parse used gpu memory")
+						} else {
+							ch <- prometheus.MustNewConstMetric(g.fieldDesc["container_used_gpu_memory"].desc, g.fieldDesc["container_used_gpu_memory"].type_, usedGpuMemoryF,
+								devInfo.UUID, "compute", info.PodID, info.PodName, info.PodNamespace, info.ContainerID, info.ContainerName, fmt.Sprintf("%d", p.GpuInstanceId), fmt.Sprintf("%d", p.ComputeInstanceId))
+						}
+					}
 				} else {
-					// send process metrics
-					log.Logger.Info().Str("ctx", "gpu-process").Uint32("pid", p.Pid).
-						Uint64("UsedGpuMemory", p.UsedGpuMemory).
-						Str("podName", info.PodName).
-						Str("podNs", info.PodNamespace).
-						Uint32("GpuInstanceId", p.GpuInstanceId).Uint32("ComputeInstanceId", p.ComputeInstanceId).Msg("running process on gpu")
+					log.Logger.Warn().Str("ctx", "gpu-process").Uint32("pid", p.Pid).Msg("container runtime not available, skipping container and pod info for running gpu processes")
 				}
-			} else {
-				log.Logger.Warn().Str("ctx", "gpu-process").Uint32("pid", p.Pid).Msg("container runtime not available, skipping container and pod info for running gpu processes")
-			}
 
+			}
 		}
+
+		if !(graphicProcs == nil || len(graphicProcs) == 0) {
+			for _, p := range graphicProcs {
+				var info *cri.ContainerInfo
+				if g.ct != nil {
+					// get container name from pid
+					info, err = g.ct.GetContainerInfoWithPid(p.Pid)
+					if err != nil {
+						log.Logger.Error().Str("ctx", "gpu-process").Err(err).Uint32("pid", p.Pid).Msg("failed to get container and pod id from pid")
+					} else {
+						// send process metrics
+						log.Logger.Debug().Str("ctx", "gpu-process").Uint32("pid", p.Pid).
+							Uint64("UsedGpuMemory", p.UsedGpuMemory).
+							Str("podName", info.PodName).
+							Str("podNs", info.PodNamespace).
+							Uint32("GpuInstanceId", p.GpuInstanceId).Uint32("ComputeInstanceId", p.ComputeInstanceId).Msg("running graphics procs on gpu")
+
+						usedGpuMemoryF, err := strconv.ParseFloat(fmt.Sprintf("%d", p.UsedGpuMemory), 64)
+						if err != nil {
+							log.Logger.Error().Str("ctx", "gpu-process").Err(err).Uint32("pid", p.Pid).Msg("failed to parse used gpu memory")
+						} else {
+							ch <- prometheus.MustNewConstMetric(g.fieldDesc["container_used_gpu_memory"].desc, g.fieldDesc["container_used_gpu_memory"].type_, usedGpuMemoryF,
+								devInfo.UUID, "graphics", info.PodID, info.PodName, info.PodNamespace, info.ContainerID, info.ContainerName, fmt.Sprintf("%d", p.GpuInstanceId), fmt.Sprintf("%d", p.ComputeInstanceId))
+						}
+					}
+				} else {
+					log.Logger.Warn().Str("ctx", "gpu-process").Uint32("pid", p.Pid).Msg("container runtime not available, skipping container and pod info for running gpu processes")
+				}
+			}
+		}
+
 	}
 }
 

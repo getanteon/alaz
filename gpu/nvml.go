@@ -410,30 +410,26 @@ func (n *nvmlDriver) DeviceInfoByIndex(index uint) (*DeviceInfo, error) {
 	}, nil
 }
 
-func (n *nvmlDriver) getRunningProcesses(index uint) []nvml.ProcessInfo {
+func (n *nvmlDriver) getRunningProcesses(index uint) (computeProcs, graphicsProcs []nvml.ProcessInfo) {
 	device, code := nvml.DeviceGetHandleByIndex(int(index))
 	if code != nvml.SUCCESS {
 		log.Logger.Error().Str("ctx", "gpu").Str("binding", "nvml.DeviceGetHandleByIndex").Msgf("failed to get device handle : %s", nvml.ErrorString(code))
-		return nil
+		return
 	}
-
-	var result []nvml.ProcessInfo
 
 	// https://docs.nvidia.com/deploy/nvml-api/group__nvmlDeviceQueries.html#group__nvmlDeviceQueries_1g34afcba3d32066db223265aa022a6b80
 	// Get information about processes with a compute context on a device
 	// For Fermi or newer fully supported devices.
 	// This function returns information only about compute running processes (e.g. CUDA application which have active context).
 	// Any graphics applications (e.g. using OpenGL, DirectX) won't be listed by this function.
-	pInfos, code := device.GetComputeRunningProcesses()
+	computeProcs, code = device.GetComputeRunningProcesses()
 	if code != nvml.SUCCESS {
 		log.Logger.Error().Str("ctx", "gpu").Str("binding", "nvml.GetComputeRunningProcesses").Msgf("failed to get running processes : %s", nvml.ErrorString(code))
 	} else {
-		result = append(result, pInfos...)
+		log.Logger.Debug().Str("ctx", "gpu").Msgf("GetComputeRunningProcesses success")
 
-		log.Logger.Info().Str("ctx", "gpu").Msgf("GetComputeRunningProcesses success")
-
-		for _, pInfo := range pInfos {
-			log.Logger.Info().Str("ctx", "gpu").Msgf("running compute process: %v", pInfo)
+		for _, pInfo := range computeProcs {
+			log.Logger.Debug().Str("ctx", "gpu").Msgf("running compute process: %v", pInfo)
 		}
 	}
 
@@ -441,20 +437,18 @@ func (n *nvmlDriver) getRunningProcesses(index uint) []nvml.ProcessInfo {
 	// Get information about processes with a graphics context on a device
 	// For Kepler or newer fully supported devices.
 	// This function returns information only about graphics based processes (eg. applications using OpenGL, DirectX)
-	pInfos, code = device.GetGraphicsRunningProcesses()
+	graphicsProcs, code = device.GetGraphicsRunningProcesses()
 	if code != nvml.SUCCESS {
 		log.Logger.Error().Str("ctx", "gpu").Str("binding", "nvml.GetGraphicsRunningProcesses").Msgf("failed to get running processes : %s", nvml.ErrorString(code))
 	} else {
-		result = append(result, pInfos...)
+		log.Logger.Debug().Str("ctx", "gpu").Msgf("GetGraphicsRunningProcesses success")
 
-		log.Logger.Info().Str("ctx", "gpu").Msgf("GetGraphicsRunningProcesses success")
-
-		for _, pInfo := range pInfos {
-			log.Logger.Info().Str("ctx", "gpu").Msgf("running graphics process: %v", pInfo)
+		for _, pInfo := range graphicsProcs {
+			log.Logger.Debug().Str("ctx", "gpu").Msgf("running graphics process: %v", pInfo)
 		}
 	}
 
-	return result
+	return
 }
 
 func (n *nvmlDriver) printAllDeviceData() {
