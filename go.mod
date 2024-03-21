@@ -6,6 +6,7 @@ require (
 	github.com/alecthomas/kingpin/v2 v2.3.2
 	github.com/cilium/ebpf v0.10.1-0.20230626090016-654491c8a500
 	github.com/cilium/fake v0.6.1
+	github.com/fsnotify/fsnotify v1.7.0
 	github.com/go-kit/log v0.2.1
 	github.com/golang/protobuf v1.5.3
 	github.com/hashicorp/go-retryablehttp v0.7.4
@@ -29,7 +30,6 @@ require (
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
 	github.com/felixge/httpsnoop v1.0.3 // indirect
-	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/gnostic-models v0.6.8 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.16.0 // indirect
@@ -68,7 +68,7 @@ require (
 	github.com/go-openapi/jsonreference v0.20.2 // indirect
 	github.com/go-openapi/swag v0.22.4 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
-	github.com/gogo/protobuf v1.3.2 // indirect
+	github.com/gogo/protobuf v1.3.2
 	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
 	github.com/google/uuid v1.3.0 // indirect
