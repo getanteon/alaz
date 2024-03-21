@@ -1,3 +1,4 @@
+//go:build ignore
 #define INGRESS 0
 #define EGRESS 1
 

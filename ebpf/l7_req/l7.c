@@ -1,3 +1,4 @@
+//go:build ignore
 #include "../headers/bpf.h"
 #include "../headers/common.h"
 #include "../headers/l7_req.h"

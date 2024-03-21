@@ -72,6 +72,7 @@ func main() {
 	dsBackend := datastore.NewBackendDS(ctx, config.BackendDSConfig{
 		Host:                  os.Getenv("BACKEND_HOST"),
 		MetricsExport:         metricsEnabled,
+		GpuMetricsExport:      metricsEnabled,
 		MetricsExportInterval: 10,
 		ReqBufferSize:         40000, // TODO: get from a conf file
 		ConnBufferSize:        1000,  // TODO: get from a conf file
