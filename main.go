@@ -13,6 +13,7 @@ import (
 	"github.com/ddosify/alaz/datastore"
 	"github.com/ddosify/alaz/ebpf"
 	"github.com/ddosify/alaz/k8s"
+	"github.com/ddosify/alaz/logstreamer"
 
 	"context"
 
@@ -90,18 +91,23 @@ func main() {
 	}
 
 	var ct *cri.CRITool
+
 	if logsEnabled {
 		ct, err = cri.NewCRITool(ctx)
 		if err != nil {
 			log.Logger.Error().Err(err).Msg("failed to create cri tool")
-		} else {
-			go func() {
-				err := ct.StreamLogs()
-				if err != nil {
-					log.Logger.Error().Err(err).Msg("failed to stream logs")
-				}
-			}()
 		}
+	}
+
+	var ls *logstreamer.LogStreamer
+	if logsEnabled && ct != nil {
+		ls = logstreamer.NewLogStreamer(ctx, ct)
+		go func() {
+			err := ls.StreamLogs()
+			if err != nil {
+				log.Logger.Error().Err(err).Msg("failed to stream logs")
+			}
+		}()
 	}
 
 	go http.ListenAndServe(":8181", nil)
@@ -116,8 +122,8 @@ func main() {
 		log.Logger.Info().Msg("ebpfCollector done")
 	}
 
-	if logsEnabled {
-		<-ct.Done()
+	if logsEnabled && ls != nil {
+		<-ls.Done()
 		log.Logger.Info().Msg("cri done")
 	}
 

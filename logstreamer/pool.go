@@ -1,4 +1,4 @@
-package cri
+package logstreamer
 
 import (
 	"errors"
