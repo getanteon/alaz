@@ -102,13 +102,17 @@ func main() {
 
 	var ls *logstreamer.LogStreamer
 	if logsEnabled && ct != nil {
-		ls = logstreamer.NewLogStreamer(ctx, ct)
-		go func() {
-			err := ls.StreamLogs()
-			if err != nil {
-				log.Logger.Error().Err(err).Msg("failed to stream logs")
-			}
-		}()
+		ls, err = logstreamer.NewLogStreamer(ctx, ct)
+		if err != nil {
+			log.Logger.Error().Err(err).Msg("failed to create logstreamer")
+		} else {
+			go func() {
+				err := ls.StreamLogs()
+				if err != nil {
+					log.Logger.Error().Err(err).Msg("failed to stream logs")
+				}
+			}()
+		}
 	}
 
 	go http.ListenAndServe(":8181", nil)

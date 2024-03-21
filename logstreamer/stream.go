@@ -38,7 +38,7 @@ type fileReader struct {
 	*bufio.Reader
 }
 
-func NewLogStreamer(ctx context.Context, critool *cri.CRITool) *LogStreamer {
+func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, error) {
 	ls := &LogStreamer{
 		critool: critool,
 	}
@@ -58,12 +58,14 @@ func NewLogStreamer(ctx context.Context, critool *cri.CRITool) *LogStreamer {
 	ls.connPool = connPool
 
 	if err != nil {
-		log.Logger.Fatal().Err(err).Msg("failed to create connection pool")
+		log.Logger.Error().Err(err).Msg("failed to create connection pool")
+		return nil, err
 	}
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		log.Logger.Fatal().Err(err).Msg("failed to create fsnotify watcher")
+		log.Logger.Error().Err(err).Msg("failed to create fsnotify watcher")
+		return nil, err
 	}
 	ls.watcher = watcher
 
@@ -79,7 +81,7 @@ func NewLogStreamer(ctx context.Context, critool *cri.CRITool) *LogStreamer {
 	ls.logPathToContainerMeta = make(map[string]string, 0)
 	ls.containerIdToLogPath = make(map[string]string, 0)
 
-	return ls
+	return ls, nil
 }
 
 func (ls *LogStreamer) Done() chan struct{} {
