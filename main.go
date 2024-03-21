@@ -13,6 +13,7 @@ import (
 	"github.com/ddosify/alaz/datastore"
 	"github.com/ddosify/alaz/ebpf"
 	"github.com/ddosify/alaz/k8s"
+	"github.com/ddosify/alaz/logstreamer"
 
 	"context"
 
@@ -107,16 +108,22 @@ func main() {
 		go ec.ListenEvents()
 	}
 
+	var ls *logstreamer.LogStreamer
 	if logsEnabled {
-		if ct == nil {
-			log.Logger.Error().Msg("logs could not be streamed, cri tool not initialized")
+		if ct != nil {
+			ls, err = logstreamer.NewLogStreamer(ctx, ct)
+			if err != nil {
+				log.Logger.Error().Err(err).Msg("failed to create logstreamer")
+			} else {
+				go func() {
+					err := ls.StreamLogs()
+					if err != nil {
+						log.Logger.Error().Err(err).Msg("failed to stream logs")
+					}
+				}()
+			}
 		} else {
-			go func() {
-				err := ct.StreamLogs()
-				if err != nil {
-					log.Logger.Error().Err(err).Msg("failed to stream logs")
-				}
-			}()
+			log.Logger.Error().Msg("logs enabled but cri tool not available")
 		}
 	}
 
@@ -132,8 +139,8 @@ func main() {
 		log.Logger.Info().Msg("ebpfCollector done")
 	}
 
-	if logsEnabled {
-		<-ct.Done()
+	if logsEnabled && ls != nil {
+		<-ls.Done()
 		log.Logger.Info().Msg("cri done")
 	}
 

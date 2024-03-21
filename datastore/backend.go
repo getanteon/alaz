@@ -499,7 +499,7 @@ func (b *BackendDS) sendMetricsToBackend(r io.Reader) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(b.ctx, 10*time.Second)
 	defer cancel()
 
 	resp, err := b.c.Do(req.WithContext(ctx))
