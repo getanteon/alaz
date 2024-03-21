@@ -75,6 +75,14 @@ func main() {
 	}
 	logsEnabled, _ := strconv.ParseBool(os.Getenv("LOGS_ENABLED"))
 
+	var ct *cri.CRITool
+	if logsEnabled || containerMetricsEnabled {
+		ct, err = cri.NewCRITool(ctx)
+		if err != nil {
+			log.Logger.Error().Err(err).Msg("failed to create cri tool")
+		}
+	}
+
 	// datastore backend
 	dsBackend := datastore.NewBackendDS(ctx, config.BackendDSConfig{
 		Host:                   os.Getenv("BACKEND_HOST"),
@@ -84,7 +92,7 @@ func main() {
 		MetricsExportInterval:  10,
 		ReqBufferSize:          40000, // TODO: get from a conf file
 		ConnBufferSize:         1000,  // TODO: get from a conf file
-	}, k8sCollector)
+	}, k8sCollector, ct)
 	go dsBackend.SendHealthCheck(ebpfEnabled, metricsEnabled, distTracingEnabled, k8sVersion)
 
 	// deploy ebpf programs
@@ -99,11 +107,9 @@ func main() {
 		go ec.ListenEvents()
 	}
 
-	var ct *cri.CRITool
 	if logsEnabled {
-		ct, err = cri.NewCRITool(ctx)
-		if err != nil {
-			log.Logger.Error().Err(err).Msg("failed to create cri tool")
+		if ct == nil {
+			log.Logger.Error().Msg("logs could not be streamed, cri tool not initialized")
 		} else {
 			go func() {
 				err := ct.StreamLogs()

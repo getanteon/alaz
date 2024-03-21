@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/ddosify/alaz/config"
+	"github.com/ddosify/alaz/cri"
 	"github.com/ddosify/alaz/ebpf/l7_req"
 	"github.com/ddosify/alaz/gpu"
 	"github.com/ddosify/alaz/k8s"
@@ -161,6 +162,7 @@ type BackendDS struct {
 	dsEventChan        chan interface{} // *DaemonSetEvent
 
 	kubeCollector *k8s.K8sCollector
+	ct            *cri.CRITool
 
 	// TODO add:
 	// statefulset
@@ -201,7 +203,7 @@ func (ll LeveledLogger) Warn(msg string, keysAndValues ...interface{}) {
 	ll.l.Warn().Fields(keysAndValues).Msg(msg)
 }
 
-func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig, kubeCollector *k8s.K8sCollector) *BackendDS {
+func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig, kubeCollector *k8s.K8sCollector, ct *cri.CRITool) *BackendDS {
 	ctx, _ := context.WithCancel(parentCtx)
 	rand.Seed(time.Now().UnixNano())
 
@@ -303,6 +305,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig, kubeCo
 		dsEventChan:        make(chan interface{}, resourceChanSize),
 		traceEventQueue:    list.New(),
 		kubeCollector:      kubeCollector,
+		ct:                 ct,
 	}
 
 	go ds.sendReqsInBatch(bs)
@@ -997,7 +1000,7 @@ func (b *BackendDS) exportNodeMetrics() {
 
 func (b *BackendDS) exportGpuMetrics() error {
 	gpuMetricsPath := "/inner/gpu-metrics"
-	gpuCollector, err := gpu.NewGpuCollector()
+	gpuCollector, err := gpu.NewGpuCollector(b.ct)
 	if err != nil {
 		log.Logger.Error().Msgf("error creating gpu collector: %v", err)
 		return err

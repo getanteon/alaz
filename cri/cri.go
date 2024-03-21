@@ -160,6 +160,79 @@ func (ct *CRITool) getLogPath(id string) (string, error) {
 	return fmt.Sprintf("/proc/1/root%s", r.Status.LogPath), nil
 }
 
+type ContainerInfo struct {
+	PodID        string
+	ContainerID  string
+	PodName      string
+	PodNamespace string
+}
+
+func (ct *CRITool) GetContainerInfoWithPid(pid uint32) (*ContainerInfo, error) {
+	cgroupFile := fmt.Sprintf("/proc/%d/cgroup", pid)
+
+	file, err := os.Open(cgroupFile)
+	if err != nil {
+		return nil, err
+	}
+
+	defer file.Close()
+
+	// 0::/system.slice/kubepods-besteffort-pod8588024e_5678_4be0_aa19_f788c489e440.slice:cri-containerd:3fc51bb24ebb4ee5ea43ce0bc4a4296334d928872c0e4f90687ac7faeb8e379b
+	bytes, err := io.ReadAll(file)
+	if err != nil {
+		return nil, err
+	}
+
+	var containerID, podID string
+	line := string(bytes)
+
+	if !strings.HasPrefix(line, "/sys/fs/cgroup/system.slice") {
+		return nil, fmt.Errorf("not a container cgroup")
+	}
+
+	line = strings.TrimPrefix(line, "/sys/fs/cgroup/system.slice/")
+
+	fields := strings.Split(line, ":")
+
+	if len(fields) < 3 {
+		return nil, fmt.Errorf("not a container cgroup")
+	}
+
+	// for _, field := range fields {
+	// 	fmt.Println(field)
+	// 	// kubepods-besteffort-pod3a57a863_71e7_4481_a010_a8a9f931c626.slice
+	// 	// cri-containerd
+	// 	// f7503333d9b5ef0b89d317cfcb8e5c7240fb01db7f557906d65fd9a3e9631b85
+	// }
+
+	// extract podID
+	// kubepods-besteffort.slice
+	// kubepods-burstable.slice
+
+	podIndex := strings.LastIndex(fields[0], "pod")
+	sliceIndex := strings.Index(fields[0], ".slice")
+
+	if podIndex != -1 || sliceIndex != -1 {
+		podID = fields[0][podIndex+3 : sliceIndex]
+	} else {
+		return nil, fmt.Errorf("podID not found in cgroup")
+	}
+
+	containerID = fields[len(fields)-1]
+
+	info, err := ct.containerStatus(containerID)
+	if err != nil {
+		return nil, fmt.Errorf("could not get container info with id %s", containerID)
+	}
+
+	return &ContainerInfo{
+		PodID:        podID,
+		ContainerID:  containerID,
+		PodName:      info.podName,
+		PodNamespace: info.podNs,
+	}, nil
+}
+
 func (ct *CRITool) containerStatus(id string) (*containerPodInfo, error) {
 	if id == "" {
 		return nil, fmt.Errorf("ID cannot be empty")

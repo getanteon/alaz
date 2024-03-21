@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ddosify/alaz/cri"
 	"github.com/ddosify/alaz/log"
 
 	"strconv"
@@ -26,6 +27,7 @@ type GpuCollector struct {
 	descs map[string]*prometheus.Desc
 
 	n  *nvmlDriver
+	ct *cri.CRITool
 	mu sync.Mutex
 }
 
@@ -58,7 +60,7 @@ func findNvidiaLibPaths(searchDir string) ([]string, error) {
 	return foundPaths, nil
 }
 
-func NewGpuCollector() (*GpuCollector, error) {
+func NewGpuCollector(ct *cri.CRITool) (*GpuCollector, error) {
 	var nvmlDriver *nvmlDriver
 	var err error
 
@@ -91,6 +93,7 @@ func NewGpuCollector() (*GpuCollector, error) {
 	uuidLabel := []string{"uuid"}
 	gpuCollector := &GpuCollector{
 		n:  nvmlDriver,
+		ct: ct,
 		mu: sync.Mutex{},
 		fieldDesc: map[string]MetricDesc{
 			"gpu_info": {
@@ -444,9 +447,25 @@ func (g *GpuCollector) Collect(ch chan<- prometheus.Metric) {
 		}
 
 		for _, p := range processes {
-			// send process metrics
-			log.Logger.Info().Str("ctx", "gpu-process").Uint32("pid", p.Pid).Uint64("UsedGpuMemory", p.UsedGpuMemory).
-				Uint32("GpuInstanceId", p.GpuInstanceId).Uint32("ComputeInstanceId", p.ComputeInstanceId).Msg("running process on gpu")
+
+			var info *cri.ContainerInfo
+			if g.ct != nil {
+				// get container name from pid
+				info, err = g.ct.GetContainerInfoWithPid(p.Pid)
+				if err != nil {
+					log.Logger.Error().Str("ctx", "gpu-process").Err(err).Uint32("pid", p.Pid).Msg("failed to get container and pod id from pid")
+				} else {
+					// send process metrics
+					log.Logger.Info().Str("ctx", "gpu-process").Uint32("pid", p.Pid).
+						Uint64("UsedGpuMemory", p.UsedGpuMemory).
+						Str("podName", info.PodName).
+						Str("podNs", info.PodNamespace).
+						Uint32("GpuInstanceId", p.GpuInstanceId).Uint32("ComputeInstanceId", p.ComputeInstanceId).Msg("running process on gpu")
+				}
+			} else {
+				log.Logger.Warn().Str("ctx", "gpu-process").Uint32("pid", p.Pid).Msg("container runtime not available, skipping container and pod info for running gpu processes")
+			}
+
 		}
 	}
 }
