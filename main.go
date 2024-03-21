@@ -9,6 +9,7 @@ import (
 
 	"github.com/ddosify/alaz/aggregator"
 	"github.com/ddosify/alaz/config"
+	"github.com/ddosify/alaz/cri"
 	"github.com/ddosify/alaz/datastore"
 	"github.com/ddosify/alaz/ebpf"
 	"github.com/ddosify/alaz/k8s"
@@ -72,6 +73,7 @@ func main() {
 			log.Logger.Info().Msg("container metrics not exported, set K8S_COLLECTOR_ENABLED=true")
 		}
 	}
+	logsEnabled, _ := strconv.ParseBool(os.Getenv("LOGS_ENABLED"))
 
 	// datastore backend
 	dsBackend := datastore.NewBackendDS(ctx, config.BackendDSConfig{
@@ -97,15 +99,37 @@ func main() {
 		go ec.ListenEvents()
 	}
 
+	var ct *cri.CRITool
+	if logsEnabled {
+		ct, err = cri.NewCRITool(ctx)
+		if err != nil {
+			log.Logger.Error().Err(err).Msg("failed to create cri tool")
+		} else {
+			go func() {
+				err := ct.StreamLogs()
+				if err != nil {
+					log.Logger.Error().Err(err).Msg("failed to stream logs")
+				}
+			}()
+		}
+	}
+
 	go http.ListenAndServe(":8181", nil)
 
-	if k8sCollector != nil {
+	if k8sCollectorEnabled {
 		<-k8sCollector.Done()
 		log.Logger.Info().Msg("k8sCollector done")
 	}
 
-	<-ec.Done()
-	log.Logger.Info().Msg("ebpfCollector done")
+	if ebpfEnabled {
+		<-ec.Done()
+		log.Logger.Info().Msg("ebpfCollector done")
+	}
+
+	if logsEnabled {
+		<-ct.Done()
+		log.Logger.Info().Msg("cri done")
+	}
 
 	log.Logger.Info().Msg("alaz exiting...")
 }

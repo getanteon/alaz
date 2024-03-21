@@ -201,7 +201,7 @@ func (e *EbpfCollector) AttachUprobesForEncrypted() {
 						// it's probably a kernel thread, or a very short lived process
 						continue
 					}
-					log.Logger.Error().Err(err).Uint32("pid", pid).
+					log.Logger.Debug().Err(err).Uint32("pid", pid).
 						Msgf("error attaching ssl lib for pid: %d", pid)
 				}
 			}
@@ -215,7 +215,7 @@ func (e *EbpfCollector) AttachUprobesForEncrypted() {
 						// it's probably a kernel thread, or a very short lived process
 						continue
 					}
-					log.Logger.Error().Err(err).
+					log.Logger.Debug().Err(err).
 						Msgf("error attaching go tls for pid: %d", pid)
 				}
 			}
@@ -497,19 +497,19 @@ func (e *EbpfCollector) AttachSSlUprobes(pid uint32, executablePath string, vers
 
 		sslWriteUprobe, err = ex.Uprobe("SSL_write", l7_req.L7BpfProgsAndMaps.SslWriteV3, nil)
 		if err != nil {
-			log.Logger.Error().Err(err).Msgf("error attaching %s uprobe", "SSL_write")
+			log.Logger.Warn().Err(err).Msgf("error attaching %s uprobe", "SSL_write")
 			return err
 		}
 
 		sslReadEnterUprobe, err = ex.Uprobe("SSL_read", l7_req.L7BpfProgsAndMaps.SslReadEnterV3, nil)
 		if err != nil {
-			log.Logger.Error().Err(err).Msgf("error attaching %s uprobe", "SSL_read")
+			log.Logger.Warn().Err(err).Msgf("error attaching %s uprobe", "SSL_read")
 			return err
 		}
 
 		sslReadURetprobe, err = ex.Uretprobe("SSL_read", l7_req.L7BpfProgsAndMaps.SslRetRead, nil)
 		if err != nil {
-			log.Logger.Error().Err(err).Msgf("error attaching %s uretprobe", "SSL_read")
+			log.Logger.Warn().Err(err).Msgf("error attaching %s uretprobe", "SSL_read")
 			return err
 		}
 	} else if semver.Compare(version, "v1.1.0") >= 0 { // accept 1.1 as >= 1.1.1 for now, linking to 1.1.1 compatible uprobes
@@ -517,38 +517,38 @@ func (e *EbpfCollector) AttachSSlUprobes(pid uint32, executablePath string, vers
 
 		sslWriteUprobe, err = ex.Uprobe("SSL_write", l7_req.L7BpfProgsAndMaps.SslWriteV111, nil)
 		if err != nil {
-			log.Logger.Error().Err(err).Msgf("error attaching %s uprobe", "SSL_write")
+			log.Logger.Warn().Err(err).Msgf("error attaching %s uprobe", "SSL_write")
 			return err
 		}
 
 		sslReadEnterUprobe, err = ex.Uprobe("SSL_read", l7_req.L7BpfProgsAndMaps.SslReadEnterV111, nil)
 		if err != nil {
-			log.Logger.Error().Err(err).Msgf("error attaching %s uprobe", "SSL_read")
+			log.Logger.Warn().Err(err).Msgf("error attaching %s uprobe", "SSL_read")
 			return err
 		}
 
 		sslReadURetprobe, err = ex.Uretprobe("SSL_read", l7_req.L7BpfProgsAndMaps.SslRetRead, nil)
 		if err != nil {
-			log.Logger.Error().Err(err).Msgf("error attaching %s uretprobe", "SSL_read")
+			log.Logger.Warn().Err(err).Msgf("error attaching %s uretprobe", "SSL_read")
 			return err
 		}
 	} else if semver.Compare(version, "v1.0.2") >= 0 {
 		log.Logger.Debug().Str("path", executablePath).Uint32("pid", pid).Str("version", version).Msgf("attaching ssl uprobes v1.0.2")
 		sslWriteUprobe, err = ex.Uprobe("SSL_write", l7_req.L7BpfProgsAndMaps.SslWriteV102, nil)
 		if err != nil {
-			log.Logger.Error().Err(err).Msgf("error attaching %s uprobe", "SSL_write")
+			log.Logger.Warn().Err(err).Msgf("error attaching %s uprobe", "SSL_write")
 			return err
 		}
 
 		sslReadEnterUprobe, err = ex.Uprobe("SSL_read", l7_req.L7BpfProgsAndMaps.SslReadEnterV102, nil)
 		if err != nil {
-			log.Logger.Error().Err(err).Msgf("error attaching %s uprobe", "SSL_read")
+			log.Logger.Warn().Err(err).Msgf("error attaching %s uprobe", "SSL_read")
 			return err
 		}
 
 		sslReadURetprobe, err = ex.Uretprobe("SSL_read", l7_req.L7BpfProgsAndMaps.SslRetRead, nil)
 		if err != nil {
-			log.Logger.Error().Err(err).Msgf("error attaching %s uretprobe", "SSL_read")
+			log.Logger.Warn().Err(err).Msgf("error attaching %s uretprobe", "SSL_read")
 			return err
 		}
 	} else {
