@@ -67,7 +67,6 @@ func main() {
 		ReqBufferSize:         40000, // TODO: get from a conf file
 		ConnBufferSize:        1000,  // TODO: get from a conf file
 	})
-	go dsBackend.SendHealthCheck(ebpfEnabled, metricsEnabled, distTracingEnabled, k8sVersion)
 
 	// deploy ebpf programs
 	var ec *ebpf.EbpfCollector
@@ -81,6 +80,8 @@ func main() {
 		go ec.ListenEvents()
 	}
 
+	dsBackend.Start()
+	go dsBackend.SendHealthCheck(ebpfEnabled, metricsEnabled, distTracingEnabled, k8sVersion)
 	go http.ListenAndServe(":8181", nil)
 
 	<-k8sCollector.Done()
