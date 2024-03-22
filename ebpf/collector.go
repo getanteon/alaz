@@ -168,12 +168,6 @@ func (e *EbpfCollector) close() {
 	log.Logger.Info().Msg("ebpf collector closed")
 }
 
-// in order to prevent the memory peak at the beginning
-// we'll attach to processes one by one
-func (e *EbpfCollector) ListenForEncryptedReqs(pid uint32) {
-	e.tlsAttachQueue <- pid
-}
-
 // we check the size of the executable before reading it into memory
 // because it can be very large
 // otherwise we can get stuck to memory limit defined in k8s
@@ -191,6 +185,7 @@ func (e *EbpfCollector) AttachUprobesForEncrypted() {
 		e.mu.Unlock()
 
 		go func(pid uint32) {
+			log.Logger.Debug().Str("ctx", "tls-uprobes").Uint32("pid", pid).Msg("attaching uprobes for encrypted connections")
 			// attach to libssl uprobes if process is using libssl
 			errs := e.AttachSslUprobesOnProcess("/proc", pid)
 			if len(errs) > 0 {
@@ -221,7 +216,6 @@ func (e *EbpfCollector) AttachUprobesForEncrypted() {
 			}
 
 		}(pid)
-
 	}
 }
 
