@@ -77,7 +77,6 @@ func main() {
 		ReqBufferSize:         40000, // TODO: get from a conf file
 		ConnBufferSize:        1000,  // TODO: get from a conf file
 	})
-	go dsBackend.SendHealthCheck(ebpfEnabled, metricsEnabled, distTracingEnabled, k8sVersion)
 
 	// deploy ebpf programs
 	var ec *ebpf.EbpfCollector
@@ -101,20 +100,26 @@ func main() {
 	}
 
 	var ls *logstreamer.LogStreamer
-	if logsEnabled && ct != nil {
-		ls, err = logstreamer.NewLogStreamer(ctx, ct)
-		if err != nil {
-			log.Logger.Error().Err(err).Msg("failed to create logstreamer")
+	if logsEnabled {
+		if ct != nil {
+			ls, err = logstreamer.NewLogStreamer(ctx, ct)
+			if err != nil {
+				log.Logger.Error().Err(err).Msg("failed to create logstreamer")
+			} else {
+				go func() {
+					err := ls.StreamLogs()
+					if err != nil {
+						log.Logger.Error().Err(err).Msg("failed to stream logs")
+					}
+				}()
+			}
 		} else {
-			go func() {
-				err := ls.StreamLogs()
-				if err != nil {
-					log.Logger.Error().Err(err).Msg("failed to stream logs")
-				}
-			}()
+			log.Logger.Error().Msg("logs enabled but cri tool not available")
 		}
 	}
 
+	dsBackend.Start()
+	go dsBackend.SendHealthCheck(ebpfEnabled, metricsEnabled, distTracingEnabled, k8sVersion)
 	go http.ListenAndServe(":8181", nil)
 
 	if k8sCollectorEnabled {
