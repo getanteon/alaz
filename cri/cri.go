@@ -1,11 +1,12 @@
 package cri
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -33,6 +34,30 @@ type CRITool struct {
 	rs internalapi.RuntimeService
 }
 
+// parse podID and containerID from /proc/<pid>/cgroup file
+var parseCgroupFunc func(string) (string, string, error)
+
+func init() {
+	parseCgroupFunc = parseCgroupV1
+	cmd := exec.Command("stat", "-fc", "%T", "/sys/fs/cgroup/")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Logger.Warn().Msg("Unable to find cgroup version: %s, assuming v1")
+		return
+	}
+
+	fsType := strings.TrimSuffix(string(output), "\n")
+	switch fsType {
+	case "tmpfs":
+		parseCgroupFunc = parseCgroupV1
+	case "cgroup2fs":
+		parseCgroupFunc = parseCgroupV2
+	default:
+		log.Logger.Warn().Msgf("Unknown filesystem type for cgroups: %s, assuming v1", fsType)
+		parseCgroupFunc = parseCgroupV1
+	}
+}
+
 func NewCRITool(ctx context.Context) (*CRITool, error) {
 	var res internalapi.RuntimeService
 	var err error
@@ -51,9 +76,11 @@ func NewCRITool(ctx context.Context) (*CRITool, error) {
 		return nil, err
 	}
 
-	return &CRITool{
+	ct := &CRITool{
 		rs: res,
-	}, nil
+	}
+
+	return ct, nil
 }
 
 func (ct *CRITool) GetAllContainers() ([]*pb.Container, error) {
@@ -97,69 +124,18 @@ func (ct *CRITool) GetLogPath(id string) (string, error) {
 }
 
 type ContainerInfo struct {
-	ContainerID   string
-	ContainerName string
-	PodID         string
-	PodName       string
-	PodNamespace  string
+	ContainerID   string `json:"container_id"`
+	ContainerName string `json:"container_name"`
+	PodID         string `json:"pod_id"`
+	PodName       string `json:"pod_name"`
+	PodNamespace  string `json:"pod_namespace"`
 }
 
 func (ct *CRITool) GetContainerInfoWithPid(pid uint32) (*ContainerInfo, error) {
-	cgroupFile := fmt.Sprintf("/proc/%d/cgroup", pid)
-
-	file, err := os.Open(cgroupFile)
+	podID, containerID, err := parseCgroupFunc(fmt.Sprintf("/proc/%d/cgroup", pid))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("could not parse cgroup info for pid %d: %v", pid, err)
 	}
-
-	defer file.Close()
-
-	// 0::/system.slice/kubepods-besteffort-pod8588024e_5678_4be0_aa19_f788c489e440.slice:cri-containerd:3fc51bb24ebb4ee5ea43ce0bc4a4296334d928872c0e4f90687ac7faeb8e379b
-	bytes, err := io.ReadAll(file)
-	if err != nil {
-		return nil, err
-	}
-
-	var containerID, podID string
-	// trim newline
-	line := string(bytes[:len(bytes)-1])
-
-	// 0::/system.slice/kubepods-besteffort-pod511a4124_d284_4787_9678_ef15acfa5783.slice:cri-containerd:8cd2ad2d1d5f5b3a95de3e78fdabb667d17214e0dd2427ac033162159793db46\n
-	log.Logger.Info().Str("line", line).Msg("GetContainerInfoWithPid")
-
-	if !strings.HasPrefix(line, "0::/system.slice/") {
-		return nil, fmt.Errorf("not a container cgroup")
-	}
-
-	line = strings.TrimPrefix(line, "0::/system.slice/")
-
-	fields := strings.Split(line, ":")
-
-	if len(fields) < 3 {
-		return nil, fmt.Errorf("not a container cgroup")
-	}
-
-	// for _, field := range fields {
-	// 	fmt.Println(field)
-	// 	// kubepods-besteffort-pod3a57a863_71e7_4481_a010_a8a9f931c626.slice
-	// 	// cri-containerd
-	// 	// f7503333d9b5ef0b89d317cfcb8e5c7240fb01db7f557906d65fd9a3e9631b85
-	// }
-
-	// extract podID
-	// kubepods-besteffort.slice
-	// kubepods-burstable.slice
-
-	podIndex := strings.LastIndex(fields[0], "pod")
-	sliceIndex := strings.Index(fields[0], ".slice")
-
-	if podIndex != -1 || sliceIndex != -1 {
-		podID = fields[0][podIndex+3 : sliceIndex]
-	} else {
-		return nil, fmt.Errorf("podID not found in cgroup")
-	}
-
-	containerID = fields[len(fields)-1]
 
 	info, err := ct.ContainerStatus(containerID)
 	if err != nil {
@@ -248,4 +224,98 @@ func (ct *CRITool) getPod(podUid string) ([]*pb.PodSandbox, error) {
 	filter.State = st
 
 	return ct.rs.ListPodSandbox(context.Background(), filter)
+}
+
+func parseCgroupV1(filePath string) (string, string, error) {
+	log.Logger.Debug().Msgf("Parsing cgroup v1 file: %s", filePath)
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", "", err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		// 1:name=systemd:/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod57009a28_e677_4550_8e14_7724a18cc70c.slice/cri-containerd-62b0b04c0d518199a25d7cd859c376caf71a850374ce1d76fc7410e54dd63a10.scope
+		line := scanner.Text()
+
+		// split the lines based on the first occurrence of ':'; this will leave us with cgroup version and rest of the info separately
+		parts := strings.SplitN(line, ":", 3)
+
+		if len(parts) == 3 {
+			values := strings.Split(parts[2], "/")
+			if len(values) < 5 {
+				return "", "", fmt.Errorf("unexpected cgroup format")
+			}
+
+			// Value 3: kubepods-burstable-pod57009a28_e677_4550_8e14_7724a18cc70c.slice
+			// Value 4: cri-containerd-62b0b04c0d518199a25d7cd859c376caf71a850374ce1d76fc7410e54dd63a10.scope
+
+			podInfo := values[len(values)-2]
+			containerInfo := values[len(values)-1]
+
+			podIndex := strings.LastIndex(podInfo, "pod")
+			sliceIndex := strings.Index(podInfo, ".slice")
+			podID := podInfo[podIndex+3 : sliceIndex]
+
+			containerDashIndex := strings.LastIndex(containerInfo, "-")
+			scopeIndex := strings.Index(containerInfo, ".scope")
+			containerID := containerInfo[containerDashIndex+1 : scopeIndex]
+
+			return podID, containerID, nil
+		}
+	}
+
+	if scanner.Err() != nil {
+		return "", "", scanner.Err()
+	}
+
+	return "", "", fmt.Errorf("unable to find cgroup info")
+}
+
+func parseCgroupV2(filePath string) (string, string, error) {
+	log.Logger.Debug().Msgf("Parsing cgroup v2 file: %s", filePath)
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", "", err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		// 0::/system.slice/kubepods-burstable-pod22fd933a_ee61_46bd_93ae_ebace73c1160.slice:cri-containerd:3a31a360e5aea903274416e0c4cf8ca8c050fd523cc5d91a82ec5707d5ee9fa1
+		line := scanner.Text()
+
+		// split the lines based on the first occurrence of ':'; this will leave us with cgroup version and rest of the info separately
+		parts := strings.SplitN(line, ":", 4)
+
+		// cgroup v2 will have 0 in the first part
+		if parts[0] != "0" {
+			continue
+		}
+
+		// /system.slice/kubepods-burstable-pod22fd933a_ee61_46bd_93ae_ebace73c1160.slice
+		podInfo := parts[len(parts)-2]
+		values := strings.Split(podInfo, "/")
+
+		// kubepods-burstable-pod22fd933a_ee61_46bd_93ae_ebace73c1160
+		podInfoLastPart := values[len(values)-1]
+		podIndex := strings.LastIndex(podInfoLastPart, "pod")
+		sliceIndex := strings.Index(podInfoLastPart, ".slice")
+
+		podID := podInfoLastPart[podIndex+3 : sliceIndex]
+
+		// cri-containerd:3a31a360e5aea903274416e0c4cf8ca8c050fd523cc5d91a82ec5707d5ee9fa1
+		containerInfo := parts[len(parts)-1]
+		values = strings.Split(containerInfo, ":")
+		containerID := values[len(values)-1]
+
+		return podID, containerID, nil
+	}
+
+	if scanner.Err() != nil {
+		return "", "", scanner.Err()
+	}
+
+	return "", "", fmt.Errorf("unable to find cgroup info")
 }
