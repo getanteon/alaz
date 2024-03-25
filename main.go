@@ -39,6 +39,7 @@ func main() {
 	kubeEvents := make(chan interface{}, 1000)
 	var k8sVersion string
 	var k8sCollectorEnabled = true
+
 	enabled, err := strconv.ParseBool(os.Getenv("K8S_COLLECTOR_ENABLED"))
 	if err == nil {
 		k8sCollectorEnabled = enabled
@@ -94,7 +95,6 @@ func main() {
 		ReqBufferSize:          40000, // TODO: get from a conf file
 		ConnBufferSize:         1000,  // TODO: get from a conf file
 	}, k8sCollector, ct)
-	go dsBackend.SendHealthCheck(ebpfEnabled, metricsEnabled, distTracingEnabled, k8sVersion)
 
 	// deploy ebpf programs
 	var ec *ebpf.EbpfCollector
@@ -127,6 +127,8 @@ func main() {
 		}
 	}
 
+	dsBackend.Start()
+	go dsBackend.SendHealthCheck(ebpfEnabled, metricsEnabled, distTracingEnabled, k8sVersion)
 	go http.ListenAndServe(":8181", nil)
 
 	if k8sCollectorEnabled {

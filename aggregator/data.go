@@ -229,9 +229,9 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{},
 
 	// set distinct mutex for every live process
 	for pid := range a.liveProcesses {
+		a.muIndex.Add(1)
 		a.muArray[a.muIndex.Load()] = &sync.RWMutex{}
 		sockMaps[pid].mu = a.muArray[a.muIndex.Load()]
-		a.muIndex.Add(1)
 		a.getAlreadyExistingSockets(pid)
 	}
 
@@ -455,15 +455,14 @@ func (a *Aggregator) processExec(d *proc.ProcEvent) {
 
 	a.liveProcesses[d.Pid] = struct{}{}
 
-	// create lock on demand
-	a.muArray[(a.muIndex.Load())%uint64(len(a.muArray))] = &sync.RWMutex{}
-	a.muIndex.Add(1)
-
 	// if duplicate exec event comes, underlying mutex will be changed
 	// if first assigned mutex is locked and another exec event comes, mutex will be changed
 	// and unlock of unlocked mutex now is a possibility
 	// to avoid this case, if a socket map already has a mutex, don't change it
 	if a.clusterInfo.SocketMaps[d.Pid].mu == nil {
+		// create lock on demand
+		a.muIndex.Add(1)
+		a.muArray[(a.muIndex.Load())%uint64(len(a.muArray))] = &sync.RWMutex{}
 		a.clusterInfo.SocketMaps[d.Pid].mu = a.muArray[(a.muIndex.Load())%uint64(len(a.muArray))]
 	}
 }
@@ -687,8 +686,8 @@ func (a *Aggregator) processHttp2Frames() {
 			return
 		}
 
-		req.StartTime = d.EventReadTime
 		req.Latency = d.WriteTimeNs - req.Latency
+		req.StartTime = d.EventReadTime
 		req.Completed = true
 		req.FromIP = skInfo.Saddr
 		req.ToIP = skInfo.Daddr
@@ -709,6 +708,11 @@ func (a *Aggregator) processHttp2Frames() {
 		// toUID is set to :authority header in client frame
 		err := a.setFromTo(skInfo, d, req, req.ToUID)
 		if err != nil {
+			return
+		}
+
+		if d.WriteTimeNs < req.Latency {
+			// ignore
 			return
 		}
 

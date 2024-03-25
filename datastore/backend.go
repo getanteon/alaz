@@ -153,6 +153,11 @@ type BackendDS struct {
 
 	traceInfoPool *poolutil.Pool[*TraceInfo]
 
+	metricsExport          bool
+	containerMetricsExport bool
+	gpuMetricsExport       bool
+	metricsExportInterval  int
+
 	podEventChan       chan interface{} // *PodEvent
 	svcEventChan       chan interface{} // *SvcEvent
 	depEventChan       chan interface{} // *DepEvent
@@ -283,34 +288,41 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig, kubeCo
 	if err != nil {
 		bs = defaultBatchSize
 	}
-
 	resourceChanSize := 200
 
 	ds := &BackendDS{
-		ctx:                ctx,
-		host:               conf.Host,
-		c:                  client,
-		batchSize:          bs,
-		reqInfoPool:        newReqInfoPool(func() *ReqInfo { return &ReqInfo{} }, func(r *ReqInfo) {}),
-		aliveConnPool:      newAliveConnPool(func() *ConnInfo { return &ConnInfo{} }, func(r *ConnInfo) {}),
-		traceInfoPool:      newTraceInfoPool(func() *TraceInfo { return &TraceInfo{} }, func(r *TraceInfo) {}),
-		reqChanBuffer:      make(chan *ReqInfo, conf.ReqBufferSize),
-		connChanBuffer:     make(chan *ConnInfo, conf.ConnBufferSize),
-		podEventChan:       make(chan interface{}, 5*resourceChanSize),
-		svcEventChan:       make(chan interface{}, 2*resourceChanSize),
-		rsEventChan:        make(chan interface{}, 2*resourceChanSize),
-		depEventChan:       make(chan interface{}, 2*resourceChanSize),
-		epEventChan:        make(chan interface{}, resourceChanSize),
-		containerEventChan: make(chan interface{}, 5*resourceChanSize),
-		dsEventChan:        make(chan interface{}, resourceChanSize),
-		traceEventQueue:    list.New(),
-		kubeCollector:      kubeCollector,
-		ct:                 ct,
+		ctx:                    ctx,
+		host:                   conf.Host,
+		c:                      client,
+		batchSize:              bs,
+		reqInfoPool:            newReqInfoPool(func() *ReqInfo { return &ReqInfo{} }, func(r *ReqInfo) {}),
+		aliveConnPool:          newAliveConnPool(func() *ConnInfo { return &ConnInfo{} }, func(r *ConnInfo) {}),
+		traceInfoPool:          newTraceInfoPool(func() *TraceInfo { return &TraceInfo{} }, func(r *TraceInfo) {}),
+		reqChanBuffer:          make(chan *ReqInfo, conf.ReqBufferSize),
+		connChanBuffer:         make(chan *ConnInfo, conf.ConnBufferSize),
+		podEventChan:           make(chan interface{}, 5*resourceChanSize),
+		svcEventChan:           make(chan interface{}, 2*resourceChanSize),
+		rsEventChan:            make(chan interface{}, 2*resourceChanSize),
+		depEventChan:           make(chan interface{}, 2*resourceChanSize),
+		epEventChan:            make(chan interface{}, resourceChanSize),
+		containerEventChan:     make(chan interface{}, 5*resourceChanSize),
+		dsEventChan:            make(chan interface{}, resourceChanSize),
+		traceEventQueue:        list.New(),
+		kubeCollector:          kubeCollector,
+		ct:                     ct,
+		metricsExport:          conf.NodeMetricsExport,
+		gpuMetricsExport:       conf.GpuMetricsExport,
+		metricsExportInterval:  conf.MetricsExportInterval,
+		containerMetricsExport: conf.ContainerMetricsExport,
 	}
 
-	go ds.sendReqsInBatch(bs)
-	go ds.sendConnsInBatch(bs)
-	go ds.sendTraceEventsInBatch(10 * bs)
+	return ds
+}
+
+func (ds *BackendDS) Start() {
+	go ds.sendReqsInBatch(ds.batchSize)
+	go ds.sendConnsInBatch(ds.batchSize)
+	go ds.sendTraceEventsInBatch(10 * ds.batchSize)
 
 	// events are resynced every 60 seconds on k8s informers
 	// resourceBatchSize ~ burst size, if more than resourceBatchSize events are sent in a moment, blocking can occur
@@ -329,21 +341,21 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig, kubeCo
 
 	// send node-exporter and nvidia-gpu metrics
 	go func() {
-		if !(conf.NodeMetricsExport || conf.GpuMetricsExport) {
+		if !(ds.metricsExport || ds.gpuMetricsExport) {
 			return
 		}
 
 		var nodeMetrics, gpuMetrics, containerMetrics bool
-		if conf.NodeMetricsExport {
+		if ds.metricsExport {
 			go ds.exportNodeMetrics()
 			nodeMetrics = true
 		}
 
-		if conf.ContainerMetricsExport {
+		if ds.containerMetricsExport {
 			containerMetrics = true
 		}
 
-		if conf.GpuMetricsExport {
+		if ds.gpuMetricsExport {
 			err := ds.exportGpuMetrics()
 			if err != nil {
 				log.Logger.Error().Msgf("error exporting gpu metrics: %v", err)
@@ -352,7 +364,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig, kubeCo
 			}
 		}
 
-		t := time.NewTicker(time.Duration(conf.MetricsExportInterval) * time.Second)
+		t := time.NewTicker(time.Duration(ds.metricsExportInterval) * time.Second)
 		for {
 			select {
 			case <-ds.ctx.Done():
@@ -401,8 +413,6 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig, kubeCo
 		// ds.reqInfoPool.Done()
 		log.Logger.Info().Msg("backend datastore stopped")
 	}()
-
-	return ds
 }
 
 func (b *BackendDS) enqueueTraceInfo(traceInfo *TraceInfo) {
@@ -1039,6 +1049,7 @@ type nodeExportLogger struct {
 }
 
 func (l nodeExportLogger) Log(keyvals ...interface{}) error {
+	l.logger.Debug().Msg(fmt.Sprint(keyvals...))
 	return nil
 }
 
