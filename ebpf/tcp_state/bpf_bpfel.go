@@ -12,6 +12,16 @@ import (
 	"github.com/cilium/ebpf"
 )
 
+type bpfLogMessage struct {
+	Level    uint32
+	LogMsg   [100]uint8
+	FuncName [100]uint8
+	Pid      uint32
+	Arg1     uint64
+	Arg2     uint64
+	Arg3     uint64
+}
+
 type bpfSkInfo struct {
 	Fd  uint64
 	Pid uint32
@@ -68,7 +78,10 @@ type bpfProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfMapSpecs struct {
+	ContainerPids    *ebpf.MapSpec `ebpf:"container_pids"`
 	FdByPidTgid      *ebpf.MapSpec `ebpf:"fd_by_pid_tgid"`
+	LogHeap          *ebpf.MapSpec `ebpf:"log_heap"`
+	LogMap           *ebpf.MapSpec `ebpf:"log_map"`
 	SockMap          *ebpf.MapSpec `ebpf:"sock_map"`
 	SockMapTemp      *ebpf.MapSpec `ebpf:"sock_map_temp"`
 	TcpConnectEvents *ebpf.MapSpec `ebpf:"tcp_connect_events"`
@@ -94,7 +107,10 @@ func (o *bpfObjects) Close() error {
 //
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfMaps struct {
+	ContainerPids    *ebpf.Map `ebpf:"container_pids"`
 	FdByPidTgid      *ebpf.Map `ebpf:"fd_by_pid_tgid"`
+	LogHeap          *ebpf.Map `ebpf:"log_heap"`
+	LogMap           *ebpf.Map `ebpf:"log_map"`
 	SockMap          *ebpf.Map `ebpf:"sock_map"`
 	SockMapTemp      *ebpf.Map `ebpf:"sock_map_temp"`
 	TcpConnectEvents *ebpf.Map `ebpf:"tcp_connect_events"`
@@ -103,7 +119,10 @@ type bpfMaps struct {
 
 func (m *bpfMaps) Close() error {
 	return _BpfClose(
+		m.ContainerPids,
 		m.FdByPidTgid,
+		m.LogHeap,
+		m.LogMap,
 		m.SockMap,
 		m.SockMapTemp,
 		m.TcpConnectEvents,

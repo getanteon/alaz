@@ -7,7 +7,17 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
+#include "../headers/log.h"
+
+
 char __license[] SEC("license") = "Dual MIT/GPL";
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, __u32);
+    __type(value, __u8);
+    __uint(max_entries, 4194304);
+} container_pids SEC(".maps");
 
 struct tcp_event
 {
@@ -96,6 +106,17 @@ int inet_sock_set_state(void *ctx)
   // get pid
   __u64 id = bpf_get_current_pid_tgid();
   __u32 pid = id >> 32;
+
+  __u8 *val = bpf_map_lookup_elem(&container_pids, &pid);
+  if (!val)
+  {
+    // log only for containers
+    unsigned char func_name[] = "inet_sock_set_state";
+    unsigned char log_msg[] = "tcp connect event for container -- pid|fd|psize";
+    log_to_userspace(ctx, WARN, func_name, log_msg, pid, 0, 0);        
+  }
+
+
   const void *skaddr;
 
   // if state transition is from BPF_TCP_CLOSE to BPF_TCP_SYN_SENT,

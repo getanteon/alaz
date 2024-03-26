@@ -2,11 +2,13 @@ package proc
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"unsafe"
 
 	"github.com/ddosify/alaz/log"
 
+	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/linux"
 	"github.com/cilium/ebpf/perf"
@@ -73,6 +75,7 @@ type ProcProg struct {
 	links             map[string]link.Link // key : hook name
 	ProcEvents        *perf.Reader
 	ProcEventsMapSize uint32
+	ContainerPidMap   *ebpf.Map // for filtering non-container pids on the node
 }
 
 func InitProcProg(conf *ProcProgConfig) *ProcProg {
@@ -128,7 +131,36 @@ func (pp *ProcProg) InitMaps() {
 	var err error
 	pp.ProcEvents, err = perf.NewReader(objs.ProcEvents, 16*os.Getpagesize())
 	if err != nil {
-		log.Logger.Fatal().Err(err).Msg("error creating ringbuf reader")
+		log.Logger.Fatal().Err(err).Msg("error creating perf reader")
+	}
+
+	// Initialize the pid filter map from user space and populate
+	// the map with the pids of the container processes
+	containerPidsMap, err := ebpf.NewMap(&ebpf.MapSpec{
+		Name:       "container_pids",
+		Type:       ebpf.LRUHash,
+		KeySize:    4,       // 4 bytes for uint32
+		ValueSize:  1,       // 1 byte for uint8
+		MaxEntries: 4194304, // value inside /proc/sys/kernel/pid_max
+	})
+	if err != nil {
+		log.Logger.Error().Err(err).Msg("error creating container pids map")
+	} else {
+		pp.ContainerPidMap = containerPidsMap
+	}
+}
+
+func (pp *ProcProg) PopulateContainerPidsMap(keys []uint32, values []uint8) error {
+	count, err := pp.ContainerPidMap.BatchUpdate(keys, values, &ebpf.BatchOptions{
+		ElemFlags: 0,
+		Flags:     0,
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed updating ebpfcontainer pids map, %v", err)
+	} else {
+		log.Logger.Debug().Msgf("updated %d entries in container pids map", count)
+		return nil
 	}
 }
 

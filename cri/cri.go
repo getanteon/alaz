@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ddosify/alaz/log"
+
 	//nolint:staticcheck
 	//nolint:staticcheck
 	internalapi "k8s.io/cri-api/pkg/apis"
@@ -72,6 +73,43 @@ func (ct *CRITool) GetAllContainers() ([]*pb.Container, error) {
 	}
 
 	return list, nil
+}
+
+func (ct *CRITool) GetPidsRunningOnContainers() ([]uint32, error) {
+	pids := []uint32{}
+	st := &pb.ContainerStateValue{}
+	st.State = pb.ContainerState_CONTAINER_RUNNING
+
+	filter := &pb.ContainerFilter{
+		Id:                   "",
+		State:                st,
+		PodSandboxId:         "",
+		LabelSelector:        map[string]string{},
+		XXX_NoUnkeyedLiteral: struct{}{},
+		XXX_sizecache:        0,
+	}
+
+	list, err := ct.rs.ListContainers(context.TODO(), filter)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, c := range list {
+		r, err := ct.rs.ContainerStatus(context.TODO(), c.Id, true)
+		if err != nil {
+			log.Logger.Error().Err(err).Msgf("Failed to get container status for container %s", c.Id)
+			continue
+		}
+
+		info := map[string]interface{}{}
+		json.Unmarshal([]byte(r.Info["info"]), &info)
+
+		pid := info["pid"].(float64)
+		fmt.Printf("containerID:%s pid:%d name:%s \n", c.Id, int(pid), c.Metadata.Name)
+		pids = append(pids, uint32(pid))
+	}
+
+	return pids, nil
 }
 
 // get log path of container

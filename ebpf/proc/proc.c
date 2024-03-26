@@ -28,7 +28,6 @@ struct {
     __uint(value_size, sizeof(int));
 } proc_events SEC(".maps");
 
-
 SEC("tracepoint/sched/sched_process_exec")
 int sched_process_exec(struct trace_event_raw_sched_process_exec* ctx)
 {

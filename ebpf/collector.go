@@ -15,6 +15,7 @@ import (
 	"unsafe"
 
 	"github.com/cilium/ebpf/link"
+	"github.com/ddosify/alaz/cri"
 	"github.com/ddosify/alaz/ebpf/l7_req"
 	"github.com/ddosify/alaz/ebpf/proc"
 	"github.com/ddosify/alaz/ebpf/tcp_state"
@@ -57,9 +58,11 @@ type EbpfCollector struct {
 
 	tlsPidMap map[uint32]struct{}
 	mu        sync.Mutex
+
+	ct *cri.CRITool
 }
 
-func NewEbpfCollector(parentCtx context.Context) *EbpfCollector {
+func NewEbpfCollector(parentCtx context.Context, ct *cri.CRITool) *EbpfCollector {
 	ctx, _ := context.WithCancel(parentCtx)
 
 	bpfPrograms := make(map[string]Program)
@@ -84,6 +87,7 @@ func NewEbpfCollector(parentCtx context.Context) *EbpfCollector {
 		goTlsReadUretprobes: make(map[uint32][]link.Link),
 		tlsAttachQueue:      make(chan uint32, 10),
 		bpfPrograms:         bpfPrograms,
+		ct:                  ct,
 	}
 }
 
@@ -113,6 +117,37 @@ func (e *EbpfCollector) Init() {
 		p.Attach()
 		p.InitMaps()
 	}
+
+	go func() {
+		if e.ct == nil {
+			log.Logger.Warn().Msg("cri tool is nil, skipping filtering container pids")
+			return
+		}
+		procProg := e.bpfPrograms["proc_prog"].(*proc.ProcProg)
+		t := time.NewTicker(30 * time.Second)
+
+		for {
+			select {
+			case <-e.ctx.Done():
+				t.Stop()
+				return
+			case <-t.C:
+				pids, err := e.ct.GetPidsRunningOnContainers()
+				if err != nil {
+					log.Logger.Error().Err(err).Msg("error getting pids running on containers")
+					continue
+				}
+				values := make([]uint8, len(pids))
+				for i := range pids {
+					values[i] = 1
+				}
+				err = procProg.PopulateContainerPidsMap(pids, values)
+				if err != nil {
+					log.Logger.Error().Err(err).Msg("error populating container pids map")
+				}
+			}
+		}
+	}()
 
 	go func() {
 		<-e.ctx.Done()

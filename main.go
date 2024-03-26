@@ -78,25 +78,22 @@ func main() {
 		ConnBufferSize:        1000,  // TODO: get from a conf file
 	})
 
+	var ct *cri.CRITool
+	ct, err = cri.NewCRITool(ctx)
+	if err != nil {
+		log.Logger.Error().Err(err).Msg("failed to create cri tool")
+	}
+
 	// deploy ebpf programs
 	var ec *ebpf.EbpfCollector
 	if ebpfEnabled {
-		ec = ebpf.NewEbpfCollector(ctx)
+		ec = ebpf.NewEbpfCollector(ctx, ct)
 
 		a := aggregator.NewAggregator(ctx, kubeEvents, ec.EbpfEvents(), ec.EbpfProcEvents(), ec.EbpfTcpEvents(), ec.TlsAttachQueue(), dsBackend)
 		a.Run()
 
 		ec.Init()
 		go ec.ListenEvents()
-	}
-
-	var ct *cri.CRITool
-
-	if logsEnabled {
-		ct, err = cri.NewCRITool(ctx)
-		if err != nil {
-			log.Logger.Error().Err(err).Msg("failed to create cri tool")
-		}
 	}
 
 	var ls *logstreamer.LogStreamer
