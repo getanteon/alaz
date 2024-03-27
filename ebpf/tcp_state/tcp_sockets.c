@@ -16,7 +16,7 @@ struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __type(key, __u32);
     __type(value, __u8);
-    __uint(max_entries, 4194304);
+    __uint(max_entries, 5000);
 } container_pids SEC(".maps");
 
 struct tcp_event

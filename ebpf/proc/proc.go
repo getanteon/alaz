@@ -2,7 +2,6 @@ package proc
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"unsafe"
 
@@ -136,32 +135,6 @@ func (pp *ProcProg) InitMaps() {
 
 	// Initialize the pid filter map from user space and populate
 	// the map with the pids of the container processes
-	containerPidsMap, err := ebpf.NewMap(&ebpf.MapSpec{
-		Name:       "container_pids",
-		Type:       ebpf.LRUHash,
-		KeySize:    4,       // 4 bytes for uint32
-		ValueSize:  1,       // 1 byte for uint8
-		MaxEntries: 4194304, // value inside /proc/sys/kernel/pid_max
-	})
-	if err != nil {
-		log.Logger.Error().Err(err).Msg("error creating container pids map")
-	} else {
-		pp.ContainerPidMap = containerPidsMap
-	}
-}
-
-func (pp *ProcProg) PopulateContainerPidsMap(keys []uint32, values []uint8) error {
-	count, err := pp.ContainerPidMap.BatchUpdate(keys, values, &ebpf.BatchOptions{
-		ElemFlags: 0,
-		Flags:     0,
-	})
-
-	if err != nil {
-		return fmt.Errorf("failed updating ebpfcontainer pids map, %v", err)
-	} else {
-		log.Logger.Debug().Msgf("updated %d entries in container pids map", count)
-		return nil
-	}
 }
 
 func (pp *ProcProg) Consume(ctx context.Context, ch chan interface{}) {

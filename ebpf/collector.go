@@ -123,7 +123,7 @@ func (e *EbpfCollector) Init() {
 			log.Logger.Warn().Msg("cri tool is nil, skipping filtering container pids")
 			return
 		}
-		procProg := e.bpfPrograms["proc_prog"].(*proc.ProcProg)
+		tcpProg := e.bpfPrograms["tcp_state_prog"].(*tcp_state.TcpStateProg)
 		t := time.NewTicker(30 * time.Second)
 
 		for {
@@ -137,11 +137,12 @@ func (e *EbpfCollector) Init() {
 					log.Logger.Error().Err(err).Msg("error getting pids running on containers")
 					continue
 				}
+				log.Logger.Debug().Msgf("got %d pids running on containers", len(pids))
 				values := make([]uint8, len(pids))
 				for i := range pids {
 					values[i] = 1
 				}
-				err = procProg.PopulateContainerPidsMap(pids, values)
+				err = tcpProg.PopulateContainerPidsMap(pids, values)
 				if err != nil {
 					log.Logger.Error().Err(err).Msg("error populating container pids map")
 				}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/ddosify/alaz/log"
 
+	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/perf"
 	"github.com/cilium/ebpf/rlimit"
@@ -118,6 +119,8 @@ type TcpStateProg struct {
 
 	tcpConnectMapSize uint32
 	tcpConnectEvents  *perf.Reader
+
+	ContainerPidMap *ebpf.Map // for filtering non-container pids on the node
 }
 
 func (tsp *TcpStateProg) Close() {
@@ -169,6 +172,22 @@ func (tsp *TcpStateProg) InitMaps() {
 	tsp.tcpConnectEvents, err = perf.NewReader(objs.TcpConnectEvents, int(tsp.tcpConnectMapSize)*os.Getpagesize())
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
+	}
+
+	tsp.ContainerPidMap = objs.ContainerPids
+}
+
+func (tsp *TcpStateProg) PopulateContainerPidsMap(keys []uint32, values []uint8) error {
+	count, err := tsp.ContainerPidMap.BatchUpdate(keys, values, &ebpf.BatchOptions{
+		ElemFlags: 0,
+		Flags:     0,
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed updating ebpfcontainer pids map, %v", err)
+	} else {
+		log.Logger.Debug().Msgf("updated %d entries in container pids map", count)
+		return nil
 	}
 }
 
