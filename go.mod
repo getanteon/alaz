@@ -1,6 +1,6 @@
 module github.com/ddosify/alaz
 
-go 1.20
+go 1.22
 
 require (
 	github.com/NVIDIA/go-nvml v0.12.0-2
@@ -86,7 +86,7 @@ require (
 	github.com/lufia/iostat v1.2.1 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-colorable v0.1.12 // indirect
-	github.com/mattn/go-isatty v0.0.14 // indirect
+	github.com/mattn/go-isatty v0.0.17 // indirect
 	github.com/mattn/go-xmlrpc v0.0.3 // indirect
 	github.com/mdlayher/ethtool v0.0.0-20221212131811-ba3b4bc2e02c // indirect
 	github.com/mdlayher/genetlink v1.3.2 // indirect

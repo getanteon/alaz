@@ -18,7 +18,7 @@ CONTAINER_ENGINE ?= docker
 CONTAINER_RUN_ARGS ?= $(--user "${UIDGID}")
 
 IMAGE_GENERATE := ebpf-builder
-VERSION_GENERATE := v1
+VERSION_GENERATE := v1-1.22.1
 GENERATE_DOCKERFILE := ebpf-builder/Dockerfile
 
 # clang <8 doesn't tag relocs properly (STT_NOTYPE)
