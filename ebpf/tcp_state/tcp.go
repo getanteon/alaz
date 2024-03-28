@@ -1,6 +1,7 @@
 package tcp_state
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -119,6 +120,7 @@ type TcpStateProg struct {
 
 	tcpConnectMapSize uint32
 	tcpConnectEvents  *perf.Reader
+	logs              *perf.Reader
 
 	ContainerPidMap *ebpf.Map // for filtering non-container pids on the node
 }
@@ -174,25 +176,174 @@ func (tsp *TcpStateProg) InitMaps() {
 		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
 	}
 
+	tsp.logs, err = perf.NewReader(objs.LogMap, 4*os.Getpagesize())
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
+	}
+
 	tsp.ContainerPidMap = objs.ContainerPids
 }
 
-func (tsp *TcpStateProg) PopulateContainerPidsMap(keys []uint32, values []uint8) error {
-	count, err := tsp.ContainerPidMap.BatchUpdate(keys, values, &ebpf.BatchOptions{
-		ElemFlags: 0,
-		Flags:     0,
-	})
-
-	if err != nil {
-		return fmt.Errorf("failed updating ebpfcontainer pids map, %v", err)
-	} else {
-		log.Logger.Debug().Msgf("updated %d entries in container pids map", count)
-		return nil
+func (tsp *TcpStateProg) PopulateContainerPidsMap(newKeys, deletedKeys []uint32) error {
+	errors := []error{}
+	if len(deletedKeys) > 0 {
+		log.Logger.Debug().Msgf("deleting container pids map with %d new keys %v", len(deletedKeys), deletedKeys)
+		count, err := tsp.ContainerPidMap.BatchDelete(deletedKeys, &ebpf.BatchOptions{})
+		if err != nil {
+			log.Logger.Warn().Err(err).Msg("failed deleting entries from container pids map")
+			errors = append(errors, err)
+		} else {
+			log.Logger.Debug().Msgf("deleted %d entries from container pids map", count)
+		}
 	}
+
+	if len(newKeys) > 0 {
+		log.Logger.Debug().Msgf("adding container pids map with %d new keys %v", len(newKeys), newKeys)
+		values := make([]uint8, len(newKeys))
+		for i := range values {
+			values[i] = 1
+		}
+
+		count, err := tsp.ContainerPidMap.BatchUpdate(newKeys, values, &ebpf.BatchOptions{
+			ElemFlags: 0,
+			Flags:     0,
+		})
+
+		if err != nil {
+			errors = append(errors, fmt.Errorf("failed adding ebpfcontainer pids map, %v", err))
+		} else {
+			log.Logger.Debug().Msgf("updated %d entries in container pids map", count)
+		}
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("errors: %v", errors)
+	}
+
+	return nil
+}
+
+func findEndIndex(b [100]uint8) (endIndex int) {
+	for i, v := range b {
+		if v == 0 {
+			return i
+		}
+	}
+	return len(b)
 }
 
 // returns when program is detached
 func (tsp *TcpStateProg) Consume(ctx context.Context, ch chan interface{}) {
+	stop := make(chan struct{})
+
+	go func() {
+		var logMessage []byte
+		var funcName []byte
+		read := func() {
+			record, err := tsp.logs.Read()
+			log.Logger.Debug().Msg("reading from log perf array")
+			if err != nil {
+				log.Logger.Warn().Err(err).Msg("error reading from perf array")
+			}
+
+			if record.LostSamples != 0 {
+				log.Logger.Warn().Msgf("lost #%d bpf logs", record.LostSamples)
+			}
+
+			if record.RawSample == nil || len(record.RawSample) == 0 {
+				log.Logger.Warn().Msgf("read empty record from log perf array")
+				return
+			}
+
+			logMsg := (*bpfLogMessage)(unsafe.Pointer(&record.RawSample[0]))
+
+			funcEnd := findEndIndex(logMsg.FuncName)
+			msgEnd := findEndIndex(logMsg.LogMsg)
+
+			logMessage = logMsg.LogMsg[:msgEnd]
+			funcName = logMsg.FuncName[:funcEnd]
+
+			args := []struct {
+				argName  string
+				argValue uint64
+			}{
+				{
+					argName:  "",
+					argValue: 0,
+				},
+				{
+					argName:  "",
+					argValue: 0,
+				},
+				{
+					argName:  "",
+					argValue: 0,
+				},
+			}
+
+			parseLogMessage := func(input []byte, logMsg *bpfLogMessage) []byte {
+				// fd,x,y -- {log-msg}
+				// fd,, -- {log-msg}
+
+				parts := bytes.SplitN(input, []byte(" -- "), 2)
+				if len(parts) != 2 {
+					log.Logger.Warn().Msgf("invalid ebpf log message: %s", string(input))
+					return nil
+				}
+
+				parsedArgs := bytes.SplitN(parts[1], []byte("|"), 3)
+				if len(parsedArgs) != 3 {
+					log.Logger.Warn().Msgf("invalid ebpf log message not 3 args: %s", string(input))
+					return nil
+				}
+
+				args[0].argName = string(parsedArgs[0])
+				args[0].argValue = logMsg.Arg1
+
+				args[1].argName = string(parsedArgs[1])
+				args[1].argValue = logMsg.Arg2
+
+				args[2].argName = string(parsedArgs[2])
+				args[2].argValue = logMsg.Arg3
+				return parts[0]
+			}
+
+			// will change resultArgs
+			logMessage = parseLogMessage(logMessage, logMsg)
+			if logMessage == nil {
+				log.Logger.Warn().Msgf("invalid ebpf log message: %s", string(logMsg.LogMsg[:]))
+				return
+			}
+
+			switch logMsg.Level {
+			case 0:
+				log.Logger.Debug().Str("func", string(funcName)).Uint32("pid", logMsg.Pid).
+					Uint64(args[0].argName, args[0].argValue).Uint64(args[1].argName, args[1].argValue).Uint64(args[2].argName, args[2].argValue).
+					Str("log-msg", string(logMessage)).Msg("ebpf-log")
+			case 1:
+				log.Logger.Info().Str("func", string(funcName)).Uint32("pid", logMsg.Pid).
+					Uint64(args[0].argName, args[0].argValue).Uint64(args[1].argName, args[1].argValue).Uint64(args[2].argName, args[2].argValue).
+					Str("log-msg", string(logMessage)).Msg("ebpf-log")
+			case 2:
+				log.Logger.Warn().Str("func", string(funcName)).Uint32("pid", logMsg.Pid).
+					Uint64(args[0].argName, args[0].argValue).Uint64(args[1].argName, args[1].argValue).Uint64(args[2].argName, args[2].argValue).
+					Str("log-msg", string(logMessage)).Msg("ebpf-log")
+			case 3:
+				log.Logger.Error().Str("func", string(funcName)).Uint32("pid", logMsg.Pid).
+					Uint64(args[0].argName, args[0].argValue).Uint64(args[1].argName, args[1].argValue).Uint64(args[2].argName, args[2].argValue).
+					Str("log-msg", string(logMessage)).Msg("ebpf-log")
+			}
+		}
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				read()
+			}
+		}
+	}()
+
 	for {
 		read := func() {
 			record, err := tsp.tcpConnectEvents.Read()
@@ -225,6 +376,7 @@ func (tsp *TcpStateProg) Consume(ctx context.Context, ch chan interface{}) {
 		}
 		select {
 		case <-ctx.Done():
+			close(stop)
 			log.Logger.Info().Msg("stop consuming tcp events...")
 			return
 		default:

@@ -1,12 +1,16 @@
 package cri
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/ddosify/alaz/log"
+	"github.com/prometheus/procfs"
 
 	//nolint:staticcheck
 	//nolint:staticcheck
@@ -75,8 +79,8 @@ func (ct *CRITool) GetAllContainers() ([]*pb.Container, error) {
 	return list, nil
 }
 
-func (ct *CRITool) GetPidsRunningOnContainers() ([]uint32, error) {
-	pids := []uint32{}
+func (ct *CRITool) GetPidsRunningOnContainers() (map[uint32]struct{}, error) {
+	pids := make(map[uint32]struct{})
 	st := &pb.ContainerStateValue{}
 	st.State = pb.ContainerState_CONTAINER_RUNNING
 
@@ -95,21 +99,93 @@ func (ct *CRITool) GetPidsRunningOnContainers() ([]uint32, error) {
 	}
 
 	for _, c := range list {
-		r, err := ct.rs.ContainerStatus(context.TODO(), c.Id, true)
+		runningPids, err := ct.getAllRunningProcsInsideContainer(c.Id)
 		if err != nil {
-			log.Logger.Error().Err(err).Msgf("Failed to get container status for container %s", c.Id)
+			log.Logger.Error().Err(err).Msgf("Failed to get runnning pids for container %s", c.Id)
 			continue
 		}
+		log.Logger.Debug().Msgf("running container %s-%s has pids %v", c.Metadata.Name, c.Id, runningPids)
 
-		info := map[string]interface{}{}
-		json.Unmarshal([]byte(r.Info["info"]), &info)
+		for _, pid := range runningPids {
+			pids[pid] = struct{}{}
+		}
+	}
+	return pids, nil
+}
 
-		pid := info["pid"].(float64)
-		fmt.Printf("containerID:%s pid:%d name:%s \n", c.Id, int(pid), c.Metadata.Name)
-		pids = append(pids, uint32(pid))
+func (ct *CRITool) getAllRunningProcsInsideContainer(containerID string) ([]uint32, error) {
+	r, err := ct.rs.ContainerStatus(context.TODO(), containerID, true)
+	if err != nil {
+		log.Logger.Error().Err(err).Msgf("Failed to get container status for container %s", containerID)
+		return nil, err
 	}
 
-	return pids, nil
+	info := map[string]interface{}{}
+	json.Unmarshal([]byte(r.Info["info"]), &info)
+
+	// pid of main process
+	pidFloat := info["pid"].(float64)
+	pid := int(pidFloat)
+
+	fs, err := procfs.NewFS("/proc/1/root/proc")
+	if err != nil {
+		return nil, err
+	}
+
+	proc, err := fs.Proc(pid)
+	if err != nil {
+		return nil, err
+	}
+
+	// get cgroup hiearchies and read cgrou.procs file for pids
+	cgroups, err := proc.Cgroups()
+	if err != nil {
+		return nil, err
+	}
+
+	result := []uint32{}
+
+	for _, cgroup := range cgroups {
+		if cgroup.HierarchyID == 0 { // cgroup v2
+			procsPath := "/proc/1/root/sys/fs/cgroup" + cgroup.Path + "/cgroup.procs"
+			// read proc pids
+			pidFile, err := os.OpenFile(procsPath, os.O_RDONLY, 0)
+			if err != nil {
+				log.Logger.Warn().Err(err).Msgf("Error reading cgroup.procs file for cgroup %s", cgroup.Path)
+				continue
+			}
+			defer pidFile.Close()
+			fileScanner := bufio.NewScanner(pidFile)
+			for fileScanner.Scan() {
+				pid, err := strconv.ParseUint(fileScanner.Text(), 10, 32)
+				if err != nil {
+					log.Logger.Warn().Err(err).Msgf("Error parsing pid %s", fileScanner.Text())
+					continue
+				}
+				result = append(result, uint32(pid))
+			}
+		} else { // v1 cgroup
+			// use memory controller as default
+			procsPath := "/proc/1/root/sys/fs/cgroup/memory" + cgroup.Path + "/cgroup.procs"
+			// read proc pids
+			pidFile, err := os.OpenFile(procsPath, os.O_RDONLY, 0)
+			if err != nil {
+				log.Logger.Warn().Err(err).Msgf("Error reading cgroup.procs file for cgroup %s", cgroup.Path)
+				continue
+			}
+			defer pidFile.Close()
+			fileScanner := bufio.NewScanner(pidFile)
+			for fileScanner.Scan() {
+				pid, err := strconv.ParseUint(fileScanner.Text(), 10, 32)
+				if err != nil {
+					log.Logger.Warn().Err(err).Msgf("Error parsing pid %s", fileScanner.Text())
+					continue
+				}
+				result = append(result, uint32(pid))
+			}
+		}
+	}
+	return result, nil
 }
 
 // get log path of container

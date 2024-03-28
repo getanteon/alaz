@@ -110,12 +110,13 @@ int inet_sock_set_state(void *ctx)
   __u8 *val = bpf_map_lookup_elem(&container_pids, &pid);
   if (!val)
   {
+    return 0; // not a container process, ignore
+    
     // log only for containers
-    unsigned char func_name[] = "inet_sock_set_state";
-    unsigned char log_msg[] = "tcp connect event for container -- pid|fd|psize";
-    log_to_userspace(ctx, WARN, func_name, log_msg, pid, 0, 0);        
+    // unsigned char func_name[] = "inet_sock_set_state";
+    // unsigned char log_msg[] = "tcp connect event for container -- pid|fd|psize";
+    // log_to_userspace(ctx, WARN, func_name, log_msg, pid, 0, 0);        
   }
-
 
   const void *skaddr;
 
