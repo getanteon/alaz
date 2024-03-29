@@ -4,8 +4,9 @@ COPY . ./
 RUN apt update 
 
 ARG VERSION
+ENV GOCACHE=/root/.cache/go-build
 RUN go mod tidy -v
-RUN GOOS=linux go build -ldflags="-X 'github.com/ddosify/alaz/datastore.tag=$VERSION'" -o alaz
+RUN --mount=type=cache,target="/root/.cache/go-build" GOOS=linux go build -ldflags="-X 'github.com/ddosify/alaz/datastore.tag=$VERSION'" -o alaz
 
 FROM debian:12.5-slim
 RUN apt-get update && apt-get install -y procps ca-certificates && rm -rf /var/lib/apt/lists/*

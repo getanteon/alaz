@@ -9,7 +9,6 @@
 
 #include "../headers/log.h"
 
-
 char __license[] SEC("license") = "Dual MIT/GPL";
 
 struct {
@@ -107,16 +106,6 @@ int inet_sock_set_state(void *ctx)
   __u64 id = bpf_get_current_pid_tgid();
   __u32 pid = id >> 32;
 
-  __u8 *val = bpf_map_lookup_elem(&container_pids, &pid);
-  if (!val)
-  {
-    return 0; // not a container process, ignore
-    
-    // log only for containers
-    // unsigned char func_name[] = "inet_sock_set_state";
-    // unsigned char log_msg[] = "tcp connect event for container -- pid|fd|psize";
-    // log_to_userspace(ctx, WARN, func_name, log_msg, pid, 0, 0);        
-  }
 
   const void *skaddr;
 
@@ -225,8 +214,17 @@ int inet_sock_set_state(void *ctx)
   __builtin_memcpy(&e.saddr, &args.saddr, sizeof(e.saddr));
   __builtin_memcpy(&e.daddr, &args.daddr, sizeof(e.saddr));
 
-  bpf_perf_event_output(ctx, map, BPF_F_CURRENT_CPU, &e, sizeof(e));
+  __u8 *val = bpf_map_lookup_elem(&container_pids, &e.pid);
+  if (!val)
+  {
+    unsigned char func_name[] = "inet_sock_set_state";
+    unsigned char log_msg[] = "tcp connect event for plain -- pid|fd|psize";
+    log_to_userspace(ctx, WARN, func_name, log_msg, pid, 0, 0);        
 
+    return 0; // not a container process, ignore    
+  }
+
+  bpf_perf_event_output(ctx, map, BPF_F_CURRENT_CPU, &e, sizeof(e));
   return 0;
 }
 
@@ -234,12 +232,20 @@ int inet_sock_set_state(void *ctx)
 SEC("tracepoint/syscalls/sys_enter_connect")
 int sys_enter_connect(void *ctx)
 {
+  __u64 id = bpf_get_current_pid_tgid();
+  __u32 pid = id >> 32;
+
+  __u8 *val = bpf_map_lookup_elem(&container_pids, &pid);
+  if (!val)
+  {
+    return 0; // not a container process, ignore
+  }
+
   struct trace_event_sys_enter_connect args = {};
   if (bpf_core_read(&args, sizeof(args), ctx) < 0)
   {
     return 0;
   }
-  __u64 id = bpf_get_current_pid_tgid();
   bpf_map_update_elem(&fd_by_pid_tgid, &id, &args.fd, BPF_ANY);
   return 0;
 }
@@ -248,6 +254,14 @@ SEC("tracepoint/syscalls/sys_exit_connect")
 int sys_exit_connect(void *ctx)
 {
   __u64 id = bpf_get_current_pid_tgid();
+  __u32 pid = id >> 32;
+
+  __u8 *val = bpf_map_lookup_elem(&container_pids, &pid);
+  if (!val)
+  {
+    return 0; // not a container process, ignore
+  }
+
   bpf_map_delete_elem(&fd_by_pid_tgid, &id);
   return 0;
 }

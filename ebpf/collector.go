@@ -115,68 +115,77 @@ func (e *EbpfCollector) Init() {
 	for _, p := range e.bpfPrograms {
 		p.Load()
 		p.InitMaps()
-		go func() {
-			if e.ct == nil {
-				log.Logger.Warn().Msg("cri tool is nil, skipping filtering container pids")
-				return
-			}
-			tcpProg := e.bpfPrograms["tcp_state_prog"].(*tcp_state.TcpStateProg)
-			t := time.NewTicker(30 * time.Second)
-
-			oldState := make(map[uint32]struct{})
-
-			populate := func() {
-				currentPids, err := e.ct.GetPidsRunningOnContainers()
-				if err != nil {
-					log.Logger.Error().Err(err).Msg("error getting pids running on containers")
-					return
-				}
-
-				// find new pids
-				newPids := make([]uint32, 0)
-				for pid, _ := range currentPids {
-					if _, ok := oldState[pid]; !ok {
-						newPids = append(newPids, pid)
-					}
-				}
-
-				// find removed pids
-				removedPids := make([]uint32, 0)
-				for pid := range oldState {
-					found := false
-					for currentPid, _ := range currentPids {
-						if pid == currentPid { // still alive
-							found = true
-							break
-						}
-					}
-					if !found {
-						removedPids = append(removedPids, pid)
-					}
-				}
-
-				// update oldstate
-				oldState = currentPids
-
-				err = tcpProg.PopulateContainerPidsMap(newPids, removedPids)
-				if err != nil {
-					log.Logger.Error().Err(err).Msg("failed populating container pids map")
-				}
-			}
-			populate() // run once immediately after starting the ticker
-
-			for {
-				select {
-				case <-e.ctx.Done():
-					t.Stop()
-					return
-				case <-t.C:
-					populate()
-				}
-			}
-		}()
 		p.Attach()
 	}
+
+	go func() {
+		if e.ct == nil {
+			log.Logger.Warn().Msg("cri tool is nil, skipping filtering container pids")
+			return
+		}
+		tcpProg := e.bpfPrograms["tcp_state_prog"].(*tcp_state.TcpStateProg)
+		t := time.NewTicker(30 * time.Second)
+
+		oldState := make(map[uint32]struct{})
+
+		populate := func() {
+			log.Logger.Debug().Msg("populating container pids map")
+			currentPids, err := e.ct.GetPidsRunningOnContainers()
+			if err != nil {
+				log.Logger.Error().Err(err).Msg("error getting pids running on containers")
+				return
+			}
+
+			// find new pids
+			newPids := make([]uint32, 0)
+			for pid, _ := range currentPids {
+				if _, ok := oldState[pid]; !ok {
+					newPids = append(newPids, pid)
+				}
+			}
+
+			// find removed pids
+			removedPids := make([]uint32, 0)
+			for pid := range oldState {
+				found := false
+				for currentPid, _ := range currentPids {
+					if pid == currentPid { // still alive
+						found = true
+						break
+					}
+				}
+				if !found {
+					removedPids = append(removedPids, pid)
+				}
+			}
+
+			// update oldstate
+
+			for k := range oldState {
+				delete(oldState, k)
+			}
+
+			for pid, _ := range currentPids {
+				oldState[pid] = struct{}{}
+			}
+
+			err = tcpProg.PopulateContainerPidsMap(newPids, removedPids)
+			if err != nil {
+				log.Logger.Error().Err(err).Msg("failed populating container pids map")
+			}
+		}
+		populate() // run once immediately after starting the ticker
+
+		for {
+			select {
+			case <-e.ctx.Done():
+				t.Stop()
+				return
+			case <-t.C:
+				populate()
+			}
+		}
+	}()
 
 	go func() {
 		<-e.ctx.Done()
