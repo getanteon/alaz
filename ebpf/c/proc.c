@@ -1,14 +1,4 @@
 //go:build ignore
-#include "../headers/bpf.h"
-#include "../headers/common.h"
-#include "exit.h"
-
-
-#include <bpf/bpf_helpers.h>
-#include <bpf/bpf_tracing.h>
-#include <bpf/bpf_core_read.h>
-
-char __license[] SEC("license") = "Dual MIT/GPL";
 
 struct p_event{
     __u32 pid;

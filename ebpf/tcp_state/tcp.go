@@ -1,20 +1,17 @@
 package tcp_state
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"unsafe"
 
+	"github.com/ddosify/alaz/ebpf/c"
 	"github.com/ddosify/alaz/log"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/perf"
-	"github.com/cilium/ebpf/rlimit"
-
-	"github.com/cilium/ebpf/linux"
 )
 
 // match with values in tcp_state.c
@@ -57,7 +54,7 @@ func (e TcpStateConversion) String() string {
 }
 
 // $BPF_CLANG and $BPF_CFLAGS are set by the Makefile.
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc $BPF_CLANG -cflags $BPF_CFLAGS bpf tcp_sockets.c -- -I../headers
+// //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc $BPF_CLANG -cflags $BPF_CFLAGS bpf tcp_sockets.c -- -I../headers
 
 const mapKey uint32 = 0
 
@@ -91,8 +88,6 @@ func (e TcpConnectEvent) Type() string {
 	return TCP_CONNECT_EVENT
 }
 
-var objs bpfObjects
-
 var TcpState *TcpStateProg
 
 type TcpStateConfig struct {
@@ -120,7 +115,6 @@ type TcpStateProg struct {
 
 	tcpConnectMapSize uint32
 	tcpConnectEvents  *perf.Reader
-	logs              *perf.Reader
 
 	ContainerPidMap *ebpf.Map // for filtering non-container pids on the node
 }
@@ -130,39 +124,22 @@ func (tsp *TcpStateProg) Close() {
 		log.Logger.Info().Msgf("unattach %s", hookName)
 		link.Close()
 	}
-	objs.Close()
-}
-
-// Loads bpf programs into kernel
-func (tsp *TcpStateProg) Load() {
-	// Allow the current process to lock memory for eBPF resources.
-	if err := rlimit.RemoveMemlock(); err != nil {
-		log.Logger.Fatal().Err(err).Msg("failed to remove memlock limit")
-	}
-
-	// Load pre-compiled programs and maps into the kernel.
-	objs = bpfObjects{}
-	if err := loadBpfObjects(&objs, nil); err != nil {
-		log.Logger.Fatal().Err(err).Msg("loading objects")
-	}
-
-	linux.FlushCaches()
 }
 
 func (tsp *TcpStateProg) Attach() {
-	l, err := link.Tracepoint("sock", "inet_sock_set_state", objs.bpfPrograms.InetSockSetState, nil)
+	l, err := link.Tracepoint("sock", "inet_sock_set_state", c.BpfObjs.InetSockSetState, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link inet_sock_set_state tracepoint")
 	}
 	tsp.links["sock/inet_sock_set_state"] = l
 
-	l1, err := link.Tracepoint("syscalls", "sys_enter_connect", objs.bpfPrograms.SysEnterConnect, nil)
+	l1, err := link.Tracepoint("syscalls", "sys_enter_connect", c.BpfObjs.SysEnterConnect, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_enter_connect tracepoint")
 	}
 	tsp.links["syscalls/sys_enter_connect"] = l1
 
-	l2, err := link.Tracepoint("syscalls", "sys_exit_connect", objs.bpfPrograms.SysEnterConnect, nil)
+	l2, err := link.Tracepoint("syscalls", "sys_exit_connect", c.BpfObjs.SysEnterConnect, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_exit_connect tracepoint")
 	}
@@ -171,17 +148,12 @@ func (tsp *TcpStateProg) Attach() {
 
 func (tsp *TcpStateProg) InitMaps() {
 	var err error
-	tsp.tcpConnectEvents, err = perf.NewReader(objs.TcpConnectEvents, int(tsp.tcpConnectMapSize)*os.Getpagesize())
+	tsp.tcpConnectEvents, err = perf.NewReader(c.BpfObjs.TcpConnectEvents, int(tsp.tcpConnectMapSize)*os.Getpagesize())
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
 	}
 
-	tsp.logs, err = perf.NewReader(objs.LogMap, 4*os.Getpagesize())
-	if err != nil {
-		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
-	}
-
-	tsp.ContainerPidMap = objs.ContainerPids
+	tsp.ContainerPidMap = c.BpfObjs.ContainerPids
 }
 
 func (tsp *TcpStateProg) PopulateContainerPidsMap(newKeys, deletedKeys []uint32) error {
@@ -234,116 +206,6 @@ func findEndIndex(b [100]uint8) (endIndex int) {
 
 // returns when program is detached
 func (tsp *TcpStateProg) Consume(ctx context.Context, ch chan interface{}) {
-	stop := make(chan struct{})
-
-	go func() {
-		var logMessage []byte
-		var funcName []byte
-		read := func() {
-			record, err := tsp.logs.Read()
-			log.Logger.Debug().Msg("reading from log perf array")
-			if err != nil {
-				log.Logger.Warn().Err(err).Msg("error reading from perf array")
-			}
-
-			if record.LostSamples != 0 {
-				log.Logger.Warn().Msgf("lost #%d bpf logs", record.LostSamples)
-			}
-
-			if record.RawSample == nil || len(record.RawSample) == 0 {
-				log.Logger.Warn().Msgf("read empty record from log perf array")
-				return
-			}
-
-			logMsg := (*bpfLogMessage)(unsafe.Pointer(&record.RawSample[0]))
-
-			funcEnd := findEndIndex(logMsg.FuncName)
-			msgEnd := findEndIndex(logMsg.LogMsg)
-
-			logMessage = logMsg.LogMsg[:msgEnd]
-			funcName = logMsg.FuncName[:funcEnd]
-
-			args := []struct {
-				argName  string
-				argValue uint64
-			}{
-				{
-					argName:  "",
-					argValue: 0,
-				},
-				{
-					argName:  "",
-					argValue: 0,
-				},
-				{
-					argName:  "",
-					argValue: 0,
-				},
-			}
-
-			parseLogMessage := func(input []byte, logMsg *bpfLogMessage) []byte {
-				// fd,x,y -- {log-msg}
-				// fd,, -- {log-msg}
-
-				parts := bytes.SplitN(input, []byte(" -- "), 2)
-				if len(parts) != 2 {
-					log.Logger.Warn().Msgf("invalid ebpf log message: %s", string(input))
-					return nil
-				}
-
-				parsedArgs := bytes.SplitN(parts[1], []byte("|"), 3)
-				if len(parsedArgs) != 3 {
-					log.Logger.Warn().Msgf("invalid ebpf log message not 3 args: %s", string(input))
-					return nil
-				}
-
-				args[0].argName = string(parsedArgs[0])
-				args[0].argValue = logMsg.Arg1
-
-				args[1].argName = string(parsedArgs[1])
-				args[1].argValue = logMsg.Arg2
-
-				args[2].argName = string(parsedArgs[2])
-				args[2].argValue = logMsg.Arg3
-				return parts[0]
-			}
-
-			// will change resultArgs
-			logMessage = parseLogMessage(logMessage, logMsg)
-			if logMessage == nil {
-				log.Logger.Warn().Msgf("invalid ebpf log message: %s", string(logMsg.LogMsg[:]))
-				return
-			}
-
-			switch logMsg.Level {
-			case 0:
-				log.Logger.Debug().Str("func", string(funcName)).Uint32("pid", logMsg.Pid).
-					Uint64(args[0].argName, args[0].argValue).Uint64(args[1].argName, args[1].argValue).Uint64(args[2].argName, args[2].argValue).
-					Str("log-msg", string(logMessage)).Msg("ebpf-log")
-			case 1:
-				log.Logger.Info().Str("func", string(funcName)).Uint32("pid", logMsg.Pid).
-					Uint64(args[0].argName, args[0].argValue).Uint64(args[1].argName, args[1].argValue).Uint64(args[2].argName, args[2].argValue).
-					Str("log-msg", string(logMessage)).Msg("ebpf-log")
-			case 2:
-				log.Logger.Warn().Str("func", string(funcName)).Uint32("pid", logMsg.Pid).
-					Uint64(args[0].argName, args[0].argValue).Uint64(args[1].argName, args[1].argValue).Uint64(args[2].argName, args[2].argValue).
-					Str("log-msg", string(logMessage)).Msg("ebpf-log")
-			case 3:
-				log.Logger.Error().Str("func", string(funcName)).Uint32("pid", logMsg.Pid).
-					Uint64(args[0].argName, args[0].argValue).Uint64(args[1].argName, args[1].argValue).Uint64(args[2].argName, args[2].argValue).
-					Str("log-msg", string(logMessage)).Msg("ebpf-log")
-			}
-		}
-		for {
-			select {
-			case <-stop:
-				return
-			default:
-				read()
-			}
-		}
-	}()
-
 	for {
 		read := func() {
 			record, err := tsp.tcpConnectEvents.Read()
@@ -361,6 +223,11 @@ func (tsp *TcpStateProg) Consume(ctx context.Context, ch chan interface{}) {
 
 			bpfEvent := (*BpfTcpEvent)(unsafe.Pointer(&record.RawSample[0]))
 
+			if bpfEvent.Pid == 3738744 {
+				log.Logger.Debug().Uint64("ts", bpfEvent.Timestamp).
+					Str("type", TcpStateConversion(bpfEvent.Type).String()).Uint64("fd", bpfEvent.Fd).Msg("tcp event of pid 3738744")
+			}
+
 			go func() {
 				ch <- &TcpConnectEvent{
 					Pid:       bpfEvent.Pid,
@@ -376,7 +243,6 @@ func (tsp *TcpStateProg) Consume(ctx context.Context, ch chan interface{}) {
 		}
 		select {
 		case <-ctx.Done():
-			close(stop)
 			log.Logger.Info().Msg("stop consuming tcp events...")
 			return
 		default:

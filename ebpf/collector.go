@@ -16,6 +16,7 @@ import (
 
 	"github.com/cilium/ebpf/link"
 	"github.com/ddosify/alaz/cri"
+	"github.com/ddosify/alaz/ebpf/c"
 	"github.com/ddosify/alaz/ebpf/l7_req"
 	"github.com/ddosify/alaz/ebpf/proc"
 	"github.com/ddosify/alaz/ebpf/tcp_state"
@@ -111,9 +112,14 @@ func (e *EbpfCollector) TlsAttachQueue() chan uint32 {
 	return e.tlsAttachQueue
 }
 
+func (e *EbpfCollector) Load() {
+	c.Load() // load bpf programs into kernel
+}
+
 func (e *EbpfCollector) Init() {
+	e.Load()
 	for _, p := range e.bpfPrograms {
-		p.Load()
+		// p.Load() // all programs are compiled together, loaded at once
 		p.InitMaps()
 		p.Attach()
 	}
@@ -208,6 +214,7 @@ func (e *EbpfCollector) close() {
 	for _, p := range e.bpfPrograms {
 		p.Close()
 	}
+	c.BpfObjs.Close()
 
 	close(e.ebpfEvents)
 	close(e.ebpfProcEvents)
@@ -410,7 +417,7 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 			// we calculate it here for uretprobes no matter what, because we need to attach uretprobes to ret instructions
 			// and we need the address of the function
 			// so in order to prevent Uprobe func to recalculating the address, we pass it here
-			l, err := ex.Uprobe(s.Name, l7_req.L7BpfProgsAndMaps.GoTlsConnWriteEnter, &link.UprobeOptions{Address: address})
+			l, err := ex.Uprobe(s.Name, c.BpfObjs.GoTlsConnWriteEnter, &link.UprobeOptions{Address: address})
 			if err != nil {
 				log.Logger.Debug().Err(err).Str("reason", "gotls").Uint32("pid", pid).Msg("error attaching uprobe")
 				errors = append(errors, err)
@@ -420,7 +427,7 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 			e.goTlsWriteUprobes[pid] = l
 			e.probesMu.Unlock()
 		case goTlsReadSymbol:
-			l, err := ex.Uprobe(s.Name, l7_req.L7BpfProgsAndMaps.GoTlsConnReadEnter, &link.UprobeOptions{Address: address})
+			l, err := ex.Uprobe(s.Name, c.BpfObjs.GoTlsConnReadEnter, &link.UprobeOptions{Address: address})
 			if err != nil {
 				log.Logger.Debug().Err(err).Str("reason", "gotls").Uint32("pid", pid).Msg("error attaching uprobe")
 				errors = append(errors, err)
@@ -474,7 +481,7 @@ func (e *EbpfCollector) AttachGoTlsUprobesOnProcess(procfs string, pid uint32) [
 			e.goTlsReadUretprobes[pid] = make([]link.Link, 0)
 			e.probesMu.Unlock()
 			for _, offset := range returnOffsets {
-				l, err := ex.Uprobe(s.Name, l7_req.L7BpfProgsAndMaps.GoTlsConnReadExit, &link.UprobeOptions{Address: address, Offset: uint64(offset)})
+				l, err := ex.Uprobe(s.Name, c.BpfObjs.GoTlsConnReadExit, &link.UprobeOptions{Address: address, Offset: uint64(offset)})
 				if err != nil {
 					log.Logger.Debug().Err(err).Str("reason", "gotls").Uint32("pid", pid).Msg("error attaching uretprobe")
 					errors = append(errors, err)
@@ -562,19 +569,19 @@ func (e *EbpfCollector) AttachSSlUprobes(pid uint32, executablePath string, vers
 	if semver.Compare(version, "v3.0.0") >= 0 {
 		log.Logger.Debug().Str("path", executablePath).Uint32("pid", pid).Str("version", version).Msgf("attaching ssl uprobes v3")
 
-		sslWriteUprobe, err = ex.Uprobe("SSL_write", l7_req.L7BpfProgsAndMaps.SslWriteV3, nil)
+		sslWriteUprobe, err = ex.Uprobe("SSL_write", c.BpfObjs.SslWriteV3, nil)
 		if err != nil {
 			log.Logger.Warn().Err(err).Msgf("error attaching %s uprobe", "SSL_write")
 			return err
 		}
 
-		sslReadEnterUprobe, err = ex.Uprobe("SSL_read", l7_req.L7BpfProgsAndMaps.SslReadEnterV3, nil)
+		sslReadEnterUprobe, err = ex.Uprobe("SSL_read", c.BpfObjs.SslReadEnterV3, nil)
 		if err != nil {
 			log.Logger.Warn().Err(err).Msgf("error attaching %s uprobe", "SSL_read")
 			return err
 		}
 
-		sslReadURetprobe, err = ex.Uretprobe("SSL_read", l7_req.L7BpfProgsAndMaps.SslRetRead, nil)
+		sslReadURetprobe, err = ex.Uretprobe("SSL_read", c.BpfObjs.SslRetRead, nil)
 		if err != nil {
 			log.Logger.Warn().Err(err).Msgf("error attaching %s uretprobe", "SSL_read")
 			return err
@@ -582,38 +589,38 @@ func (e *EbpfCollector) AttachSSlUprobes(pid uint32, executablePath string, vers
 	} else if semver.Compare(version, "v1.1.0") >= 0 { // accept 1.1 as >= 1.1.1 for now, linking to 1.1.1 compatible uprobes
 		log.Logger.Debug().Str("path", executablePath).Uint32("pid", pid).Str("version", version).Msgf("attaching ssl uprobes v1.1")
 
-		sslWriteUprobe, err = ex.Uprobe("SSL_write", l7_req.L7BpfProgsAndMaps.SslWriteV111, nil)
+		sslWriteUprobe, err = ex.Uprobe("SSL_write", c.BpfObjs.SslWriteV111, nil)
 		if err != nil {
 			log.Logger.Warn().Err(err).Msgf("error attaching %s uprobe", "SSL_write")
 			return err
 		}
 
-		sslReadEnterUprobe, err = ex.Uprobe("SSL_read", l7_req.L7BpfProgsAndMaps.SslReadEnterV111, nil)
+		sslReadEnterUprobe, err = ex.Uprobe("SSL_read", c.BpfObjs.SslReadEnterV111, nil)
 		if err != nil {
 			log.Logger.Warn().Err(err).Msgf("error attaching %s uprobe", "SSL_read")
 			return err
 		}
 
-		sslReadURetprobe, err = ex.Uretprobe("SSL_read", l7_req.L7BpfProgsAndMaps.SslRetRead, nil)
+		sslReadURetprobe, err = ex.Uretprobe("SSL_read", c.BpfObjs.SslRetRead, nil)
 		if err != nil {
 			log.Logger.Warn().Err(err).Msgf("error attaching %s uretprobe", "SSL_read")
 			return err
 		}
 	} else if semver.Compare(version, "v1.0.2") >= 0 {
 		log.Logger.Debug().Str("path", executablePath).Uint32("pid", pid).Str("version", version).Msgf("attaching ssl uprobes v1.0.2")
-		sslWriteUprobe, err = ex.Uprobe("SSL_write", l7_req.L7BpfProgsAndMaps.SslWriteV102, nil)
+		sslWriteUprobe, err = ex.Uprobe("SSL_write", c.BpfObjs.SslWriteV102, nil)
 		if err != nil {
 			log.Logger.Warn().Err(err).Msgf("error attaching %s uprobe", "SSL_write")
 			return err
 		}
 
-		sslReadEnterUprobe, err = ex.Uprobe("SSL_read", l7_req.L7BpfProgsAndMaps.SslReadEnterV102, nil)
+		sslReadEnterUprobe, err = ex.Uprobe("SSL_read", c.BpfObjs.SslReadEnterV102, nil)
 		if err != nil {
 			log.Logger.Warn().Err(err).Msgf("error attaching %s uprobe", "SSL_read")
 			return err
 		}
 
-		sslReadURetprobe, err = ex.Uretprobe("SSL_read", l7_req.L7BpfProgsAndMaps.SslRetRead, nil)
+		sslReadURetprobe, err = ex.Uretprobe("SSL_read", c.BpfObjs.SslRetRead, nil)
 		if err != nil {
 			log.Logger.Warn().Err(err).Msgf("error attaching %s uretprobe", "SSL_read")
 			return err

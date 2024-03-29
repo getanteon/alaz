@@ -8,12 +8,11 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/ddosify/alaz/ebpf/c"
 	"github.com/ddosify/alaz/log"
 
 	"github.com/cilium/ebpf/link"
-	"github.com/cilium/ebpf/linux"
 	"github.com/cilium/ebpf/perf"
-	"github.com/cilium/ebpf/rlimit"
 )
 
 var DIST_TRACING_ENABLED bool
@@ -231,11 +230,41 @@ func (e Http2MethodConversion) String() string {
 }
 
 // $BPF_CLANG and $BPF_CFLAGS are set by the Makefile.
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc $BPF_CLANG -cflags $BPF_CFLAGS bpf l7.c -- -I../headers
+// // go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc $BPF_CLANG -cflags $BPF_CFLAGS bpf l7.c -- -I../headers
 
 const mapKey uint32 = 0
 
-// bpf
+// bpf structs, copy from generated code
+type bpfLogMessage struct {
+	Level    uint32
+	LogMsg   [100]uint8
+	FuncName [100]uint8
+	Pid      uint32
+	Arg1     uint64
+	Arg2     uint64
+	Arg3     uint64
+}
+
+type bpfL7Event struct {
+	Fd                  uint64
+	WriteTimeNs         uint64
+	Pid                 uint32
+	Status              uint32
+	Duration            uint64
+	Protocol            uint8
+	Method              uint8
+	Padding             uint16
+	Payload             [1024]uint8
+	PayloadSize         uint32
+	PayloadReadComplete uint8
+	Failed              uint8
+	IsTls               uint8
+	_                   [1]byte
+	Seq                 uint32
+	Tid                 uint32
+	_                   [4]byte
+}
+
 type bpfTraceEvent struct {
 	Pid   uint32
 	Tid   uint32
@@ -284,8 +313,6 @@ func (e *L7Event) Type() string {
 	return L7_EVENT
 }
 
-var L7BpfProgsAndMaps bpfObjects
-
 type L7ProgConfig struct {
 	TrafficBpfMapSize  uint32 // specified in terms of os page size
 	L7EventsBpfMapSize uint32 // specified in terms of os page size
@@ -329,69 +356,52 @@ func (l7p *L7Prog) Close() {
 		log.Logger.Info().Msgf("unattach %s", hookName)
 		link.Close()
 	}
-	L7BpfProgsAndMaps.Close()
-}
-
-// Loads bpf programs into kernel
-func (l7p *L7Prog) Load() {
-	// Allow the current process to lock memory for eBPF resources.
-	if err := rlimit.RemoveMemlock(); err != nil {
-		log.Logger.Fatal().Err(err).Msg("failed to remove memlock limit")
-	}
-
-	// Load pre-compiled programs and maps into the kernel.
-	L7BpfProgsAndMaps = bpfObjects{}
-	if err := loadBpfObjects(&L7BpfProgsAndMaps, nil); err != nil {
-		log.Logger.Fatal().Err(err).Msg("loading objects")
-	}
-
-	linux.FlushCaches()
 }
 
 func (l7p *L7Prog) Attach() {
-	l, err := link.Tracepoint("syscalls", "sys_enter_read", L7BpfProgsAndMaps.bpfPrograms.SysEnterRead, nil)
+	l, err := link.Tracepoint("syscalls", "sys_enter_read", c.BpfObjs.SysEnterRead, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_enter_read tracepoint")
 	}
 	l7p.links["syscalls/sys_enter_read"] = l
 
-	l1, err := link.Tracepoint("syscalls", "sys_enter_write", L7BpfProgsAndMaps.bpfPrograms.SysEnterWrite, nil)
+	l1, err := link.Tracepoint("syscalls", "sys_enter_write", c.BpfObjs.SysEnterWrite, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_enter_write tracepoint")
 	}
 	l7p.links["syscalls/sys_enter_write"] = l1
 
-	l2, err := link.Tracepoint("syscalls", "sys_exit_read", L7BpfProgsAndMaps.bpfPrograms.SysExitRead, nil)
+	l2, err := link.Tracepoint("syscalls", "sys_exit_read", c.BpfObjs.SysExitRead, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_exit_read tracepoint")
 	}
 	l7p.links["syscalls/sys_exit_read"] = l2
 
-	l3, err := link.Tracepoint("syscalls", "sys_enter_sendto", L7BpfProgsAndMaps.bpfPrograms.SysEnterSendto, nil)
+	l3, err := link.Tracepoint("syscalls", "sys_enter_sendto", c.BpfObjs.SysEnterSendto, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_enter_sendto tracepoint")
 	}
 	l7p.links["syscalls/sys_enter_sendto"] = l3
 
-	l4, err := link.Tracepoint("syscalls", "sys_enter_recvfrom", L7BpfProgsAndMaps.bpfPrograms.SysEnterRecvfrom, nil)
+	l4, err := link.Tracepoint("syscalls", "sys_enter_recvfrom", c.BpfObjs.SysEnterRecvfrom, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_enter_recvfrom tracepoint")
 	}
 	l7p.links["syscalls/sys_enter_recvfrom"] = l4
 
-	l5, err := link.Tracepoint("syscalls", "sys_exit_recvfrom", L7BpfProgsAndMaps.bpfPrograms.SysExitRecvfrom, nil)
+	l5, err := link.Tracepoint("syscalls", "sys_exit_recvfrom", c.BpfObjs.SysExitRecvfrom, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_exit_recvfrom tracepoint")
 	}
 	l7p.links["syscalls/sys_exit_recvfrom"] = l5
 
-	l6, err := link.Tracepoint("syscalls", "sys_exit_sendto", L7BpfProgsAndMaps.bpfPrograms.SysExitSendto, nil)
+	l6, err := link.Tracepoint("syscalls", "sys_exit_sendto", c.BpfObjs.SysExitSendto, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_exit_sendto tracepoint")
 	}
 	l7p.links["syscalls/sys_exit_sendto"] = l6
 
-	l7, err := link.Tracepoint("syscalls", "sys_exit_write", L7BpfProgsAndMaps.bpfPrograms.SysExitWrite, nil)
+	l7, err := link.Tracepoint("syscalls", "sys_exit_write", c.BpfObjs.SysExitWrite, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_exit_write tracepoint")
 	}
@@ -401,17 +411,18 @@ func (l7p *L7Prog) Attach() {
 func (l7p *L7Prog) InitMaps() {
 	// initialize perf event readers
 	var err error
-	l7p.l7Events, err = perf.NewReader(L7BpfProgsAndMaps.L7Events, int(l7p.l7EventsMapSize)*os.Getpagesize())
+	l7p.l7Events, err = perf.NewReader(c.BpfObjs.L7Events, int(l7p.l7EventsMapSize)*os.Getpagesize())
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
 	}
 
-	l7p.logs, err = perf.NewReader(L7BpfProgsAndMaps.LogMap, int(l7p.logsMapsSize)*os.Getpagesize())
+	// read all bpf logs from the log map (note that all programs log to the same map)
+	l7p.logs, err = perf.NewReader(c.BpfObjs.LogMap, int(l7p.logsMapsSize)*os.Getpagesize())
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
 	}
 
-	l7p.traffic, err = perf.NewReader(L7BpfProgsAndMaps.IngressEgressCalls, int(l7p.trafficMapSize)*os.Getpagesize())
+	l7p.traffic, err = perf.NewReader(c.BpfObjs.IngressEgressCalls, int(l7p.trafficMapSize)*os.Getpagesize())
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("error creating perf reader")
 	}
