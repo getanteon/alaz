@@ -89,6 +89,17 @@ func (ls *LogStreamer) Done() chan struct{} {
 }
 
 func (ls *LogStreamer) watchContainer(id string, name string) error {
+	resp, err := ls.critool.ContainerStatus(id)
+	if err != nil {
+		log.Logger.Error().Err(err).Msgf("Failed to get container status for container [%s]", id)
+		return err
+	}
+
+	if ls.critool.FilterNamespace(resp.PodNs) {
+		log.Logger.Info().Msgf("Skipping logs for container [%s] with id [%s]", name, id)
+		return nil
+	}
+
 	logPath, err := ls.critool.GetLogPath(id)
 	if err != nil {
 		log.Logger.Error().Err(err).Msgf("Failed to get log path for container %s", id)
@@ -113,12 +124,6 @@ func (ls *LogStreamer) watchContainer(id string, name string) error {
 	suffixNum, err := strconv.Atoi(fileNameWithoutExt)
 	if err != nil {
 		log.Logger.Error().Err(err).Msgf("Failed to parse numeric part of log file name %s", fileName)
-	}
-
-	resp, err := ls.critool.ContainerStatus(id)
-	if err != nil {
-		log.Logger.Error().Err(err).Msgf("Failed to get container status for container %s", id)
-		return err
 	}
 
 	ls.logPathToContainerMeta[logPath] = getContainerMetadataLine(resp.PodNs, resp.PodName, resp.PodUid, name, suffixNum)

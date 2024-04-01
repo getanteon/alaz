@@ -253,9 +253,8 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
             __u8 *val = bpf_map_lookup_elem(&container_pids, &(e->pid));
             if (!val)
             {
-                unsigned char log_msg[] = "filter out l7 event -- pid|fd|psize";
-                log_to_userspace(ctx, DEBUG, func_name, log_msg, e->pid, e->fd, 0);        
-
+                // unsigned char log_msg[] = "filter out l7 event -- pid|fd|psize";
+                // log_to_userspace(ctx, DEBUG, func_name, log_msg, e->pid, e->fd, 0);        
                 return 0; // not a container process, ignore    
             }
 
@@ -342,7 +341,7 @@ int process_enter_of_syscalls_read_recvfrom(void *ctx, struct read_enter_args * 
 
 static __always_inline
 int process_exit_of_syscalls_write_sendto(void* ctx, __s64 ret){
-    unsigned char func_name[] = "process_exit_of_syscalls_write_sendto";
+    // unsigned char func_name[] = "process_exit_of_syscalls_write_sendto";
     __u64 timestamp = bpf_ktime_get_ns();
     __u64 id = bpf_get_current_pid_tgid();
 
@@ -407,9 +406,8 @@ int process_exit_of_syscalls_write_sendto(void* ctx, __s64 ret){
         __u8 *val = bpf_map_lookup_elem(&container_pids, &(e->pid));
         if (!val)
         {
-            unsigned char log_msg[] = "filter out l7 event -- pid|fd|psize";
-            log_to_userspace(ctx, DEBUG, func_name, log_msg, e->pid, e->fd, 0);        
-
+            // unsigned char log_msg[] = "filter out l7 event -- pid|fd|psize";
+            // log_to_userspace(ctx, DEBUG, func_name, log_msg, e->pid, e->fd, 0);        
             return 0; // not a container process, ignore    
         }
         bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
@@ -454,6 +452,8 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
 
         return 0;
     }
+
+
 
 
     // __u64 id = bpf_get_current_pid_tgid();
@@ -504,9 +504,8 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
         __u8 *val = bpf_map_lookup_elem(&container_pids, &(e->pid));
         if (!val)
         {
-            unsigned char log_msg[] = "filter out l7 event -- pid|fd|psize";
-            log_to_userspace(ctx, DEBUG, func_name, log_msg, e->pid, e->fd, 0);        
-
+            // unsigned char log_msg[] = "filter out l7 event -- pid|fd|psize";
+            // log_to_userspace(ctx, DEBUG, func_name, log_msg, e->pid, e->fd, 0);        
             return 0; // not a container process, ignore    
         }
         bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
@@ -539,8 +538,8 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
             __u8 *val = bpf_map_lookup_elem(&container_pids, &(e->pid));
             if (!val)
             {
-                unsigned char log_msg[] = "filter out l7 event -- pid|fd|psize";
-                log_to_userspace(ctx, DEBUG, func_name, log_msg, e->pid, e->fd, 0);        
+                // unsigned char log_msg[] = "filter out l7 event -- pid|fd|psize";
+                // log_to_userspace(ctx, DEBUG, func_name, log_msg, e->pid, e->fd, 0);        
 
                 return 0; // not a container process, ignore    
             }
@@ -627,8 +626,8 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
     __u8 *val = bpf_map_lookup_elem(&container_pids, &(e->pid));
     if (!val)
     {
-        unsigned char log_msg[] = "filter out l7 event -- pid|fd|psize";
-        log_to_userspace(ctx, DEBUG, func_name, log_msg, e->pid, e->fd, 0);        
+        // unsigned char log_msg[] = "filter out l7 event -- pid|fd|psize";
+        // log_to_userspace(ctx, DEBUG, func_name, log_msg, e->pid, e->fd, 0);        
         return 0; // not a container process, ignore    
     }
     long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
@@ -1021,8 +1020,8 @@ int process_enter_of_go_conn_write(void *ctx, __u32 pid, __u32 fd, char *buf_ptr
             __u8 *val = bpf_map_lookup_elem(&container_pids, &(e->pid));
             if (!val)
             {
-                unsigned char log_msg[] = "filter out l7 event -- pid|fd|psize";
-                log_to_userspace(ctx, DEBUG, func_name, log_msg, e->pid, e->fd, 0);        
+                // unsigned char log_msg[] = "filter out l7 event -- pid|fd|psize";
+                // log_to_userspace(ctx, DEBUG, func_name, log_msg, e->pid, e->fd, 0);        
 
                 return 0; // not a container process, ignore    
             }
@@ -1194,8 +1193,8 @@ int BPF_UPROBE(go_tls_conn_read_exit) {
         __u8 *val = bpf_map_lookup_elem(&container_pids, &(e->pid));
         if (!val)
         {
-            unsigned char log_msg[] = "filter out l7 event -- pid|fd|psize";
-            log_to_userspace(ctx, DEBUG, func_name, log_msg, e->pid, e->fd, 0);        
+            // unsigned char log_msg[] = "filter out l7 event -- pid|fd|psize";
+            // log_to_userspace(ctx, DEBUG, func_name, log_msg, e->pid, e->fd, 0);        
 
             return 0; // not a container process, ignore    
         }
@@ -1293,8 +1292,8 @@ int BPF_UPROBE(go_tls_conn_read_exit) {
     __u8 *val = bpf_map_lookup_elem(&container_pids, &(e->pid));
     if (!val)
     {
-        unsigned char log_msg[] = "filter out l7 event -- pid|fd|psize";
-        log_to_userspace(ctx, DEBUG, func_name, log_msg, e->pid, e->fd, 0);        
+        // unsigned char log_msg[] = "filter out l7 event -- pid|fd|psize";
+        // log_to_userspace(ctx, DEBUG, func_name, log_msg, e->pid, e->fd, 0);        
 
         return 0; // not a container process, ignore    
     }

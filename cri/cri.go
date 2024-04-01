@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -31,7 +32,8 @@ type ContainerPodInfo struct {
 }
 
 type CRITool struct {
-	rs internalapi.RuntimeService
+	rs         internalapi.RuntimeService
+	nsFilterRx *regexp.Regexp
 }
 
 func NewCRITool(ctx context.Context) (*CRITool, error) {
@@ -52,9 +54,40 @@ func NewCRITool(ctx context.Context) (*CRITool, error) {
 		return nil, err
 	}
 
+	var nsFilterRx *regexp.Regexp
+	if os.Getenv("EXCLUDE_NAMESPACES") != "" {
+		nsFilterRx = regexp.MustCompile(os.Getenv("EXCLUDE_NAMESPACES"))
+	}
+
 	return &CRITool{
-		rs: res,
+		rs:         res,
+		nsFilterRx: nsFilterRx,
 	}, nil
+}
+
+func (ct *CRITool) FilterNamespace(ns string) bool {
+	if ns == "kube-system" {
+		return true
+	}
+	if ct.nsFilterRx == nil {
+		return false
+	}
+	if ct.nsFilterRx.MatchString(ns) {
+		log.Logger.Debug().Msgf("%s filtered with EXCLUDE_NAMESPACES regex %s", ns, ct.nsFilterRx.String())
+		return true
+	}
+
+	return false
+}
+
+func (ct *CRITool) FilterNamespaceWithContainerId(id string) bool {
+	resp, err := ct.ContainerStatus(id)
+	if err != nil {
+		log.Logger.Error().Err(err).Msgf("Failed to get container status for container %s", id)
+		return true
+	}
+
+	return ct.FilterNamespace(resp.PodNs)
 }
 
 func (ct *CRITool) GetAllContainers() ([]*pb.Container, error) {
@@ -99,12 +132,16 @@ func (ct *CRITool) GetPidsRunningOnContainers() (map[uint32]struct{}, error) {
 	}
 
 	for _, c := range list {
-		runningPids, err := ct.getAllRunningProcsInsideContainer(c.Id)
-		if err != nil {
-			log.Logger.Error().Err(err).Msgf("Failed to get runnning pids for container %s", c.Id)
+		if ct.FilterNamespaceWithContainerId(c.Id) {
+			log.Logger.Debug().Msgf("No tracking on ebpf side for container [%s] - [%s]", c.Id, c.Metadata.Name)
 			continue
 		}
-		log.Logger.Debug().Msgf("running container %s-%s has pids %v", c.Metadata.Name, c.Id, runningPids)
+		runningPids, err := ct.getAllRunningProcsInsideContainer(c.Id)
+		if err != nil {
+			log.Logger.Error().Err(err).Msgf("Failed to get runnning pids for container [%s]", c.Id)
+			continue
+		}
+		log.Logger.Debug().Msgf("running container [%s-%s] has pids %v", c.Metadata.Name, c.Id, runningPids)
 
 		for _, pid := range runningPids {
 			pids[pid] = struct{}{}
