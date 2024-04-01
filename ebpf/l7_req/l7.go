@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"os"
-	"strconv"
 	"time"
 	"unsafe"
 
@@ -14,23 +13,6 @@ import (
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/perf"
 )
-
-var DIST_TRACING_ENABLED bool
-
-func init() {
-	DIST_TRACING_ENABLED = false
-
-	flag := os.Getenv("DIST_TRACING_ENABLED")
-
-	if flag != "" {
-		enabled, err := strconv.ParseBool(flag)
-		if err != nil {
-			log.Logger.Warn().Str("flag", "DIST_TRACING_ENABLED").Err(err).Msg("flag set incorrect")
-			DIST_TRACING_ENABLED = false
-		}
-		DIST_TRACING_ENABLED = enabled
-	}
-}
 
 // match with values in l7_req.c
 const (
@@ -628,20 +610,17 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 				return
 			}
 
-			// TODO: we need to compile bpf bytecode accordingly and select the one complies with the flag to attach into kernel.
-			// That way, we'll not send data from bpf that will not get into processing in user space.
-			if DIST_TRACING_ENABLED {
-				bpfTraceEvent := (*bpfTraceEvent)(unsafe.Pointer(&record.RawSample[0]))
+			bpfTraceEvent := (*bpfTraceEvent)(unsafe.Pointer(&record.RawSample[0]))
 
-				traceEvent := TraceEvent{
-					Pid:   bpfTraceEvent.Pid,
-					Tid:   bpfTraceEvent.Tid,
-					Tx:    time.Now().UnixMilli(),
-					Type_: bpfTraceEvent.Type_,
-					Seq:   bpfTraceEvent.Seq,
-				}
-				ch <- &traceEvent
+			traceEvent := TraceEvent{
+				Pid:   bpfTraceEvent.Pid,
+				Tid:   bpfTraceEvent.Tid,
+				Tx:    time.Now().UnixMilli(),
+				Type_: bpfTraceEvent.Type_,
+				Seq:   bpfTraceEvent.Seq,
 			}
+			ch <- &traceEvent
+
 		}
 		for {
 			select {
