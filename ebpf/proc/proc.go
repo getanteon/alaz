@@ -101,6 +101,12 @@ func (pp *ProcProg) Attach() {
 		log.Logger.Fatal().Err(err).Msg("link sched_process_exec tracepoint")
 	}
 	pp.links["sched/sched_process_exec"] = l1
+
+	l2, err := link.Tracepoint("sched", "sched_process_fork", c.BpfObjs.SchedProcessFork, nil)
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("link sched_process_fork tracepoint")
+	}
+	pp.links["sched/sched_process_fork"] = l2
 }
 
 func (pp *ProcProg) InitMaps() {

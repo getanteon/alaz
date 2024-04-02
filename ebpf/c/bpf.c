@@ -7,10 +7,16 @@
 
 
 // order is important
+#ifndef __BPF__H
+#define __BPF__H
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_tracing.h>
+#endif
+
+#define FILTER_OUT_NON_CONTAINER
+
 #include <stddef.h>
 #include "../headers/pt_regs.h"
 #include <sys/socket.h>
