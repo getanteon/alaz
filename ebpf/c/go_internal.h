@@ -1,4 +1,3 @@
-
 struct go_interface {
     __s64 type;
     void* ptr;

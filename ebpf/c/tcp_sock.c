@@ -2,12 +2,6 @@
 #define INGRESS 0
 #define EGRESS 1
 
-#include <bpf/bpf_helpers.h>
-#include <bpf/bpf_tracing.h>
-#include <bpf/bpf_core_read.h>
-#include <sys/socket.h>
-
-
 struct call_event {
     __u32 pid;
     __u32 tid;
@@ -138,7 +132,8 @@ __u32 get_tcp_copied_seq_from_fd(__u32 fd_num){
 
 static __always_inline
 __u64 process_for_dist_trace_write(void* ctx, __u64 fd){
-    __u32 pid, tid;
+    // unsigned char func_name[] = "process_for_dist_trace_write";
+   __u32 pid, tid;
     __u64 id = 0;
 
     /* get PID and TID of exiting thread/process */
@@ -163,6 +158,13 @@ __u64 process_for_dist_trace_write(void* ctx, __u64 fd){
     e->tx = bpf_ktime_get_ns();
     e->type = EGRESS;
 
+    __u8 *val = bpf_map_lookup_elem(&container_pids, &(e->pid));
+    if (!val)
+    {
+        // unsigned char log_msg[] = "filter out traffic egress event -- pid|fd|psize";
+        // log_to_userspace(ctx, DEBUG, func_name, log_msg, e->pid, 0, 0);        
+        return 0; // not a container process, ignore    
+    }
     bpf_perf_event_output(ctx, &ingress_egress_calls, BPF_F_CURRENT_CPU, e, sizeof(*e));
 
     return seq;
@@ -170,6 +172,7 @@ __u64 process_for_dist_trace_write(void* ctx, __u64 fd){
 
 static __always_inline
 void process_for_dist_trace_read(void* ctx, __u32 fd){
+    // unsigned char func_name[] = "process_for_dist_trace_read";
     __u32 pid, tid;
     __u64 id = 0;
 
@@ -195,5 +198,12 @@ void process_for_dist_trace_read(void* ctx, __u32 fd){
     e->tx = bpf_ktime_get_ns();
     e->type = INGRESS;
 
+     __u8 *val = bpf_map_lookup_elem(&container_pids, &(e->pid));
+    if (!val)
+    {
+        // unsigned char log_msg[] = "filter out traffic ingress event -- pid|fd|psize";
+        // log_to_userspace(ctx, DEBUG, func_name, log_msg, e->pid, 0, 0);        
+        return; // not a container process, ignore    
+    }
     bpf_perf_event_output(ctx, &ingress_egress_calls, BPF_F_CURRENT_CPU, e, sizeof(*e));
 }

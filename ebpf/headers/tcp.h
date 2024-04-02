@@ -22,7 +22,7 @@ struct trace_event_raw_inet_sock_set_state {
 
 typedef unsigned short int sa_family_t;
 
-struct sockaddr
+struct sockaddrv
 {
   sa_family_t sa_family;
   char sa_data[14];
@@ -33,7 +33,7 @@ struct trace_event_sys_enter_connect
   struct trace_entry ent;
   int __syscall_nr;
   long unsigned int fd;
-  struct sockaddr *uservaddr;
+  struct sockaddrv *uservaddr;
   long unsigned int addrlen;
 };
 

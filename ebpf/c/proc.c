@@ -1,14 +1,4 @@
 //go:build ignore
-#include "../headers/bpf.h"
-#include "../headers/common.h"
-#include "exit.h"
-
-
-#include <bpf/bpf_helpers.h>
-#include <bpf/bpf_tracing.h>
-#include <bpf/bpf_core_read.h>
-
-char __license[] SEC("license") = "Dual MIT/GPL";
 
 struct p_event{
     __u32 pid;
@@ -27,7 +17,6 @@ struct {
     __uint(key_size, sizeof(int));
     __uint(value_size, sizeof(int));
 } proc_events SEC(".maps");
-
 
 SEC("tracepoint/sched/sched_process_exec")
 int sched_process_exec(struct trace_event_raw_sched_process_exec* ctx)
@@ -69,6 +58,19 @@ int sched_process_exit(struct trace_event_raw_sched_process_exit* ctx)
     pid = id >> 32;
     tid = (__u32)id;
 
+    #ifdef FILTER_OUT_NON_CONTAINER
+    // try to remove pid from container_pids map(it may not exist, but it's ok)
+    // since we add pids on sched_process_fork regardless of being process or thread
+    // try to remove both pid and tid
+    if (pid == tid){ // if it's a process, remove pid
+        // process exiting
+        bpf_map_delete_elem(&container_pids, &pid);
+    }else{
+        // thread exiting
+        bpf_map_delete_elem(&container_pids, &tid);
+    }
+    #endif
+
     /* ignore thread exits */
     if (pid != tid)
         return 0;
@@ -81,7 +83,36 @@ int sched_process_exit(struct trace_event_raw_sched_process_exit* ctx)
 
     e->pid = pid;
     e->type = PROC_EXIT_EVENT;
-    
     bpf_perf_event_output(ctx, &proc_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
+    return 0;
+}
+
+SEC("tracepoint/sched/sched_process_fork")
+int sched_process_fork(struct trace_event_raw_sched_process_fork* ctx)
+{
+    #ifdef FILTER_OUT_NON_CONTAINER
+    // check parent pid is in container 
+    // (ctx->pid can be a thread too, linux kernel treats threads and processes in the same way)
+    // there is a spectrum between threads and processes in terms of sharing resources via flags.
+    __u32 pid = ctx->pid;
+    __u32 child_pid =ctx->child_pid;
+
+    __u8 *is_container_pid = bpf_map_lookup_elem(&container_pids, &pid);
+    if (!is_container_pid)
+        return 0;
+
+    unsigned char func_name[] = "sched_process_fork";
+    __u8 exists = 1;
+    // write child_pid to container_pids map
+    long res = bpf_map_update_elem(&container_pids, &child_pid, &exists, BPF_ANY);
+    if (res < 0){
+        unsigned char log_msg[] = "failed forked task -- pid|child_pid|res";
+        log_to_userspace(ctx, DEBUG, func_name, log_msg, ctx->pid,ctx->child_pid, res);     
+    }else{
+        unsigned char log_msg[] = "add forked task -- pid|child_pid|psize";
+        log_to_userspace(ctx, DEBUG, func_name, log_msg, ctx->pid,ctx->child_pid, 0);        
+    }
+    #endif
+
     return 0;
 }
