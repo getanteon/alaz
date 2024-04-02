@@ -69,12 +69,12 @@ func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, er
 	}
 	ls.watcher = watcher
 	ls.ctx = ctx
-	done := make(chan struct{})
+	ls.done = make(chan struct{})
 	go func() {
 		<-ctx.Done()
 		watcher.Close()
 		connPool.Close()
-		close(done)
+		close(ls.done)
 	}()
 
 	ls.logPathToFile = make(map[string]*fileReader, 0)
