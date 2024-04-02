@@ -29,8 +29,8 @@ type LogStreamer struct {
 	logPathToFile          map[string]*fileReader
 	logPathToContainerMeta map[string]string
 	containerIdToLogPath   map[string]string
-
-	done chan struct{}
+	ctx                    context.Context
+	done                   chan struct{}
 }
 
 type fileReader struct {
@@ -68,7 +68,7 @@ func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, er
 		return nil, err
 	}
 	ls.watcher = watcher
-
+	ls.ctx = ctx
 	done := make(chan struct{})
 	go func() {
 		<-ctx.Done()
@@ -252,43 +252,50 @@ func (ls *LogStreamer) StreamLogs() error {
 	// listen for new containers
 	go func() {
 		// poll every 10 seconds
+		t := time.NewTicker(10 * time.Second)
 		for {
-			time.Sleep(10 * time.Second)
 
-			containers, err := ls.critool.GetAllContainers()
-			if err != nil {
-				log.Logger.Error().Err(err).Msgf("Failed to get all containers")
-				continue
-			}
-
-			// current containers that are being watched
-			currentContainerIds := make(map[string]struct{}, 0)
-			for id, _ := range ls.containerIdToLogPath {
-				currentContainerIds[id] = struct{}{}
-			}
-
-			aliveContainers := make(map[string]struct{}, 0)
-
-			for _, c := range containers {
-				aliveContainers[c.Id] = struct{}{}
-				if _, ok := currentContainerIds[c.Id]; ok {
+			select {
+			case <-ls.ctx.Done():
+				log.Logger.Info().Msg("context done, stopping container watcher")
+				return
+			case <-t.C:
+				containers, err := ls.critool.GetAllContainers()
+				if err != nil {
+					log.Logger.Error().Err(err).Msgf("Failed to get all containers")
 					continue
-				} else {
-					// new container
-					log.Logger.Info().Msgf("new container found: %s, %s", c.Id, c.Metadata.Name)
-					err := ls.watchContainer(c.Id, c.Metadata.Name)
-					if err != nil {
-						log.Logger.Error().Err(err).Msgf("Failed to watch new container %s, %s", c.Id, c.Metadata.Name)
+				}
+
+				// current containers that are being watched
+				currentContainerIds := make(map[string]struct{}, 0)
+				for id, _ := range ls.containerIdToLogPath {
+					currentContainerIds[id] = struct{}{}
+				}
+
+				aliveContainers := make(map[string]struct{}, 0)
+
+				for _, c := range containers {
+					aliveContainers[c.Id] = struct{}{}
+					if _, ok := currentContainerIds[c.Id]; ok {
+						continue
+					} else {
+						// new container
+						log.Logger.Info().Msgf("new container found: %s, %s", c.Id, c.Metadata.Name)
+						err := ls.watchContainer(c.Id, c.Metadata.Name)
+						if err != nil {
+							log.Logger.Error().Err(err).Msgf("Failed to watch new container %s, %s", c.Id, c.Metadata.Name)
+						}
+					}
+				}
+
+				for id := range currentContainerIds {
+					if _, ok := aliveContainers[id]; !ok {
+						// container is gone
+						ls.unwatchContainer(id)
 					}
 				}
 			}
 
-			for id := range currentContainerIds {
-				if _, ok := aliveContainers[id]; !ok {
-					// container is gone
-					ls.unwatchContainer(id)
-				}
-			}
 		}
 	}()
 
