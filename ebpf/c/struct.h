@@ -30,3 +30,11 @@ struct trace_event_raw_sched_process_exec {
     __u32 filename_unused;
     __u32 pid;
 };
+
+struct trace_event_raw_sched_process_fork {
+    __u64 unused;
+     char parent_comm[TASK_COMM_LEN];
+    __u32 pid;
+    char child_comm[TASK_COMM_LEN];
+    __u32 child_pid;
+};

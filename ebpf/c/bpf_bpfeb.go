@@ -144,6 +144,7 @@ type bpfProgramSpecs struct {
 	InetSockSetState    *ebpf.ProgramSpec `ebpf:"inet_sock_set_state"`
 	SchedProcessExec    *ebpf.ProgramSpec `ebpf:"sched_process_exec"`
 	SchedProcessExit    *ebpf.ProgramSpec `ebpf:"sched_process_exit"`
+	SchedProcessFork    *ebpf.ProgramSpec `ebpf:"sched_process_fork"`
 	SslReadEnterV102    *ebpf.ProgramSpec `ebpf:"ssl_read_enter_v1_0_2"`
 	SslReadEnterV111    *ebpf.ProgramSpec `ebpf:"ssl_read_enter_v1_1_1"`
 	SslReadEnterV3      *ebpf.ProgramSpec `ebpf:"ssl_read_enter_v3"`
@@ -268,6 +269,7 @@ type bpfPrograms struct {
 	InetSockSetState    *ebpf.Program `ebpf:"inet_sock_set_state"`
 	SchedProcessExec    *ebpf.Program `ebpf:"sched_process_exec"`
 	SchedProcessExit    *ebpf.Program `ebpf:"sched_process_exit"`
+	SchedProcessFork    *ebpf.Program `ebpf:"sched_process_fork"`
 	SslReadEnterV102    *ebpf.Program `ebpf:"ssl_read_enter_v1_0_2"`
 	SslReadEnterV111    *ebpf.Program `ebpf:"ssl_read_enter_v1_1_1"`
 	SslReadEnterV3      *ebpf.Program `ebpf:"ssl_read_enter_v3"`
@@ -295,6 +297,7 @@ func (p *bpfPrograms) Close() error {
 		p.InetSockSetState,
 		p.SchedProcessExec,
 		p.SchedProcessExit,
+		p.SchedProcessFork,
 		p.SslReadEnterV102,
 		p.SslReadEnterV111,
 		p.SslReadEnterV3,
