@@ -77,11 +77,9 @@ func main() {
 	logsEnabled, _ := strconv.ParseBool(os.Getenv("LOGS_ENABLED"))
 
 	var ct *cri.CRITool
-	if logsEnabled || containerMetricsEnabled {
-		ct, err = cri.NewCRITool(ctx)
-		if err != nil {
-			log.Logger.Error().Err(err).Msg("failed to create cri tool")
-		}
+	ct, err = cri.NewCRITool(ctx)
+	if err != nil {
+		log.Logger.Error().Err(err).Msg("failed to create cri tool")
 	}
 
 	// datastore backend

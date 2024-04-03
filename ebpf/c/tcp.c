@@ -130,8 +130,8 @@ int inet_sock_set_state(void *ctx)
   __u8 *val = bpf_map_lookup_elem(&container_pids, &e.pid);
   if (!val)
   {
-    unsigned char log_msg[] = "tcp connect event for plain second -- pid|fd|psize";
-    log_to_userspace(ctx, DEBUG, func_name, log_msg, pid, 0, 0);        
+    // unsigned char log_msg[] = "tcp connect event filtered -- pid|fd|psize";
+    // log_to_userspace(ctx, DEBUG, func_name, log_msg, pid, 0, 0);        
 
     return 0; // not a container process, ignore    
   }

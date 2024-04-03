@@ -419,7 +419,6 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 		var funcName []byte
 		read := func() {
 			record, err := l7p.logs.Read()
-			log.Logger.Debug().Msg("reading from log perf array")
 			if err != nil {
 				log.Logger.Warn().Err(err).Msg("error reading from perf array")
 			}
