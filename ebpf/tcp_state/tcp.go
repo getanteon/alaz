@@ -6,13 +6,12 @@ import (
 	"os"
 	"unsafe"
 
+	"github.com/ddosify/alaz/ebpf/c"
 	"github.com/ddosify/alaz/log"
 
+	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/perf"
-	"github.com/cilium/ebpf/rlimit"
-
-	"github.com/cilium/ebpf/linux"
 )
 
 // match with values in tcp_state.c
@@ -55,7 +54,7 @@ func (e TcpStateConversion) String() string {
 }
 
 // $BPF_CLANG and $BPF_CFLAGS are set by the Makefile.
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc $BPF_CLANG -cflags $BPF_CFLAGS bpf tcp_sockets.c -- -I../headers
+// //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc $BPF_CLANG -cflags $BPF_CFLAGS bpf tcp_sockets.c -- -I../headers
 
 const mapKey uint32 = 0
 
@@ -89,8 +88,6 @@ func (e TcpConnectEvent) Type() string {
 	return TCP_CONNECT_EVENT
 }
 
-var objs bpfObjects
-
 var TcpState *TcpStateProg
 
 type TcpStateConfig struct {
@@ -118,6 +115,8 @@ type TcpStateProg struct {
 
 	tcpConnectMapSize uint32
 	tcpConnectEvents  *perf.Reader
+
+	ContainerPidMap *ebpf.Map // for filtering non-container pids on the node
 }
 
 func (tsp *TcpStateProg) Close() {
@@ -125,39 +124,22 @@ func (tsp *TcpStateProg) Close() {
 		log.Logger.Info().Msgf("unattach %s", hookName)
 		link.Close()
 	}
-	objs.Close()
-}
-
-// Loads bpf programs into kernel
-func (tsp *TcpStateProg) Load() {
-	// Allow the current process to lock memory for eBPF resources.
-	if err := rlimit.RemoveMemlock(); err != nil {
-		log.Logger.Fatal().Err(err).Msg("failed to remove memlock limit")
-	}
-
-	// Load pre-compiled programs and maps into the kernel.
-	objs = bpfObjects{}
-	if err := loadBpfObjects(&objs, nil); err != nil {
-		log.Logger.Fatal().Err(err).Msg("loading objects")
-	}
-
-	linux.FlushCaches()
 }
 
 func (tsp *TcpStateProg) Attach() {
-	l, err := link.Tracepoint("sock", "inet_sock_set_state", objs.bpfPrograms.InetSockSetState, nil)
+	l, err := link.Tracepoint("sock", "inet_sock_set_state", c.BpfObjs.InetSockSetState, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link inet_sock_set_state tracepoint")
 	}
 	tsp.links["sock/inet_sock_set_state"] = l
 
-	l1, err := link.Tracepoint("syscalls", "sys_enter_connect", objs.bpfPrograms.SysEnterConnect, nil)
+	l1, err := link.Tracepoint("syscalls", "sys_enter_connect", c.BpfObjs.SysEnterConnect, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_enter_connect tracepoint")
 	}
 	tsp.links["syscalls/sys_enter_connect"] = l1
 
-	l2, err := link.Tracepoint("syscalls", "sys_exit_connect", objs.bpfPrograms.SysEnterConnect, nil)
+	l2, err := link.Tracepoint("syscalls", "sys_exit_connect", c.BpfObjs.SysEnterConnect, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sys_exit_connect tracepoint")
 	}
@@ -166,10 +148,60 @@ func (tsp *TcpStateProg) Attach() {
 
 func (tsp *TcpStateProg) InitMaps() {
 	var err error
-	tsp.tcpConnectEvents, err = perf.NewReader(objs.TcpConnectEvents, int(tsp.tcpConnectMapSize)*os.Getpagesize())
+	tsp.tcpConnectEvents, err = perf.NewReader(c.BpfObjs.TcpConnectEvents, int(tsp.tcpConnectMapSize)*os.Getpagesize())
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
 	}
+
+	tsp.ContainerPidMap = c.BpfObjs.ContainerPids
+}
+
+func (tsp *TcpStateProg) PopulateContainerPidsMap(newKeys, deletedKeys []uint32) error {
+	errors := []error{}
+	if len(deletedKeys) > 0 {
+		log.Logger.Debug().Msgf("deleting container pids map with %d new keys %v", len(deletedKeys), deletedKeys)
+		count, err := tsp.ContainerPidMap.BatchDelete(deletedKeys, &ebpf.BatchOptions{})
+		if err != nil {
+			log.Logger.Warn().Err(err).Msg("failed deleting entries from container pids map")
+			errors = append(errors, err)
+		} else {
+			log.Logger.Debug().Msgf("deleted %d entries from container pids map", count)
+		}
+	}
+
+	if len(newKeys) > 0 {
+		log.Logger.Debug().Msgf("adding container pids map with %d new keys %v", len(newKeys), newKeys)
+		values := make([]uint8, len(newKeys))
+		for i := range values {
+			values[i] = 1
+		}
+
+		count, err := tsp.ContainerPidMap.BatchUpdate(newKeys, values, &ebpf.BatchOptions{
+			ElemFlags: 0,
+			Flags:     0,
+		})
+
+		if err != nil {
+			errors = append(errors, fmt.Errorf("failed adding ebpfcontainer pids map, %v", err))
+		} else {
+			log.Logger.Debug().Msgf("updated %d entries in container pids map", count)
+		}
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("errors: %v", errors)
+	}
+
+	return nil
+}
+
+func findEndIndex(b [100]uint8) (endIndex int) {
+	for i, v := range b {
+		if v == 0 {
+			return i
+		}
+	}
+	return len(b)
 }
 
 // returns when program is detached
@@ -190,6 +222,11 @@ func (tsp *TcpStateProg) Consume(ctx context.Context, ch chan interface{}) {
 			}
 
 			bpfEvent := (*BpfTcpEvent)(unsafe.Pointer(&record.RawSample[0]))
+
+			if bpfEvent.Pid == 3738744 {
+				log.Logger.Debug().Uint64("ts", bpfEvent.Timestamp).
+					Str("type", TcpStateConversion(bpfEvent.Type).String()).Uint64("fd", bpfEvent.Fd).Msg("tcp event of pid 3738744")
+			}
 
 			go func() {
 				ch <- &TcpConnectEvent{

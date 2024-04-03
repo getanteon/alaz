@@ -65,13 +65,11 @@ spec:
       hostPID: true
       containers:
       - env:
-        - name: SERVICE_MAP_ENABLED
+        - name: TRACING_ENABLED
           value: "true"
         - name: METRICS_ENABLED
           value: "true"
         - name: CONTAINER_METRICS_ENABLED
-          value: "true"
-        - name: DIST_TRACING_ENABLED
           value: "true"
         - name: LOGS_ENABLED
           value: "true"
@@ -79,6 +77,8 @@ spec:
           value: https://api-alaz.ddosify.com:443
         - name: LOG_LEVEL
           value: "1"
+        - name: EXCLUDE_NAMESPACES
+          value: "^d.*"
         - name: MONITORING_ID
           value: <MONITORING_ID>
         - name: NODE_NAME

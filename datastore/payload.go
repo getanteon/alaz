@@ -10,9 +10,9 @@ type Metadata struct {
 type HealthCheckPayload struct {
 	Metadata Metadata `json:"metadata"`
 	Info     struct {
-		EbpfEnabled        bool `json:"ebpf"`
-		MetricsEnabled     bool `json:"metrics"`
-		DistTracingEnabled bool `json:"traffic"`
+		TracingEnabled bool `json:"tracing"`
+		MetricsEnabled bool `json:"metrics"`
+		LogsEnabled    bool `json:"logs"`
 	} `json:"alaz_info"`
 	Telemetry struct {
 		KernelVersion string `json:"kernel_version"`

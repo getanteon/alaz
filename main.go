@@ -56,16 +56,15 @@ func main() {
 		go k8sCollector.Init(kubeEvents)
 	}
 
-	// EBPF_ENABLED changed to SERVICE_MAP_ENABLED
-	// for backwards compatibility
-	ebpfEnabled, err := strconv.ParseBool(os.Getenv("SERVICE_MAP_ENABLED"))
+	tracingEnabled, err := strconv.ParseBool(os.Getenv("TRACING_ENABLED"))
 	if err != nil {
-		// if SERVICE_MAP_ENABLED not given, check EBPF_ENABLED
-		ebpfEnabled, _ = strconv.ParseBool(os.Getenv("EBPF_ENABLED"))
+		// for backwards compatibility
+		ebpfEnabled, _ := strconv.ParseBool(os.Getenv("SERVICE_MAP_ENABLED"))
+		distTracingEnabled, _ := strconv.ParseBool(os.Getenv("DIST_TRACING_ENABLED"))
+		tracingEnabled = ebpfEnabled || distTracingEnabled
 	}
 
 	metricsEnabled, _ := strconv.ParseBool(os.Getenv("METRICS_ENABLED"))
-	distTracingEnabled, _ := strconv.ParseBool(os.Getenv("DIST_TRACING_ENABLED"))
 	containerMetricsEnabled, _ := strconv.ParseBool(os.Getenv("CONTAINER_METRICS_ENABLED"))
 
 	if containerMetricsEnabled {
@@ -98,8 +97,8 @@ func main() {
 
 	// deploy ebpf programs
 	var ec *ebpf.EbpfCollector
-	if ebpfEnabled {
-		ec = ebpf.NewEbpfCollector(ctx)
+	if tracingEnabled {
+		ec = ebpf.NewEbpfCollector(ctx, ct)
 
 		a := aggregator.NewAggregator(ctx, kubeEvents, ec.EbpfEvents(), ec.EbpfProcEvents(), ec.EbpfTcpEvents(), ec.TlsAttachQueue(), dsBackend)
 		a.Run()
@@ -128,7 +127,7 @@ func main() {
 	}
 
 	dsBackend.Start()
-	go dsBackend.SendHealthCheck(ebpfEnabled, metricsEnabled, distTracingEnabled, k8sVersion)
+	go dsBackend.SendHealthCheck(tracingEnabled, metricsEnabled, logsEnabled, k8sVersion)
 	go http.ListenAndServe(":8181", nil)
 
 	if k8sCollectorEnabled {
@@ -136,7 +135,7 @@ func main() {
 		log.Logger.Info().Msg("k8sCollector done")
 	}
 
-	if ebpfEnabled {
+	if tracingEnabled {
 		<-ec.Done()
 		log.Logger.Info().Msg("ebpfCollector done")
 	}

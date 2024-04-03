@@ -1,7 +1,7 @@
 FROM ubuntu:22.04
 
 ENV LIBBPF_VERSION 1.2.2
-ENV GOLANG_VERSION 1.20.5
+ENV GOLANG_VERSION 1.22.1
 
 # Install Clang and LLVM Strip
 RUN apt-get update && apt-get install -y clang-14 llvm && \
