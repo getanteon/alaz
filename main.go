@@ -140,9 +140,9 @@ func main() {
 		log.Logger.Info().Msg("ebpfCollector done")
 	}
 
-	if logsEnabled && ls != nil {
+	if ls != nil {
 		<-ls.Done()
-		log.Logger.Info().Msg("cri done")
+		log.Logger.Info().Msg("log streamer closed")
 	}
 
 	log.Logger.Info().Msg("alaz exiting...")

@@ -37,6 +37,7 @@ type ContainerPodInfo struct {
 type CRITool struct {
 	rs         internalapi.RuntimeService
 	nsFilterRx *regexp.Regexp
+	ctx        context.Context
 }
 
 // parse podID and containerID from /proc/<pid>/cgroup file
@@ -89,6 +90,7 @@ func NewCRITool(ctx context.Context) (*CRITool, error) {
 	return &CRITool{
 		rs:         res,
 		nsFilterRx: nsFilterRx,
+		ctx:        ctx,
 	}, nil
 }
 
@@ -131,7 +133,7 @@ func (ct *CRITool) GetAllContainers() ([]*pb.Container, error) {
 		XXX_sizecache:        0,
 	}
 
-	list, err := ct.rs.ListContainers(context.TODO(), filter)
+	list, err := ct.rs.ListContainers(ct.ctx, filter)
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +155,7 @@ func (ct *CRITool) GetPidsRunningOnContainers() (map[uint32]struct{}, error) {
 		XXX_sizecache:        0,
 	}
 
-	list, err := ct.rs.ListContainers(context.TODO(), filter)
+	list, err := ct.rs.ListContainers(ct.ctx, filter)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +180,7 @@ func (ct *CRITool) GetPidsRunningOnContainers() (map[uint32]struct{}, error) {
 }
 
 func (ct *CRITool) getAllRunningProcsInsideContainer(containerID string) ([]uint32, error) {
-	r, err := ct.rs.ContainerStatus(context.TODO(), containerID, true)
+	r, err := ct.rs.ContainerStatus(ct.ctx, containerID, true)
 	if err != nil {
 		log.Logger.Error().Err(err).Msgf("Failed to get container status for container %s", containerID)
 		return nil, err
@@ -259,7 +261,7 @@ func (ct *CRITool) GetLogPath(id string) (string, error) {
 		return "", fmt.Errorf("containerID cannot be empty")
 	}
 
-	r, err := ct.rs.ContainerStatus(context.TODO(), id, true)
+	r, err := ct.rs.ContainerStatus(ct.ctx, id, true)
 	if err != nil {
 		return "", err
 	}
@@ -305,7 +307,7 @@ func (ct *CRITool) ContainerStatus(id string) (*ContainerPodInfo, error) {
 
 	verbose := true
 
-	r, err := ct.rs.ContainerStatus(context.TODO(), id, verbose)
+	r, err := ct.rs.ContainerStatus(ct.ctx, id, verbose)
 	if err != nil {
 		return nil, err
 	}
@@ -317,7 +319,7 @@ func (ct *CRITool) ContainerStatus(id string) (*ContainerPodInfo, error) {
 
 	sandBoxID := info["sandboxID"].(string)
 
-	podRes, err := ct.rs.PodSandboxStatus(context.TODO(), sandBoxID, verbose)
+	podRes, err := ct.rs.PodSandboxStatus(ct.ctx, sandBoxID, verbose)
 	if err != nil {
 		return nil, err
 	}
@@ -348,7 +350,7 @@ func (ct *CRITool) getContainersOfPod(podSandboxId string) ([]*pb.Container, err
 		XXX_sizecache:        0,
 	}
 
-	list, err := ct.rs.ListContainers(context.TODO(), filter)
+	list, err := ct.rs.ListContainers(ct.ctx, filter)
 	if err != nil {
 		return nil, err
 	}
@@ -370,7 +372,7 @@ func (ct *CRITool) getPod(podUid string) ([]*pb.PodSandbox, error) {
 	}
 	filter.State = st
 
-	return ct.rs.ListPodSandbox(context.Background(), filter)
+	return ct.rs.ListPodSandbox(ct.ctx, filter)
 }
 
 func parseCgroupV1(filePath string) (string, string, error) {
