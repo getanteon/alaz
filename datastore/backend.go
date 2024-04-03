@@ -381,6 +381,8 @@ func (ds *BackendDS) Start() {
 					}
 				}
 				if containerMetrics {
+					// containerMetrics implements io.WriterTo interface
+					// but http client does not support io.WriterTo, uses io.Reader
 					containerMetrics, err := ds.scrapeContainerMetrics()
 					if err != nil {
 						log.Logger.Error().Msgf("error scraping container metrics: %v", err)
@@ -402,6 +404,20 @@ func (ds *BackendDS) Start() {
 				if len(payloads) > 0 {
 					ds.sendMetricsToBackend(io.MultiReader(payloads...))
 				}
+
+				// if containerMetrics {
+				// 	// containerMetrics implements io.WriterTo interface
+				// 	// for on-the-fly filtering of container metrics
+				// 	containerMetrics, err := ds.scrapeContainerMetrics()
+				// 	if err != nil {
+				// 		log.Logger.Error().Msgf("error scraping container metrics: %v", err)
+				// 	} else {
+				// 		log.Logger.Debug().Msg("container-metrics scraped successfully")
+				// 		// send container metrics
+				// 		ds.sendContainerMetricsToBackend(containerMetrics)
+				// 	}
+				// }
+
 			}
 		}
 	}()
@@ -532,6 +548,39 @@ func (b *BackendDS) sendMetricsToBackend(r io.Reader) {
 		return
 	} else {
 		log.Logger.Debug().Msg("metrics sent successfully")
+	}
+}
+
+func (b *BackendDS) sendContainerMetricsToBackend(r io.Reader) {
+	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/container-metrics/scrape/?instance=%s&monitoring_id=%s", b.host, NodeID, MonitoringID), r)
+	if err != nil {
+		log.Logger.Error().Msgf("error creating metrics request: %v", err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(b.ctx, 10*time.Second)
+	defer cancel()
+
+	resp, err := b.c.Do(req.WithContext(ctx))
+
+	if err != nil {
+		log.Logger.Error().Msgf("error sending container metrics request: %v", err)
+		return
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		log.Logger.Error().Msgf("container metrics request not success: %d", resp.StatusCode)
+
+		// log response body
+		rb, err := io.ReadAll(resp.Body)
+		if err != nil {
+			log.Logger.Error().Msgf("error reading container metrics response body: %v", err)
+		}
+		log.Logger.Error().Msgf("container metrics response body: %s", string(rb))
+
+		return
+	} else {
+		log.Logger.Debug().Msg("container metrics sent successfully")
 	}
 }
 
@@ -910,33 +959,6 @@ func (b *BackendDS) scrapeContainerMetrics() (io.Reader, error) {
 		return nil, fmt.Errorf("error getting container metrics: %v", err)
 	}
 	return reader, nil
-
-	// // get container metrics from cAdvisor
-	// req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://localhost:%d/inner/container-metrics", innerContainerMetricsPort), nil)
-	// if err != nil {
-	// 	return nil, fmt.Errorf("error creating inner container metrics request: %v", err)
-	// }
-
-	// ctx, cancel := context.WithTimeout(b.ctx, 60*time.Second)
-	// // defer cancel()
-	// // do not defer cancel here, since we return the reader to the caller on success
-	// // if deferred, there will be a race condition between the caller and the defer
-
-	// // use the default client, ds client reads response on success to look for failed events,
-	// // therefore body here will be empty
-	// resp, err := http.DefaultClient.Do(req.WithContext(ctx))
-
-	// if err != nil {
-	// 	cancel()
-	// 	return nil, fmt.Errorf("error sending inner container metrics request: %v", err)
-	// }
-
-	// if resp.StatusCode != http.StatusOK {
-	// 	cancel()
-	// 	return nil, fmt.Errorf("inner container metrics request not success: %d", resp.StatusCode)
-	// }
-
-	// return resp.Body, nil
 }
 
 func (b *BackendDS) scrapeNodeMetrics() (io.Reader, error) {

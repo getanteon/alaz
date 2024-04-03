@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -24,6 +25,10 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
+
+	dto "github.com/prometheus/client_model/go"
+	"github.com/prometheus/common/expfmt"
+	"github.com/prometheus/common/model"
 )
 
 type K8SResourceType string
@@ -234,6 +239,119 @@ func (k *K8sCollector) ExportContainerMetrics() error {
 	return nil
 }
 
+type FilteredReader struct {
+	reader  io.Reader
+	format  expfmt.Format
+	decoder expfmt.Decoder
+
+	buf *bytes.Buffer
+}
+
+func NewFilteredReader(r io.Reader) *FilteredReader {
+	format := expfmt.NewFormat(expfmt.TypeProtoText)
+	decoder := expfmt.NewDecoder(r, format)
+
+	return &FilteredReader{
+		reader:  r,
+		format:  format,
+		decoder: decoder,
+		buf:     bytes.NewBuffer([]byte{}),
+	}
+}
+
+func (f *FilteredReader) WriteTo(w io.Writer) (n int64, err error) {
+	format := expfmt.NewFormat(expfmt.TypeTextPlain)
+	decoder := expfmt.NewDecoder(f.reader, format)
+	for {
+		metric := &dto.MetricFamily{}
+		err = decoder.Decode(metric)
+		if err != nil {
+			log.Logger.Info().Err(err).Msg("error decoding metric")
+			return n, err
+		}
+
+		// log.Logger.Info().Msg(metric.GetName())
+		// log.Logger.Info().Msgf("metric: %s, %s, %s, %s", metric.GetName(), metric.GetHelp(), metric.GetType(), metric.String())
+		// TODO: filter metrics based on namespaces, labels, etc.
+
+		// encode metric
+		// write encoded metric to w
+		escapingScheme := format.ToEscapingScheme()
+		written, err := expfmt.MetricFamilyToText(w, model.EscapeMetricFamily(metric, escapingScheme))
+
+		if err != nil {
+			log.Logger.Info().Err(err).Msg("error encoding metric")
+			return n, err
+		} else {
+			n += int64(written)
+		}
+	}
+}
+
+func (fw *FilteredReader) Read(p []byte) (n int, err error) {
+	if fw.buf.Len() > 0 {
+		// copy to p
+		written := 0
+		encodedBytes := fw.buf.Bytes()
+		bufLen := fw.buf.Len()
+		log.Logger.Info().Msgf("bufLen: %d", bufLen)
+		for i := 0; i < bufLen; i++ {
+			if i < len(p) {
+				p[i] = encodedBytes[i]
+				written++
+			} else {
+				// p is full
+				break
+			}
+		}
+
+		fw.buf = bytes.NewBuffer(encodedBytes[written:])
+		return written, err
+	}
+
+	metric := &dto.MetricFamily{}
+	err = fw.decoder.Decode(metric)
+	if err != nil {
+		fw.buf = bytes.NewBuffer([]byte{}) // Reset() keeps underlying buffer
+		log.Logger.Info().Err(err).Msg("error decoding metric")
+		return n, err
+	}
+
+	// log.Logger.Info().Msg(metric.GetName())
+	// log.Logger.Info().Msgf("metric: %s, %s, %s, %s", metric.GetName(), metric.GetHelp(), metric.GetType(), metric.String())
+	// TODO: filter metrics based on namespaces, labels, etc.
+
+	// encode metric
+	// write encoded metric to w
+
+	escapingScheme := fw.format.ToEscapingScheme()
+	nOwnBuffer, err := expfmt.MetricFamilyToText(fw.buf, model.EscapeMetricFamily(metric, escapingScheme))
+
+	if err != nil {
+		log.Logger.Info().Err(err).Msg("error encoding metric")
+		return n, err
+	}
+
+	log.Logger.Info().Msgf("nOwnBuffer: %d", nOwnBuffer)
+
+	// copy to p
+	written := 0
+	encodedBytes := fw.buf.Bytes()
+	for i := 0; i < nOwnBuffer; i++ {
+		if i < len(p) {
+			p[i] = encodedBytes[i]
+			written++
+		} else {
+			// p is full
+			break
+		}
+	}
+
+	// truncate buffer
+	fw.buf = bytes.NewBuffer(encodedBytes[written:])
+	return written, nil
+}
+
 // get container metrics from kubelet cadvisor in prometheus format
 // return a reader for backend to stream metrics directly
 func (k *K8sCollector) GetContainerMetrics(ctx context.Context) (io.Reader, error) {
@@ -242,13 +360,16 @@ func (k *K8sCollector) GetContainerMetrics(ctx context.Context) (io.Reader, erro
 	// curl https://kubernetes.default.svc/api/v1/nodes/ip-192-168-68-164.eu-central-1.compute.internal/proxy/metrics/cadvisor --header "
 
 	path := fmt.Sprintf("/api/v1/nodes/%s/proxy/metrics/cadvisor", nodeName)
-	metrics, err := k.clientset.CoreV1().RESTClient().Get().AbsPath(path).Param("format", "text").Stream(ctx)
+	metrics, err := k.clientset.CoreV1().RESTClient().Get().Namespace("").AbsPath(path).Param("format", "text").Stream(ctx)
 
 	if err != nil {
 		return nil, fmt.Errorf("error getting kubelet cadvisor metrics request: %w", err)
 	}
 
-	return metrics, nil
+	// wrapper reader to filter out unwanted metrics
+	filterReader := NewFilteredReader(metrics)
+
+	return filterReader, nil
 }
 
 func (k *K8sCollector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -256,21 +377,15 @@ func (k *K8sCollector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// forward request to cadvisor
 	// curl https://kubernetes.default.svc/api/v1/nodes/ip-192-168-68-164.eu-central-1.compute.internal/proxy/metrics/cadvisor --header "
 
-	path := fmt.Sprintf("/api/v1/nodes/%s/proxy/metrics/cadvisor", nodeName)
-	metrics, err := k.clientset.CoreV1().RESTClient().Get().AbsPath(path).Param("format", "text").DoRaw(r.Context())
+	metrics, err := k.GetContainerMetrics(r.Context())
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprintf(w, "error getting kubelet cadvisor metrics request: %v", err)
 		return
 	}
 
-	if len(metrics) == 0 {
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, "empty response from cadvisor")
-		return
-	}
-
-	n, err := w.Write(metrics)
+	// io.Copy will use WriteTo method of FilteredReader
+	n, err := io.Copy(w, metrics)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		log.Logger.Error().Err(err).Msg("error forwarding container metrics")
