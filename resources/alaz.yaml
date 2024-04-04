@@ -24,6 +24,15 @@ rules:
   - "get"
   - "list"
   - "watch"
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  - nodes/proxy
+  verbs:
+  - "get"
+  - "list"
+  - "watch"
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -59,6 +68,10 @@ spec:
         - name: TRACING_ENABLED
           value: "true"
         - name: METRICS_ENABLED
+          value: "true"
+        - name: CONTAINER_METRICS_ENABLED
+          value: "true"
+        - name: LOGS_ENABLED
           value: "true"
         - name: BACKEND_HOST
           value: https://api-alaz.ddosify.com:443

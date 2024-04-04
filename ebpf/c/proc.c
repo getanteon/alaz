@@ -106,11 +106,8 @@ int sched_process_fork(struct trace_event_raw_sched_process_fork* ctx)
     // write child_pid to container_pids map
     long res = bpf_map_update_elem(&container_pids, &child_pid, &exists, BPF_ANY);
     if (res < 0){
-        unsigned char log_msg[] = "failed forked task -- pid|child_pid|res";
+        unsigned char log_msg[] = "failed adding forked task to container_pids -- pid|child_pid|res";
         log_to_userspace(ctx, DEBUG, func_name, log_msg, ctx->pid,ctx->child_pid, res);     
-    }else{
-        unsigned char log_msg[] = "add forked task -- pid|child_pid|psize";
-        log_to_userspace(ctx, DEBUG, func_name, log_msg, ctx->pid,ctx->child_pid, 0);        
     }
     #endif
 

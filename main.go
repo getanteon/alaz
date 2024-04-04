@@ -38,11 +38,11 @@ func main() {
 	var k8sCollector *k8s.K8sCollector
 	kubeEvents := make(chan interface{}, 1000)
 	var k8sVersion string
+	var k8sCollectorEnabled = true
 
-	var k8sCollectorEnabled bool = true
-	k8sEnabled, err := strconv.ParseBool(os.Getenv("K8S_COLLECTOR_ENABLED"))
-	if err == nil && !k8sEnabled {
-		k8sCollectorEnabled = false
+	enabled, err := strconv.ParseBool(os.Getenv("K8S_COLLECTOR_ENABLED"))
+	if err == nil {
+		k8sCollectorEnabled = enabled
 	}
 
 	if k8sCollectorEnabled {
@@ -65,23 +65,33 @@ func main() {
 	}
 
 	metricsEnabled, _ := strconv.ParseBool(os.Getenv("METRICS_ENABLED"))
-	logsEnabled, _ := strconv.ParseBool(os.Getenv("LOGS_ENABLED"))
+	containerMetricsEnabled, _ := strconv.ParseBool(os.Getenv("CONTAINER_METRICS_ENABLED"))
 
-	// datastore backend
-	dsBackend := datastore.NewBackendDS(ctx, config.BackendDSConfig{
-		Host:                  os.Getenv("BACKEND_HOST"),
-		MetricsExport:         metricsEnabled,
-		GpuMetricsExport:      metricsEnabled,
-		MetricsExportInterval: 10,
-		ReqBufferSize:         40000, // TODO: get from a conf file
-		ConnBufferSize:        1000,  // TODO: get from a conf file
-	})
+	if containerMetricsEnabled {
+		if k8sCollector != nil {
+			k8sCollector.ExportContainerMetrics()
+		} else {
+			log.Logger.Info().Msg("container metrics not exported, set K8S_COLLECTOR_ENABLED=true")
+		}
+	}
+	logsEnabled, _ := strconv.ParseBool(os.Getenv("LOGS_ENABLED"))
 
 	var ct *cri.CRITool
 	ct, err = cri.NewCRITool(ctx)
 	if err != nil {
 		log.Logger.Error().Err(err).Msg("failed to create cri tool")
 	}
+
+	// datastore backend
+	dsBackend := datastore.NewBackendDS(ctx, config.BackendDSConfig{
+		Host:                   os.Getenv("BACKEND_HOST"),
+		NodeMetricsExport:      metricsEnabled,
+		ContainerMetricsExport: containerMetricsEnabled,
+		GpuMetricsExport:       metricsEnabled,
+		MetricsExportInterval:  10,
+		ReqBufferSize:          40000, // TODO: get from a conf file
+		ConnBufferSize:         1000,  // TODO: get from a conf file
+	}, k8sCollector, ct)
 
 	// deploy ebpf programs
 	var ec *ebpf.EbpfCollector
@@ -128,9 +138,9 @@ func main() {
 		log.Logger.Info().Msg("ebpfCollector done")
 	}
 
-	if logsEnabled && ls != nil {
+	if ls != nil {
 		<-ls.Done()
-		log.Logger.Info().Msg("cri done")
+		log.Logger.Info().Msg("log streamer closed")
 	}
 
 	log.Logger.Info().Msg("alaz exiting...")

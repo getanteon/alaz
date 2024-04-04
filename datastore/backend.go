@@ -17,8 +17,10 @@ import (
 	"time"
 
 	"github.com/ddosify/alaz/config"
+	"github.com/ddosify/alaz/cri"
 	"github.com/ddosify/alaz/ebpf/l7_req"
 	"github.com/ddosify/alaz/gpu"
+	"github.com/ddosify/alaz/k8s"
 	"github.com/ddosify/alaz/log"
 
 	"github.com/alecthomas/kingpin/v2"
@@ -45,11 +47,12 @@ var kernelVersion string
 var cloudProvider CloudProvider
 
 var resourceBatchSize int64 = 1000 // maximum batch size for resources, it must be bigger or at least equal to chan sizes in order to avoid blocking
+
 var innerMetricsPort int = 8182
 var innerGpuMetricsPort int = 8183
+var innerContainerMetricsPort int = 8184
 
 func init() {
-
 	TestMode := os.Getenv("TEST_MODE")
 	if TestMode == "true" {
 		return
@@ -150,9 +153,10 @@ type BackendDS struct {
 
 	traceInfoPool *poolutil.Pool[*TraceInfo]
 
-	metricsExport         bool
-	gpuMetricsExport      bool
-	metricsExportInterval int
+	metricsExport          bool
+	containerMetricsExport bool
+	gpuMetricsExport       bool
+	metricsExportInterval  int
 
 	podEventChan       chan interface{} // *PodEvent
 	svcEventChan       chan interface{} // *SvcEvent
@@ -161,6 +165,9 @@ type BackendDS struct {
 	epEventChan        chan interface{} // *EndpointsEvent
 	containerEventChan chan interface{} // *ContainerEvent
 	dsEventChan        chan interface{} // *DaemonSetEvent
+
+	kubeCollector *k8s.K8sCollector
+	ct            *cri.CRITool
 
 	// TODO add:
 	// statefulset
@@ -201,7 +208,7 @@ func (ll LeveledLogger) Warn(msg string, keysAndValues ...interface{}) {
 	ll.l.Warn().Fields(keysAndValues).Msg(msg)
 }
 
-func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *BackendDS {
+func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig, kubeCollector *k8s.K8sCollector, ct *cri.CRITool) *BackendDS {
 	ctx, _ := context.WithCancel(parentCtx)
 	rand.Seed(time.Now().UnixNano())
 
@@ -284,26 +291,29 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 	resourceChanSize := 200
 
 	ds := &BackendDS{
-		ctx:                   ctx,
-		host:                  conf.Host,
-		c:                     client,
-		batchSize:             bs,
-		reqInfoPool:           newReqInfoPool(func() *ReqInfo { return &ReqInfo{} }, func(r *ReqInfo) {}),
-		aliveConnPool:         newAliveConnPool(func() *ConnInfo { return &ConnInfo{} }, func(r *ConnInfo) {}),
-		traceInfoPool:         newTraceInfoPool(func() *TraceInfo { return &TraceInfo{} }, func(r *TraceInfo) {}),
-		reqChanBuffer:         make(chan *ReqInfo, conf.ReqBufferSize),
-		connChanBuffer:        make(chan *ConnInfo, conf.ConnBufferSize),
-		podEventChan:          make(chan interface{}, 5*resourceChanSize),
-		svcEventChan:          make(chan interface{}, 2*resourceChanSize),
-		rsEventChan:           make(chan interface{}, 2*resourceChanSize),
-		depEventChan:          make(chan interface{}, 2*resourceChanSize),
-		epEventChan:           make(chan interface{}, resourceChanSize),
-		containerEventChan:    make(chan interface{}, 5*resourceChanSize),
-		dsEventChan:           make(chan interface{}, resourceChanSize),
-		traceEventQueue:       list.New(),
-		metricsExport:         conf.MetricsExport,
-		gpuMetricsExport:      conf.GpuMetricsExport,
-		metricsExportInterval: conf.MetricsExportInterval,
+		ctx:                    ctx,
+		host:                   conf.Host,
+		c:                      client,
+		batchSize:              bs,
+		reqInfoPool:            newReqInfoPool(func() *ReqInfo { return &ReqInfo{} }, func(r *ReqInfo) {}),
+		aliveConnPool:          newAliveConnPool(func() *ConnInfo { return &ConnInfo{} }, func(r *ConnInfo) {}),
+		traceInfoPool:          newTraceInfoPool(func() *TraceInfo { return &TraceInfo{} }, func(r *TraceInfo) {}),
+		reqChanBuffer:          make(chan *ReqInfo, conf.ReqBufferSize),
+		connChanBuffer:         make(chan *ConnInfo, conf.ConnBufferSize),
+		podEventChan:           make(chan interface{}, 5*resourceChanSize),
+		svcEventChan:           make(chan interface{}, 2*resourceChanSize),
+		rsEventChan:            make(chan interface{}, 2*resourceChanSize),
+		depEventChan:           make(chan interface{}, 2*resourceChanSize),
+		epEventChan:            make(chan interface{}, resourceChanSize),
+		containerEventChan:     make(chan interface{}, 5*resourceChanSize),
+		dsEventChan:            make(chan interface{}, resourceChanSize),
+		traceEventQueue:        list.New(),
+		kubeCollector:          kubeCollector,
+		ct:                     ct,
+		metricsExport:          conf.NodeMetricsExport,
+		gpuMetricsExport:       conf.GpuMetricsExport,
+		metricsExportInterval:  conf.MetricsExportInterval,
+		containerMetricsExport: conf.ContainerMetricsExport,
 	}
 
 	return ds
@@ -335,10 +345,14 @@ func (ds *BackendDS) Start() {
 			return
 		}
 
-		var nodeMetrics, gpuMetrics bool
+		var nodeMetrics, gpuMetrics, containerMetrics bool
 		if ds.metricsExport {
 			go ds.exportNodeMetrics()
-			nodeMetrics = true // by default
+			nodeMetrics = true
+		}
+
+		if ds.containerMetricsExport {
+			containerMetrics = true
 		}
 
 		if ds.gpuMetricsExport {
@@ -366,6 +380,17 @@ func (ds *BackendDS) Start() {
 						payloads = append(payloads, nodeMetrics)
 					}
 				}
+				// if containerMetrics {
+				// 	// containerMetrics implements io.WriterTo interface
+				// 	// but http client does not support io.WriterTo, uses io.Reader
+				// 	containerMetrics, err := ds.scrapeContainerMetrics()
+				// 	if err != nil {
+				// 		log.Logger.Error().Msgf("error scraping container metrics: %v", err)
+				// 	} else {
+				// 		log.Logger.Debug().Msg("container-metrics scraped successfully")
+				// 		payloads = append(payloads, containerMetrics)
+				// 	}
+				// }
 				if gpuMetrics {
 					gpuMetrics, err := ds.scrapeGpuMetrics()
 					if err != nil {
@@ -378,6 +403,19 @@ func (ds *BackendDS) Start() {
 
 				if len(payloads) > 0 {
 					ds.sendMetricsToBackend(io.MultiReader(payloads...))
+				}
+
+				if containerMetrics {
+					// containerMetrics implements io.WriterTo interface
+					// for on-the-fly filtering of container metrics
+					containerMetrics, err := ds.scrapeContainerMetrics()
+					if err != nil {
+						log.Logger.Error().Msgf("error scraping container metrics: %v", err)
+					} else {
+						log.Logger.Debug().Msg("container-metrics scraped successfully")
+						// send container metrics
+						ds.sendContainerMetricsToBackend(containerMetrics)
+					}
 				}
 			}
 		}
@@ -509,6 +547,40 @@ func (b *BackendDS) sendMetricsToBackend(r io.Reader) {
 		return
 	} else {
 		log.Logger.Debug().Msg("metrics sent successfully")
+	}
+}
+
+func (b *BackendDS) sendContainerMetricsToBackend(r io.Reader) {
+	// TODO: change endpoint ?
+	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/metrics/scrape/?instance=%s&monitoring_id=%s", b.host, NodeID, MonitoringID), r)
+	if err != nil {
+		log.Logger.Error().Msgf("error creating metrics request: %v", err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(b.ctx, 10*time.Second)
+	defer cancel()
+
+	resp, err := b.c.Do(req.WithContext(ctx))
+
+	if err != nil {
+		log.Logger.Error().Msgf("error sending container metrics request: %v", err)
+		return
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		log.Logger.Error().Msgf("container metrics request not success: %d", resp.StatusCode)
+
+		// log response body
+		rb, err := io.ReadAll(resp.Body)
+		if err != nil {
+			log.Logger.Error().Msgf("error reading container metrics response body: %v", err)
+		}
+		log.Logger.Error().Msgf("container metrics response body: %s", string(rb))
+
+		return
+	} else {
+		log.Logger.Debug().Msg("container metrics sent successfully")
 	}
 }
 
@@ -878,6 +950,17 @@ func (b *BackendDS) SendHealthCheck(tracing bool, metrics bool, logs bool, k8sVe
 	}
 }
 
+func (b *BackendDS) scrapeContainerMetrics() (io.Reader, error) {
+	if b.kubeCollector == nil {
+		return nil, fmt.Errorf("kubeCollector is nil")
+	}
+	reader, err := b.kubeCollector.GetContainerMetrics(b.ctx)
+	if err != nil {
+		return nil, fmt.Errorf("error getting container metrics: %v", err)
+	}
+	return reader, nil
+}
+
 func (b *BackendDS) scrapeNodeMetrics() (io.Reader, error) {
 	// get node metrics from node-exporter
 	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://localhost:%d/inner/metrics", innerMetricsPort), nil)
@@ -949,7 +1032,7 @@ func (b *BackendDS) exportNodeMetrics() {
 
 func (b *BackendDS) exportGpuMetrics() error {
 	gpuMetricsPath := "/inner/gpu-metrics"
-	gpuCollector, err := gpu.NewGpuCollector()
+	gpuCollector, err := gpu.NewGpuCollector(b.ct)
 	if err != nil {
 		log.Logger.Error().Msgf("error creating gpu collector: %v", err)
 		return err
@@ -988,7 +1071,7 @@ type nodeExportLogger struct {
 }
 
 func (l nodeExportLogger) Log(keyvals ...interface{}) error {
-	// l.logger.Debug().Msg(fmt.Sprint(keyvals...))
+	l.logger.Debug().Msg(fmt.Sprint(keyvals...))
 	return nil
 }
 
