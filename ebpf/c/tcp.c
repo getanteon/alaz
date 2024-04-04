@@ -2,7 +2,7 @@
 SEC("tracepoint/sock/inet_sock_set_state")
 int inet_sock_set_state(void *ctx)
 {
-    unsigned char func_name[] = "inet_sock_set_state";
+  // unsigned char func_name[] = "inet_sock_set_state";
   __u64 timestamp = bpf_ktime_get_ns();
   struct trace_event_raw_inet_sock_set_state args = {};
   if (bpf_core_read(&args, sizeof(args), ctx) < 0)

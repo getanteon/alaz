@@ -245,39 +245,143 @@ type FilteredReader struct {
 	decoder expfmt.Decoder
 
 	buf *bytes.Buffer
+
+	passAll     bool
+	passMetrics map[string]struct{} // metrics that will be passed through
 }
 
 func NewFilteredReader(r io.Reader) *FilteredReader {
 	format := expfmt.NewFormat(expfmt.TypeProtoText)
 	decoder := expfmt.NewDecoder(r, format)
 
+	passMetrics := map[string]struct{}{
+		// "cadvisor_version_info": {},
+		// "container_blkio_device_usage_total",
+		// "container_cpu_cfs_periods_total",
+		// "container_cpu_cfs_throttled_periods_total",
+		// "container_cpu_cfs_throttled_seconds_total",
+		// "container_cpu_load_average_10s",
+		// "container_cpu_system_seconds_total",
+		// "container_cpu_usage_seconds_total",
+		// "container_cpu_user_seconds_total",
+		// "container_file_descriptors",
+		// "container_fs_inodes_free",
+		// "container_fs_inodes_total",
+		// "container_fs_io_current",
+		// "container_fs_io_time_seconds_total",
+		// "container_fs_io_time_weighted_seconds_total",
+		// "container_fs_limit_bytes",
+		// "container_fs_read_seconds_total",
+		// "container_fs_reads_bytes_total",
+		// "container_fs_reads_merged_total",
+		// "container_fs_reads_total",
+		// "container_fs_sector_reads_total",
+		// "container_fs_sector_writes_total",
+		// "container_fs_usage_bytes",
+		// "container_fs_write_seconds_total",
+		// "container_fs_writes_bytes_total",
+		// "container_fs_writes_merged_total",
+		// "container_fs_writes_total",
+		// "container_last_seen",
+		// "container_memory_cache",
+		// "container_memory_failcnt",
+		// "container_memory_failures_total",
+		// "container_memory_mapped_file",
+		// "container_memory_max_usage_bytes",
+		// "container_memory_rss",
+		// "container_memory_swap",
+		// "container_memory_usage_bytes",
+		// "container_memory_working_set_bytes",
+		// "container_network_receive_bytes_total",
+		// "container_network_receive_errors_total",
+		// "container_network_receive_packets_dropped_total",
+		// "container_network_receive_packets_total",
+		// "container_network_transmit_bytes_total",
+		// "container_network_transmit_errors_total",
+		// "container_network_transmit_packets_dropped_total",
+		// "container_network_transmit_packets_total",
+		// "container_oom_events_total",
+		// "container_processes",
+		// "container_scrape_error",
+		// "container_sockets",
+		// "container_spec_cpu_period",
+		// "container_spec_cpu_quota",
+		// "container_spec_cpu_shares",
+		// "container_spec_memory_limit_bytes",
+		// "container_spec_memory_reservation_limit_bytes",
+		// "container_spec_memory_swap_limit_bytes",
+		// "container_start_time_seconds",
+		// "container_tasks_state",
+		// "container_threads",
+		// "container_threads_max",
+		// "container_ulimits_soft",
+		// "machine_cpu_cores",
+		// "machine_cpu_physical_cores",
+		// "machine_cpu_sockets",
+		// "machine_memory_bytes",
+		// "machine_nvm_avg_power_budget_watts",
+		// "machine_nvm_capacity",
+		// "machine_scrape_error",
+	}
+
 	return &FilteredReader{
-		reader:  r,
-		format:  format,
-		decoder: decoder,
-		buf:     bytes.NewBuffer([]byte{}),
+		reader:      r,
+		format:      format,
+		decoder:     decoder,
+		buf:         bytes.NewBuffer([]byte{}),
+		passMetrics: passMetrics,
+		passAll:     true, // TODO: we can exclude some metrics with passMetrics variable if passAll = false
 	}
 }
 
 func (f *FilteredReader) WriteTo(w io.Writer) (n int64, err error) {
-	format := expfmt.NewFormat(expfmt.TypeTextPlain)
-	decoder := expfmt.NewDecoder(f.reader, format)
+	protoTextFormat := expfmt.NewFormat(expfmt.TypeProtoText)
+	openMetricsFormat := expfmt.NewFormat(expfmt.TypeOpenMetrics)
+
+	decoder := expfmt.NewDecoder(f.reader, openMetricsFormat)
 	for {
-		metric := &dto.MetricFamily{}
-		err = decoder.Decode(metric)
+		metricFamily := &dto.MetricFamily{}
+		err = decoder.Decode(metricFamily)
 		if err != nil {
 			log.Logger.Info().Err(err).Msg("error decoding metric")
 			return n, err
 		}
 
-		// log.Logger.Info().Msg(metric.GetName())
-		// log.Logger.Info().Msgf("metric: %s, %s, %s, %s", metric.GetName(), metric.GetHelp(), metric.GetType(), metric.String())
-		// TODO: filter metrics based on namespaces, labels, etc.
+		if !f.passAll {
+			if _, ok := f.passMetrics[metricFamily.GetName()]; !ok {
+				continue
+			}
+		}
+
+		// remove empty container metrics
+		// in-place remove empty container metrics
+		metricArray := metricFamily.Metric
+		for i := len(metricArray) - 1; i >= 0; i-- {
+			m := metricArray[i]
+			isContainerEmpty := true
+			for _, labelPair := range m.Label {
+				if labelPair.GetName() == "container" {
+					if labelPair.GetValue() != "" {
+						isContainerEmpty = false
+						break
+					}
+				}
+			}
+
+			if isContainerEmpty {
+				metricArray = append(metricArray[:i], metricArray[i+1:]...)
+			}
+		}
+
+		if len(metricArray) == 0 {
+			continue
+		}
+		metricFamily.Metric = metricArray
 
 		// encode metric
 		// write encoded metric to w
-		escapingScheme := format.ToEscapingScheme()
-		written, err := expfmt.MetricFamilyToText(w, model.EscapeMetricFamily(metric, escapingScheme))
+		escapingScheme := protoTextFormat.ToEscapingScheme()
+		written, err := expfmt.MetricFamilyToText(w, model.EscapeMetricFamily(metricFamily, escapingScheme))
 
 		if err != nil {
 			log.Logger.Info().Err(err).Msg("error encoding metric")
@@ -288,12 +392,12 @@ func (f *FilteredReader) WriteTo(w io.Writer) (n int64, err error) {
 	}
 }
 
-func (fw *FilteredReader) Read(p []byte) (n int, err error) {
-	if fw.buf.Len() > 0 {
+func (f *FilteredReader) Read(p []byte) (n int, err error) {
+	if f.buf.Len() > 0 {
 		// copy to p
 		written := 0
-		encodedBytes := fw.buf.Bytes()
-		bufLen := fw.buf.Len()
+		encodedBytes := f.buf.Bytes()
+		bufLen := f.buf.Len()
 		log.Logger.Info().Msgf("bufLen: %d", bufLen)
 		for i := 0; i < bufLen; i++ {
 			if i < len(p) {
@@ -305,27 +409,51 @@ func (fw *FilteredReader) Read(p []byte) (n int, err error) {
 			}
 		}
 
-		fw.buf = bytes.NewBuffer(encodedBytes[written:])
+		f.buf = bytes.NewBuffer(encodedBytes[written:])
 		return written, err
 	}
 
-	metric := &dto.MetricFamily{}
-	err = fw.decoder.Decode(metric)
+	metricFamily := &dto.MetricFamily{}
+	err = f.decoder.Decode(metricFamily)
 	if err != nil {
-		fw.buf = bytes.NewBuffer([]byte{}) // Reset() keeps underlying buffer
+		f.buf = bytes.NewBuffer([]byte{}) // Reset() keeps underlying buffer
 		log.Logger.Info().Err(err).Msg("error decoding metric")
 		return n, err
 	}
 
-	// log.Logger.Info().Msg(metric.GetName())
-	// log.Logger.Info().Msgf("metric: %s, %s, %s, %s", metric.GetName(), metric.GetHelp(), metric.GetType(), metric.String())
-	// TODO: filter metrics based on namespaces, labels, etc.
+	if !f.passAll {
+		if _, ok := f.passMetrics[metricFamily.GetName()]; !ok {
+			return 0, nil
+		}
+	}
 
-	// encode metric
-	// write encoded metric to w
+	// remove empty container metrics
+	// in-place remove empty container metrics
+	metricArray := metricFamily.Metric
+	for i := len(metricArray) - 1; i >= 0; i-- {
+		m := metricArray[i]
+		isContainerEmpty := true
+		for _, labelPair := range m.Label {
+			if labelPair.GetName() == "container" {
+				if labelPair.GetValue() != "" {
+					isContainerEmpty = false
+					break
+				}
+			}
+		}
 
-	escapingScheme := fw.format.ToEscapingScheme()
-	nOwnBuffer, err := expfmt.MetricFamilyToText(fw.buf, model.EscapeMetricFamily(metric, escapingScheme))
+		if isContainerEmpty {
+			metricArray = append(metricArray[:i], metricArray[i+1:]...)
+		}
+	}
+
+	if len(metricArray) == 0 {
+		return 0, nil
+	}
+	metricFamily.Metric = metricArray
+
+	escapingScheme := f.format.ToEscapingScheme()
+	nOwnBuffer, err := expfmt.MetricFamilyToText(f.buf, model.EscapeMetricFamily(metricFamily, escapingScheme))
 
 	if err != nil {
 		log.Logger.Info().Err(err).Msg("error encoding metric")
@@ -336,7 +464,7 @@ func (fw *FilteredReader) Read(p []byte) (n int, err error) {
 
 	// copy to p
 	written := 0
-	encodedBytes := fw.buf.Bytes()
+	encodedBytes := f.buf.Bytes()
 	for i := 0; i < nOwnBuffer; i++ {
 		if i < len(p) {
 			p[i] = encodedBytes[i]
@@ -348,7 +476,7 @@ func (fw *FilteredReader) Read(p []byte) (n int, err error) {
 	}
 
 	// truncate buffer
-	fw.buf = bytes.NewBuffer(encodedBytes[written:])
+	f.buf = bytes.NewBuffer(encodedBytes[written:])
 	return written, nil
 }
 
