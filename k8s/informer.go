@@ -398,7 +398,6 @@ func (f *FilteredReader) Read(p []byte) (n int, err error) {
 		written := 0
 		encodedBytes := f.buf.Bytes()
 		bufLen := f.buf.Len()
-		log.Logger.Info().Msgf("bufLen: %d", bufLen)
 		for i := 0; i < bufLen; i++ {
 			if i < len(p) {
 				p[i] = encodedBytes[i]
@@ -459,8 +458,6 @@ func (f *FilteredReader) Read(p []byte) (n int, err error) {
 		log.Logger.Info().Err(err).Msg("error encoding metric")
 		return n, err
 	}
-
-	log.Logger.Info().Msgf("nOwnBuffer: %d", nOwnBuffer)
 
 	// copy to p
 	written := 0

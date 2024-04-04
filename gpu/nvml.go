@@ -426,8 +426,6 @@ func (n *nvmlDriver) getRunningProcesses(index uint) (computeProcs, graphicsProc
 	if code != nvml.SUCCESS {
 		log.Logger.Error().Str("ctx", "gpu").Str("binding", "nvml.GetComputeRunningProcesses").Msgf("failed to get running processes : %s", nvml.ErrorString(code))
 	} else {
-		log.Logger.Debug().Str("ctx", "gpu").Msgf("GetComputeRunningProcesses success")
-
 		for _, pInfo := range computeProcs {
 			log.Logger.Debug().Str("ctx", "gpu").Msgf("running compute process: %v", pInfo)
 		}
@@ -441,8 +439,6 @@ func (n *nvmlDriver) getRunningProcesses(index uint) (computeProcs, graphicsProc
 	if code != nvml.SUCCESS {
 		log.Logger.Error().Str("ctx", "gpu").Str("binding", "nvml.GetGraphicsRunningProcesses").Msgf("failed to get running processes : %s", nvml.ErrorString(code))
 	} else {
-		log.Logger.Debug().Str("ctx", "gpu").Msgf("GetGraphicsRunningProcesses success")
-
 		for _, pInfo := range graphicsProcs {
 			log.Logger.Debug().Str("ctx", "gpu").Msgf("running graphics process: %v", pInfo)
 		}

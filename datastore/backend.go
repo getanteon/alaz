@@ -380,17 +380,17 @@ func (ds *BackendDS) Start() {
 						payloads = append(payloads, nodeMetrics)
 					}
 				}
-				if containerMetrics {
-					// containerMetrics implements io.WriterTo interface
-					// but http client does not support io.WriterTo, uses io.Reader
-					containerMetrics, err := ds.scrapeContainerMetrics()
-					if err != nil {
-						log.Logger.Error().Msgf("error scraping container metrics: %v", err)
-					} else {
-						log.Logger.Debug().Msg("container-metrics scraped successfully")
-						payloads = append(payloads, containerMetrics)
-					}
-				}
+				// if containerMetrics {
+				// 	// containerMetrics implements io.WriterTo interface
+				// 	// but http client does not support io.WriterTo, uses io.Reader
+				// 	containerMetrics, err := ds.scrapeContainerMetrics()
+				// 	if err != nil {
+				// 		log.Logger.Error().Msgf("error scraping container metrics: %v", err)
+				// 	} else {
+				// 		log.Logger.Debug().Msg("container-metrics scraped successfully")
+				// 		payloads = append(payloads, containerMetrics)
+				// 	}
+				// }
 				if gpuMetrics {
 					gpuMetrics, err := ds.scrapeGpuMetrics()
 					if err != nil {
@@ -405,19 +405,18 @@ func (ds *BackendDS) Start() {
 					ds.sendMetricsToBackend(io.MultiReader(payloads...))
 				}
 
-				// if containerMetrics {
-				// 	// containerMetrics implements io.WriterTo interface
-				// 	// for on-the-fly filtering of container metrics
-				// 	containerMetrics, err := ds.scrapeContainerMetrics()
-				// 	if err != nil {
-				// 		log.Logger.Error().Msgf("error scraping container metrics: %v", err)
-				// 	} else {
-				// 		log.Logger.Debug().Msg("container-metrics scraped successfully")
-				// 		// send container metrics
-				// 		ds.sendContainerMetricsToBackend(containerMetrics)
-				// 	}
-				// }
-
+				if containerMetrics {
+					// containerMetrics implements io.WriterTo interface
+					// for on-the-fly filtering of container metrics
+					containerMetrics, err := ds.scrapeContainerMetrics()
+					if err != nil {
+						log.Logger.Error().Msgf("error scraping container metrics: %v", err)
+					} else {
+						log.Logger.Debug().Msg("container-metrics scraped successfully")
+						// send container metrics
+						ds.sendContainerMetricsToBackend(containerMetrics)
+					}
+				}
 			}
 		}
 	}()
@@ -552,7 +551,8 @@ func (b *BackendDS) sendMetricsToBackend(r io.Reader) {
 }
 
 func (b *BackendDS) sendContainerMetricsToBackend(r io.Reader) {
-	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/container-metrics/scrape/?instance=%s&monitoring_id=%s", b.host, NodeID, MonitoringID), r)
+	// TODO: change endpoint ?
+	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/metrics/scrape/?instance=%s&monitoring_id=%s", b.host, NodeID, MonitoringID), r)
 	if err != nil {
 		log.Logger.Error().Msgf("error creating metrics request: %v", err)
 		return
