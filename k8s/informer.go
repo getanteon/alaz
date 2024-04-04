@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 	"time"
 
@@ -246,6 +247,7 @@ type FilteredReader struct {
 
 	buf *bytes.Buffer
 
+	nsFilterRx  *regexp.Regexp
 	passAll     bool
 	passMetrics map[string]struct{} // metrics that will be passed through
 }
@@ -253,6 +255,11 @@ type FilteredReader struct {
 func NewFilteredReader(r io.Reader) *FilteredReader {
 	format := expfmt.NewFormat(expfmt.TypeProtoText)
 	decoder := expfmt.NewDecoder(r, format)
+
+	var nsFilterRx *regexp.Regexp
+	if os.Getenv("EXCLUDE_NAMESPACES") != "" {
+		nsFilterRx = regexp.MustCompile(os.Getenv("EXCLUDE_NAMESPACES"))
+	}
 
 	passMetrics := map[string]struct{}{
 		// "cadvisor_version_info": {},
@@ -331,6 +338,7 @@ func NewFilteredReader(r io.Reader) *FilteredReader {
 		buf:         bytes.NewBuffer([]byte{}),
 		passMetrics: passMetrics,
 		passAll:     true, // TODO: we can exclude some metrics with passMetrics variable if passAll = false
+		nsFilterRx:  nsFilterRx,
 	}
 }
 
@@ -358,17 +366,24 @@ func (f *FilteredReader) WriteTo(w io.Writer) (n int64, err error) {
 		metricArray := metricFamily.Metric
 		for i := len(metricArray) - 1; i >= 0; i-- {
 			m := metricArray[i]
-			isContainerEmpty := true
+			filterOut := true
 			for _, labelPair := range m.Label {
 				if labelPair.GetName() == "container" {
 					if labelPair.GetValue() != "" {
-						isContainerEmpty = false
+						filterOut = false
+						break
+					}
+				} else if labelPair.GetName() == "namespace" {
+					ns := labelPair.GetValue()
+					if f.nsFilterRx != nil && f.nsFilterRx.MatchString(ns) {
+						// exclude this metric
+						filterOut = true
 						break
 					}
 				}
 			}
 
-			if isContainerEmpty {
+			if filterOut {
 				metricArray = append(metricArray[:i], metricArray[i+1:]...)
 			}
 		}
