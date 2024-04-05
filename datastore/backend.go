@@ -834,9 +834,18 @@ func (b *BackendDS) PersistContainer(c Container, eventType string) error {
 	return nil
 }
 
-func (b *BackendDS) SendHealthCheck(tracing bool, metrics bool, logs bool, k8sVersion string) {
+type HealthCheckAction string
+
+const (
+	HealthCheckActionStop HealthCheckAction = "payment_required"
+	HealthCheckActionOK   HealthCheckAction = "ok"
+)
+
+func (b *BackendDS) SendHealthCheck(tracing bool, metrics bool, logs bool, nsFilter string, k8sVersion string) chan HealthCheckAction {
 	t := time.NewTicker(10 * time.Second)
 	defer t.Stop()
+
+	ch := make(chan HealthCheckAction)
 
 	createHealthCheckPayload := func() HealthCheckPayload {
 		return HealthCheckPayload{
@@ -847,13 +856,15 @@ func (b *BackendDS) SendHealthCheck(tracing bool, metrics bool, logs bool, k8sVe
 				AlazVersion:    tag,
 			},
 			Info: struct {
-				TracingEnabled bool `json:"tracing"`
-				MetricsEnabled bool `json:"metrics"`
-				LogsEnabled    bool `json:"logs"`
+				TracingEnabled  bool   `json:"tracing"`
+				MetricsEnabled  bool   `json:"metrics"`
+				LogsEnabled     bool   `json:"logs"`
+				NamespaceFilter string `json:"namespace_filter"`
 			}{
-				TracingEnabled: tracing,
-				MetricsEnabled: metrics,
-				LogsEnabled:    logs,
+				TracingEnabled:  tracing,
+				MetricsEnabled:  metrics,
+				LogsEnabled:     logs,
+				NamespaceFilter: nsFilter,
 			},
 			Telemetry: struct {
 				KernelVersion string `json:"kernel_version"`
@@ -867,15 +878,49 @@ func (b *BackendDS) SendHealthCheck(tracing bool, metrics bool, logs bool, k8sVe
 		}
 	}
 
-	for {
-		select {
-		case <-b.ctx.Done():
-			log.Logger.Info().Msg("stopping sending health check")
-			return
-		case <-t.C:
-			b.sendToBackend(http.MethodPut, createHealthCheckPayload(), healthCheckEndpoint)
+	go func() {
+		for {
+			select {
+			case <-b.ctx.Done():
+				log.Logger.Info().Msg("stopping sending health check")
+				return
+			case <-t.C:
+				payloadBytes, err := json.Marshal(createHealthCheckPayload())
+				if err != nil {
+					log.Logger.Error().Msgf("error marshalling batch: %v", err)
+					return
+				}
+
+				req, err := http.NewRequest(http.MethodPut, b.host+healthCheckEndpoint, bytes.NewBuffer(payloadBytes))
+				if err != nil {
+					log.Logger.Error().Msgf("error creating http request: %v", err)
+					return
+				}
+
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Accept", "application/json")
+
+				ctx, cancel := context.WithTimeout(b.ctx, 5*time.Second)
+				defer cancel()
+
+				resp, err := b.c.Do(req.WithContext(ctx))
+				if err != nil {
+					log.Logger.Error().Msgf("error sending healtcheck request, %v", err)
+				}
+
+				if resp.StatusCode == http.StatusPaymentRequired {
+					ch <- HealthCheckActionStop
+				} else if resp.StatusCode == http.StatusOK {
+					ch <- HealthCheckActionOK
+				}
+
+				_, _ = io.Copy(io.Discard, resp.Body) // in order to reuse the connection
+				resp.Body.Close()
+			}
 		}
-	}
+	}()
+
+	return ch
 }
 
 func (b *BackendDS) scrapeNodeMetrics() (io.Reader, error) {

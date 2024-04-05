@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"os/signal"
+	"regexp"
 	"runtime/debug"
 	"strconv"
 	"syscall"
@@ -115,7 +116,27 @@ func main() {
 	}
 
 	dsBackend.Start()
-	go dsBackend.SendHealthCheck(tracingEnabled, metricsEnabled, logsEnabled, k8sVersion)
+	var nsFilterRx *regexp.Regexp
+	if os.Getenv("EXCLUDE_NAMESPACES") != "" {
+		nsFilterRx = regexp.MustCompile(os.Getenv("EXCLUDE_NAMESPACES"))
+	}
+
+	stopAndWait := false
+	var nsFilterStr string
+	if nsFilterRx != nil {
+		nsFilterStr = nsFilterRx.String()
+	}
+	healthCh := dsBackend.SendHealthCheck(tracingEnabled, metricsEnabled, logsEnabled, nsFilterStr, k8sVersion)
+	go func() {
+		for msg := range healthCh {
+			if msg == datastore.HealthCheckActionStop {
+				stopAndWait = true
+				cancel()
+				break
+			}
+		}
+	}()
+
 	go http.ListenAndServe(":8181", nil)
 
 	if k8sCollectorEnabled {
@@ -133,5 +154,15 @@ func main() {
 		log.Logger.Info().Msg("cri done")
 	}
 
-	log.Logger.Info().Msg("alaz exiting...")
+	if stopAndWait {
+		log.Logger.Warn().Msg("Payment required. Alaz will restart itself after payment's been made.")
+		for msg := range healthCh {
+			if msg == datastore.HealthCheckActionOK {
+				log.Logger.Info().Msg("Restarting alaz...")
+				break
+			}
+		}
+	} else {
+		log.Logger.Info().Msg("alaz exiting...")
+	}
 }
