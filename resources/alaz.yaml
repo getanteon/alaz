@@ -115,7 +115,7 @@ spec:
         - --collector.netclass.ignored-devices=^(veth.*)$
         image: ddosify/alaz:v0.7.3
         imagePullPolicy: IfNotPresent
-        name: alaz-pod
+        name: alaz
         ports:
         - containerPort: 8181
           protocol: TCP
