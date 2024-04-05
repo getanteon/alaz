@@ -8,7 +8,7 @@ metadata:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: alaz-role
+  name: alaz-clusterrole
   namespace: ddosify
 rules:
 - apiGroups:
@@ -28,16 +28,49 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: alaz-role-binding
+  name: alaz-clusterrole-binding
   namespace: ddosify
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: alaz-role
+  name: alaz-clusterrole
 subjects:
 - kind: ServiceAccount
   name: alaz-serviceaccount
   namespace: ddosify
+---
+apiVersion: v1
+data:
+  monitoring_id: <MONITORING_ID>
+kind: Secret
+metadata:
+  name: alaz-monitoring-id
+  namespace: ddosify
+type: Opaque
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: alaz-role
+  namespace: ddosify
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: alaz-role-binding
+  namespace: ddosify
+subjects:
+- kind: ServiceAccount
+  name: alaz-serviceaccount
+  namespace: ddosify
+roleRef:
+  kind: Role
+  name: alaz-role
+  apiGroup: rbac.authorization.k8s.io
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -65,9 +98,11 @@ spec:
         - name: LOG_LEVEL
           value: "1"
         - name: EXCLUDE_NAMESPACES
-          value: "^d.*"
         - name: MONITORING_ID
-          value: <MONITORING_ID>
+          valueFrom:
+            secretKeyRef:
+              key: monitoring_id
+              name: alaz-monitoring-id
         - name: NODE_NAME
           valueFrom:
             fieldRef:
