@@ -843,7 +843,7 @@ const (
 
 func (b *BackendDS) SendHealthCheck(tracing bool, metrics bool, logs bool, nsFilter string, k8sVersion string) chan HealthCheckAction {
 	t := time.NewTicker(10 * time.Second)
-	defer t.Stop()
+	// defer t.Stop()
 
 	ch := make(chan HealthCheckAction)
 
@@ -878,45 +878,43 @@ func (b *BackendDS) SendHealthCheck(tracing bool, metrics bool, logs bool, nsFil
 		}
 	}
 
+	f := func() {
+		payloadBytes, err := json.Marshal(createHealthCheckPayload())
+		if err != nil {
+			log.Logger.Error().Msgf("error marshalling batch: %v", err)
+			return
+		}
+
+		req, err := http.NewRequest(http.MethodPut, b.host+healthCheckEndpoint, bytes.NewBuffer(payloadBytes))
+		if err != nil {
+			log.Logger.Error().Msgf("error creating http request: %v", err)
+			return
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+
+		ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
+		// defer cancel()
+
+		resp, err := b.c.Do(req.WithContext(ctx))
+		if err != nil {
+			log.Logger.Error().Msgf("error sending healtcheck request, %v", err)
+		}
+
+		if resp.StatusCode == http.StatusPaymentRequired {
+			ch <- HealthCheckActionStop
+		} else if resp.StatusCode == http.StatusOK {
+			ch <- HealthCheckActionOK
+		}
+
+		_, _ = io.Copy(io.Discard, resp.Body) // in order to reuse the connection
+		resp.Body.Close()
+	}
+
 	go func() {
-		for {
-			select {
-			case <-b.ctx.Done():
-				log.Logger.Info().Msg("stopping sending health check")
-				return
-			case <-t.C:
-				payloadBytes, err := json.Marshal(createHealthCheckPayload())
-				if err != nil {
-					log.Logger.Error().Msgf("error marshalling batch: %v", err)
-					return
-				}
-
-				req, err := http.NewRequest(http.MethodPut, b.host+healthCheckEndpoint, bytes.NewBuffer(payloadBytes))
-				if err != nil {
-					log.Logger.Error().Msgf("error creating http request: %v", err)
-					return
-				}
-
-				req.Header.Set("Content-Type", "application/json")
-				req.Header.Set("Accept", "application/json")
-
-				ctx, cancel := context.WithTimeout(b.ctx, 5*time.Second)
-				defer cancel()
-
-				resp, err := b.c.Do(req.WithContext(ctx))
-				if err != nil {
-					log.Logger.Error().Msgf("error sending healtcheck request, %v", err)
-				}
-
-				if resp.StatusCode == http.StatusPaymentRequired {
-					ch <- HealthCheckActionStop
-				} else if resp.StatusCode == http.StatusOK {
-					ch <- HealthCheckActionOK
-				}
-
-				_, _ = io.Copy(io.Discard, resp.Body) // in order to reuse the connection
-				resp.Body.Close()
-			}
+		for range t.C {
+			f()
 		}
 	}()
 

@@ -36,6 +36,17 @@ func main() {
 		cancel()
 	}()
 
+	var nsFilterRx *regexp.Regexp
+	if os.Getenv("EXCLUDE_NAMESPACES") != "" {
+		nsFilterRx = regexp.MustCompile(os.Getenv("EXCLUDE_NAMESPACES"))
+	}
+
+	stopAndWait := false
+	var nsFilterStr string
+	if nsFilterRx != nil {
+		nsFilterStr = nsFilterRx.String()
+	}
+
 	var k8sCollector *k8s.K8sCollector
 	kubeEvents := make(chan interface{}, 1000)
 	var k8sVersion string
@@ -116,16 +127,7 @@ func main() {
 	}
 
 	dsBackend.Start()
-	var nsFilterRx *regexp.Regexp
-	if os.Getenv("EXCLUDE_NAMESPACES") != "" {
-		nsFilterRx = regexp.MustCompile(os.Getenv("EXCLUDE_NAMESPACES"))
-	}
 
-	stopAndWait := false
-	var nsFilterStr string
-	if nsFilterRx != nil {
-		nsFilterStr = nsFilterRx.String()
-	}
 	healthCh := dsBackend.SendHealthCheck(tracingEnabled, metricsEnabled, logsEnabled, nsFilterStr, k8sVersion)
 	go func() {
 		for msg := range healthCh {
