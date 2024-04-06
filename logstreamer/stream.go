@@ -96,7 +96,7 @@ func (ls *LogStreamer) watchContainer(id string, name string) error {
 	}
 
 	if ls.critool.FilterNamespace(resp.PodNs) {
-		log.Logger.Info().Msgf("Skipping logs for container [%s] with id [%s]", name, id)
+		log.Logger.Debug().Msgf("Skipping logs for container [%s] with id [%s]", name, id)
 		return nil
 	}
 
