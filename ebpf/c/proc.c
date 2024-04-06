@@ -108,9 +108,6 @@ int sched_process_fork(struct trace_event_raw_sched_process_fork* ctx)
     if (res < 0){
         unsigned char log_msg[] = "failed forked task -- pid|child_pid|res";
         log_to_userspace(ctx, DEBUG, func_name, log_msg, ctx->pid,ctx->child_pid, res);     
-    }else{
-        unsigned char log_msg[] = "add forked task -- pid|child_pid|psize";
-        log_to_userspace(ctx, DEBUG, func_name, log_msg, ctx->pid,ctx->child_pid, 0);        
     }
     #endif
 

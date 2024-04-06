@@ -141,7 +141,7 @@ func (ct *CRITool) GetPidsRunningOnContainers() (map[uint32]struct{}, error) {
 			log.Logger.Error().Err(err).Msgf("Failed to get runnning pids for container [%s]", c.Id)
 			continue
 		}
-		log.Logger.Debug().Msgf("running container [%s-%s] has pids %v", c.Metadata.Name, c.Id, runningPids)
+		// log.Logger.Debug().Msgf("running container [%s-%s] has pids %v", c.Metadata.Name, c.Id, runningPids)
 
 		for _, pid := range runningPids {
 			pids[pid] = struct{}{}
