@@ -280,7 +280,7 @@ func (ls *LogStreamer) StreamLogs() error {
 						continue
 					} else {
 						// new container
-						log.Logger.Info().Msgf("new container found: %s, %s", c.Id, c.Metadata.Name)
+						log.Logger.Debug().Msgf("new container found: %s, %s", c.Id, c.Metadata.Name)
 						err := ls.watchContainer(c.Id, c.Metadata.Name)
 						if err != nil {
 							log.Logger.Error().Err(err).Msgf("Failed to watch new container %s, %s", c.Id, c.Metadata.Name)
