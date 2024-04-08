@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"os"
 	"path/filepath"
@@ -38,6 +41,26 @@ type fileReader struct {
 	*bufio.Reader
 }
 
+func createTLSConfig() (*tls.Config, error) {
+	caCertPool := x509.NewCertPool()
+	caCert, err := ioutil.ReadFile("./ca-certificate.pem") // // Cloudflare Origin Server Certificate
+	if err != nil {
+		return nil, err
+	}
+
+	caCertPool.AppendCertsFromPEM(caCert)
+
+	serverName := os.Getenv("LOG_BACKEND_SERVER_NAME")
+	if serverName == "" {
+		serverName = "log-alaz-staging.getanteon.com"
+	}
+
+	return &tls.Config{
+		RootCAs:    caCertPool,
+		ServerName: serverName,
+	}, nil
+}
+
 func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, error) {
 	ls := &LogStreamer{
 		critool: critool,
@@ -48,12 +71,18 @@ func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, er
 		logBackend = "log-backend.ddosify:8282"
 	}
 
-	dialer := &net.Dialer{
-		Timeout: 5 * time.Second,
+	// dialer := &net.Dialer{
+	// 	Timeout: 5 * time.Second,
+	// }
+
+	tlsConfig, err := createTLSConfig()
+	if err != nil {
+		log.Logger.Error().Err(err).Msg("failed to create TLS config")
+		return nil, err
 	}
 
 	connPool, err := NewChannelPool(5, 30, func() (net.Conn, error) {
-		return dialer.Dial("tcp", logBackend)
+		return tls.Dial("tcp", logBackend, tlsConfig)
 	})
 	ls.connPool = connPool
 
