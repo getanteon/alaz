@@ -8,7 +8,6 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"os"
 	"path/filepath"
@@ -43,11 +42,7 @@ type fileReader struct {
 
 func createTLSConfig() (*tls.Config, error) {
 	caCertPool := x509.NewCertPool()
-	caCert, err := ioutil.ReadFile("./ca-certificate.pem") // // Cloudflare Origin Server Certificate
-	if err != nil {
-		return nil, err
-	}
-
+	caCert := []byte(CaCert)
 	caCertPool.AppendCertsFromPEM(caCert)
 
 	serverName := os.Getenv("LOG_BACKEND_SERVER_NAME")
