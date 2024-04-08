@@ -83,8 +83,7 @@ func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, er
 	ls.connPool = connPool
 
 	if err != nil {
-		log.Logger.Error().Err(err).Msg("failed to create connection pool")
-		return nil, err
+		return nil, fmt.Errorf("failed to create connection pool: %v", err)
 	}
 
 	watcher, err := fsnotify.NewWatcher()
@@ -97,8 +96,8 @@ func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, er
 	ls.done = make(chan struct{})
 	go func() {
 		<-ctx.Done()
-		watcher.Close()
-		connPool.Close()
+		ls.watcher.Close()
+		ls.connPool.Close()
 		close(ls.done)
 	}()
 
