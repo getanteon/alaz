@@ -162,8 +162,8 @@ func (tsp *TcpStateProg) PopulateContainerPidsMap(newKeys, deletedKeys []uint32)
 		log.Logger.Debug().Msgf("deleting container pids map with %d new keys %v", len(deletedKeys), deletedKeys)
 		count, err := tsp.ContainerPidMap.BatchDelete(deletedKeys, &ebpf.BatchOptions{})
 		if err != nil {
-			log.Logger.Warn().Err(err).Msg("failed deleting entries from container pids map")
-			errors = append(errors, err)
+			log.Logger.Debug().Err(err).Msg("failed deleting entries from container pids map")
+			// errors = append(errors, err)
 		} else {
 			log.Logger.Debug().Msgf("deleted %d entries from container pids map", count)
 		}

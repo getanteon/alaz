@@ -900,6 +900,7 @@ func (b *BackendDS) SendHealthCheck(tracing bool, metrics bool, logs bool, nsFil
 		resp, err := b.c.Do(req.WithContext(ctx))
 		if err != nil {
 			log.Logger.Error().Msgf("error sending healtcheck request, %v", err)
+			return
 		}
 
 		if resp.StatusCode == http.StatusPaymentRequired {

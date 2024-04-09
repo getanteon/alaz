@@ -66,9 +66,9 @@ func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, er
 		logBackend = "log-backend.ddosify:8282"
 	}
 
-	// dialer := &net.Dialer{
-	// 	Timeout: 5 * time.Second,
-	// }
+	dialer := &net.Dialer{
+		Timeout: 60 * time.Second,
+	}
 
 	tlsConfig, err := createTLSConfig()
 	if err != nil {
@@ -77,13 +77,13 @@ func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, er
 	}
 
 	connPool, err := NewChannelPool(5, 30, func() (net.Conn, error) {
-		return tls.Dial("tcp", logBackend, tlsConfig)
+		return tls.DialWithDialer(dialer, "tcp", logBackend, tlsConfig)
+		// return tls.Dial("tcp", logBackend, tlsConfig)
 	})
 	ls.connPool = connPool
 
 	if err != nil {
-		log.Logger.Error().Err(err).Msg("failed to create connection pool")
-		return nil, err
+		return nil, fmt.Errorf("failed to create connection pool: %v", err)
 	}
 
 	watcher, err := fsnotify.NewWatcher()
@@ -96,8 +96,8 @@ func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, er
 	ls.done = make(chan struct{})
 	go func() {
 		<-ctx.Done()
-		watcher.Close()
-		connPool.Close()
+		ls.watcher.Close()
+		ls.connPool.Close()
 		close(ls.done)
 	}()
 
@@ -187,7 +187,11 @@ func (ls *LogStreamer) sendLogs(logPath string) error {
 	}()
 
 	// send metadata first
-	metaLine := ls.logPathToContainerMeta[logPath]
+	metaLine, ok := ls.logPathToContainerMeta[logPath]
+	if !ok {
+		log.Logger.Warn().Msgf("metadata for log path %s is not found", logPath)
+		return nil
+	}
 	_, err = io.Copy(poolConn, bytes.NewBufferString(metaLine))
 	if err != nil {
 		log.Logger.Error().Err(err).Msgf("metadata could not be sent to backend: %v", err)
@@ -230,8 +234,8 @@ func (ls *LogStreamer) unwatchContainer(id string) {
 	ls.watcher.Remove(logPath)
 
 	// close reader
-	if reader, ok := ls.logPathToFile[logPath]; ok {
-		reader.Reset(nil)
+	if _, ok := ls.logPathToFile[logPath]; ok {
+		// reader.Reset(nil)
 		delete(ls.logPathToFile, logPath)
 	}
 

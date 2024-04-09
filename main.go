@@ -7,6 +7,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/ddosify/alaz/aggregator"
 	"github.com/ddosify/alaz/config"
@@ -110,17 +111,32 @@ func main() {
 	var ls *logstreamer.LogStreamer
 	if logsEnabled {
 		if ct != nil {
-			ls, err = logstreamer.NewLogStreamer(ctx, ct)
-			if err != nil {
-				log.Logger.Error().Err(err).Msg("failed to create logstreamer")
-			} else {
-				go func() {
-					err := ls.StreamLogs()
+			go func() {
+				backoff := 5 * time.Second
+				for {
+					// retry creating LogStreamer with backoff
+					// it will throw an error if connection to backend is not established
+					log.Logger.Info().Msg("creating logstreamer")
+					ls, err = logstreamer.NewLogStreamer(ctx, ct)
 					if err != nil {
-						log.Logger.Error().Err(err).Msg("failed to stream logs")
+						log.Logger.Error().Err(err).Msg("failed to create logstreamer")
+						select {
+						case <-time.After(backoff):
+						case <-ctx.Done():
+							return
+						}
+						backoff *= 2
+					} else {
+						break
 					}
-				}()
-			}
+				}
+
+				err := ls.StreamLogs()
+				if err != nil {
+					log.Logger.Error().Err(err).Msg("failed to stream logs")
+				}
+			}()
+
 		} else {
 			log.Logger.Error().Msg("logs enabled but cri tool not available")
 		}
