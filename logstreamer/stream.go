@@ -399,5 +399,5 @@ func (ls *LogStreamer) StreamLogs() error {
 // containerName
 // which version of container, 0,1,2...
 func getContainerMetadataLine(podNs, podName, podUid, containerName string, num int) string {
-	return fmt.Sprintf("**AlazLogs_%s_%s_%s_%s_%d**\n", podNs, podName, podUid, containerName, num)
+	return fmt.Sprintf("\n**AlazLogs_%s_%s_%s_%s_%d**\n", podNs, podName, podUid, containerName, num)
 }
