@@ -161,9 +161,9 @@ type BackendDS struct {
 	epEventChan        chan interface{} // *EndpointsEvent
 	containerEventChan chan interface{} // *ContainerEvent
 	dsEventChan        chan interface{} // *DaemonSetEvent
+	ssEventChan        chan interface{} // *StatefulSetEvent
 
 	// TODO add:
-	// statefulset
 	// job
 	// cronjob
 }
@@ -176,6 +176,7 @@ const (
 	epEndpoint        = "/endpoint/"
 	containerEndpoint = "/container/"
 	dsEndpoint        = "/daemonset/"
+	ssEndpoint        = "/statefulset/"
 	reqEndpoint       = "/requests/"
 	connEndpoint      = "/connections/"
 
@@ -300,6 +301,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 		epEventChan:           make(chan interface{}, resourceChanSize),
 		containerEventChan:    make(chan interface{}, 5*resourceChanSize),
 		dsEventChan:           make(chan interface{}, resourceChanSize),
+		ssEventChan:           make(chan interface{}, resourceChanSize),
 		traceEventQueue:       list.New(),
 		metricsExport:         conf.MetricsExport,
 		gpuMetricsExport:      conf.GpuMetricsExport,
@@ -328,6 +330,7 @@ func (ds *BackendDS) Start() {
 	go ds.sendEventsInBatch(ds.epEventChan, epEndpoint, eventsInterval)
 	go ds.sendEventsInBatch(ds.containerEventChan, containerEndpoint, eventsInterval)
 	go ds.sendEventsInBatch(ds.dsEventChan, dsEndpoint, eventsInterval)
+	go ds.sendEventsInBatch(ds.ssEventChan, ssEndpoint, eventsInterval)
 
 	// send node-exporter and nvidia-gpu metrics
 	go func() {
@@ -825,6 +828,12 @@ func (b *BackendDS) PersistEndpoints(ep Endpoints, eventType string) error {
 func (b *BackendDS) PersistDaemonSet(ds DaemonSet, eventType string) error {
 	dsEvent := convertDsToDsEvent(ds, eventType)
 	b.dsEventChan <- &dsEvent
+	return nil
+}
+
+func (b *BackendDS) PersistStatefulSet(ss StatefulSet, eventType string) error {
+	ssEvent := convertSsToSsEvent(ss, eventType)
+	b.ssEventChan <- &ssEvent
 	return nil
 }
 

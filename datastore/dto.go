@@ -41,6 +41,12 @@ type DaemonSet struct {
 	Namespace string // Namespace
 }
 
+type StatefulSet struct {
+	UID       string // ReplicaSet UID
+	Name      string // ReplicaSet Name
+	Namespace string // Namespace
+}
+
 type Deployment struct {
 	UID       string // Deployment UID
 	Name      string // Deployment Name

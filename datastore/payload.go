@@ -69,6 +69,12 @@ type DsEvent struct {
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
 }
+type SsEvent struct {
+	UID       string `json:"uid"`
+	EventType string `json:"event_type"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+}
 
 type DepEvent struct {
 	UID       string `json:"uid"`
@@ -195,6 +201,15 @@ func convertDsToDsEvent(ds DaemonSet, eventType string) DsEvent {
 		EventType: eventType,
 		Name:      ds.Name,
 		Namespace: ds.Namespace,
+	}
+}
+
+func convertSsToSsEvent(ss StatefulSet, eventType string) SsEvent {
+	return SsEvent{
+		UID:       ss.UID,
+		EventType: eventType,
+		Name:      ss.Name,
+		Namespace: ss.Namespace,
 	}
 }
 

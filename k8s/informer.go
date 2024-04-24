@@ -27,13 +27,14 @@ import (
 type K8SResourceType string
 
 const (
-	SERVICE    = "Service"
-	POD        = "Pod"
-	REPLICASET = "ReplicaSet"
-	DEPLOYMENT = "Deployment"
-	ENDPOINTS  = "Endpoints"
-	CONTAINER  = "Container"
-	DAEMONSET  = "DaemonSet"
+	SERVICE     = "Service"
+	POD         = "Pod"
+	REPLICASET  = "ReplicaSet"
+	DEPLOYMENT  = "Deployment"
+	ENDPOINTS   = "Endpoints"
+	CONTAINER   = "Container"
+	DAEMONSET   = "DaemonSet"
+	STATEFULSET = "StatefulSet"
 )
 
 const (
@@ -52,12 +53,13 @@ type K8sCollector struct {
 	stopper          chan struct{} // stop signal for the informers
 	doneChan         chan struct{} // done signal for k8sCollector
 	// watchers
-	podInformer        v1.PodInformer
-	serviceInformer    v1.ServiceInformer
-	replicasetInformer appsv1.ReplicaSetInformer
-	deploymentInformer appsv1.DeploymentInformer
-	endpointsInformer  v1.EndpointsInformer
-	daemonsetInformer  appsv1.DaemonSetInformer
+	podInformer         v1.PodInformer
+	serviceInformer     v1.ServiceInformer
+	replicasetInformer  appsv1.ReplicaSetInformer
+	deploymentInformer  appsv1.DeploymentInformer
+	endpointsInformer   v1.EndpointsInformer
+	daemonsetInformer   appsv1.DaemonSetInformer
+	statefulSetInformer appsv1.StatefulSetInformer
 
 	Events chan interface{}
 }
@@ -89,6 +91,10 @@ func (k *K8sCollector) Init(events chan interface{}) error {
 	// DaemonSet
 	k.daemonsetInformer = k.informersFactory.Apps().V1().DaemonSets()
 	k.watchers[DAEMONSET] = k.daemonsetInformer.Informer()
+
+	// StatefulSet
+	k.statefulSetInformer = k.informersFactory.Apps().V1().StatefulSets()
+	k.watchers[STATEFULSET] = k.statefulSetInformer.Informer()
 
 	defer runtime.HandleCrash()
 
@@ -127,6 +133,12 @@ func (k *K8sCollector) Init(events chan interface{}) error {
 		AddFunc:    getOnAddDaemonSetFunc(k.Events),
 		UpdateFunc: getOnUpdateDaemonSetFunc(k.Events),
 		DeleteFunc: getOnDeleteDaemonSetFunc(k.Events),
+	})
+
+	k.watchers[STATEFULSET].AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    getOnAddStatefulSetFunc(k.Events),
+		UpdateFunc: getOnUpdateStatefulSetFunc(k.Events),
+		DeleteFunc: getOnDeleteStatefulSetFunc(k.Events),
 	})
 
 	wg := sync.WaitGroup{}
