@@ -76,7 +76,16 @@ func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, er
 		return nil, err
 	}
 
-	connPool, err := NewChannelPool(5, 30, func() (net.Conn, error) {
+	max_connection := 30
+	max_connection_str := os.Getenv("LOG_BACKEND_MAX_CONNECTION")
+	if max_connection_str != "" {
+		m, err := strconv.Atoi(max_connection_str)
+		if err == nil {
+			max_connection = m
+		}
+	}
+
+	connPool, err := NewChannelPool(5, max_connection, func() (net.Conn, error) {
 		return tls.DialWithDialer(dialer, "tcp", logBackend, tlsConfig)
 		// return tls.Dial("tcp", logBackend, tlsConfig)
 	})
@@ -282,7 +291,6 @@ func (ls *LogStreamer) StreamLogs() error {
 		// poll every 10 seconds
 		t := time.NewTicker(10 * time.Second)
 		for {
-
 			select {
 			case <-ls.ctx.Done():
 				log.Logger.Info().Msg("context done, stopping container watcher")
@@ -339,9 +347,12 @@ func (ls *LogStreamer) StreamLogs() error {
 						if !ok {
 							return
 						}
-
+						logPath := event.Name
+						if logPath == "" {
+							log.Logger.Warn().Str("op", event.Op.String()).Msgf("empty log path from fsnotify")
+							continue
+						}
 						if event.Has(fsnotify.Rename) { // logrotate case
-							logPath := event.Name
 							// containerd compresses logs, and recreates the file, it comes as a rename event
 							for {
 								_, err := os.Stat(logPath)
@@ -376,9 +387,9 @@ func (ls *LogStreamer) StreamLogs() error {
 							// TODO: apps that writes too much logs might block small applications and causes lag on small apps logs
 							// we don't have to read logs on every write event ??
 
-							err := ls.sendLogs(event.Name)
+							err := ls.sendLogs(logPath)
 							if err != nil {
-								log.Logger.Error().Err(err).Msgf("Failed to send logs for %s", event.Name)
+								log.Logger.Error().Err(err).Msgf("Failed to send logs for %s", logPath)
 							}
 						}
 					case err, ok := <-ls.watcher.Errors:
