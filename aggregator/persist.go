@@ -327,3 +327,22 @@ func (a *Aggregator) processDaemonSet(d k8s.K8sResourceMessage) {
 		go a.ds.PersistDaemonSet(dtoDaemonSet, DELETE)
 	}
 }
+
+func (a *Aggregator) processStatefulSet(d k8s.K8sResourceMessage) {
+	statefulSet := d.Object.(*appsv1.StatefulSet)
+
+	dtoStatefulSet := datastore.StatefulSet{
+		UID:       string(statefulSet.UID),
+		Name:      statefulSet.Name,
+		Namespace: statefulSet.Namespace,
+	}
+
+	switch d.EventType {
+	case k8s.ADD:
+		go a.ds.PersistStatefulSet(dtoStatefulSet, ADD)
+	case k8s.UPDATE:
+		go a.ds.PersistStatefulSet(dtoStatefulSet, UPDATE)
+	case k8s.DELETE:
+		go a.ds.PersistStatefulSet(dtoStatefulSet, DELETE)
+	}
+}
