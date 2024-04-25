@@ -56,6 +56,11 @@ func createTLSConfig() (*tls.Config, error) {
 	}, nil
 }
 
+func createFsNotifyWatcher() (*fsnotify.Watcher, error) {
+	var sz uint = 1000
+	return fsnotify.NewBufferedWatcher(sz)
+}
+
 func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, error) {
 	ls := &LogStreamer{
 		critool: critool,
@@ -95,11 +100,12 @@ func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, er
 		return nil, fmt.Errorf("failed to create connection pool: %v", err)
 	}
 
-	watcher, err := fsnotify.NewWatcher()
+	watcher, err := createFsNotifyWatcher()
 	if err != nil {
 		log.Logger.Error().Err(err).Msg("failed to create fsnotify watcher")
 		return nil, err
 	}
+
 	ls.watcher = watcher
 	ls.ctx = ctx
 	ls.done = make(chan struct{})
@@ -195,19 +201,6 @@ func (ls *LogStreamer) sendLogs(logPath string) error {
 		}
 	}()
 
-	// send metadata first
-	metaLine, ok := ls.logPathToContainerMeta[logPath]
-	if !ok {
-		log.Logger.Warn().Msgf("metadata for log path %s is not found", logPath)
-		return nil
-	}
-	_, err = io.Copy(poolConn, bytes.NewBufferString(metaLine))
-	if err != nil {
-		log.Logger.Error().Err(err).Msgf("metadata could not be sent to backend: %v", err)
-		poolConn.MarkUnusable()
-		return err
-	}
-
 	// send logs
 	reader, ok := ls.logPathToFile[logPath]
 	if !ok || reader == nil {
@@ -216,6 +209,22 @@ func (ls *LogStreamer) sendLogs(logPath string) error {
 	}
 
 	reader.mu.Lock()
+
+	// send metadata first
+	metaLine, ok := ls.logPathToContainerMeta[logPath]
+	if !ok {
+		log.Logger.Warn().Msgf("metadata for log path %s is not found", logPath)
+		reader.mu.Unlock()
+		return nil
+	}
+	_, err = io.Copy(poolConn, bytes.NewBufferString(metaLine))
+	if err != nil {
+		log.Logger.Error().Err(err).Msgf("metadata could not be sent to backend: %v", err)
+		poolConn.MarkUnusable()
+		reader.mu.Unlock()
+		return err
+	}
+
 	_, err = io.Copy(poolConn, reader)
 	if err != nil {
 		log.Logger.Error().Err(err).Msgf("logs could not be sent to backend: %v", err)
@@ -272,18 +281,26 @@ func (ls *LogStreamer) readerForLogPath(logPath string) (*fileReader, error) {
 	return ls.logPathToFile[logPath], nil
 }
 
-func (ls *LogStreamer) StreamLogs() error {
+func (ls *LogStreamer) watchContainers() error {
 	containers, err := ls.critool.GetAllContainers()
 	if err != nil {
 		return err
 	}
-	log.Logger.Info().Msg("watching containers")
-
 	for _, c := range containers {
 		err := ls.watchContainer(c.Id, c.Metadata.Name)
 		if err != nil {
 			log.Logger.Error().Err(err).Msgf("Failed to watch container %s, %s", c.Id, c.Metadata.Name)
 		}
+	}
+	return nil
+}
+
+func (ls *LogStreamer) StreamLogs() error {
+	log.Logger.Info().Msg("watching containers")
+	err := ls.watchContainers()
+	if err != nil {
+		log.Logger.Error().Err(err).Msg("failed to watch containers")
+		return err
 	}
 
 	// listen for new containers
@@ -335,72 +352,172 @@ func (ls *LogStreamer) StreamLogs() error {
 		}
 	}()
 
-	// start listening for fsnotify events
+	mu := sync.RWMutex{}
+	lastSendTimeMap := make(map[string]time.Time, 0)
+
+	mu2 := sync.RWMutex{}
+	lastSkippedWriteEventTimeMap := make(map[string]time.Time, 0)
+
+	workerCount := 20
+	logPathChan := make(chan string, workerCount)
+
 	go func() {
-		worker := 10
-		// start workers
-		for i := 0; i < worker; i++ {
+		// flush
+		// if a log event came but did not trigger and sendLogs, we need to flush it after some time
+		t := time.NewTicker(10 * time.Second)
+		for {
+			select {
+			case <-ls.ctx.Done():
+				log.Logger.Info().Msg("context done, stopping flusher")
+				return
+			case <-t.C:
+				mu2.RLock()
+				for logPath, lastSkippedWriteTime := range lastSkippedWriteEventTimeMap {
+					// check lastSendTimeMap
+					mu.RLock()
+					lastSendTime, ok := lastSendTimeMap[logPath]
+					mu.RUnlock()
+					if ok && lastSkippedWriteTime.After(lastSendTime) {
+						logPathChan <- logPath
+						log.Logger.Info().Msgf("flushing logs for %s", logPath)
+					}
+				}
+				mu2.RUnlock()
+			}
+		}
+	}()
+
+	go func() {
+		for i := 0; i < workerCount; i++ {
 			go func() {
-				for {
-					select {
-					case event, ok := <-ls.watcher.Events:
-						if !ok {
-							return
-						}
-						logPath := event.Name
-						if logPath == "" {
-							log.Logger.Warn().Str("op", event.Op.String()).Msgf("empty log path from fsnotify")
-							continue
-						}
-						if event.Has(fsnotify.Rename) { // logrotate case
-							// containerd compresses logs, and recreates the file, it comes as a rename event
-							for {
-								_, err := os.Stat(logPath)
-								if err == nil {
-									break
-								} else {
-									log.Logger.Info().Msgf("waiting for file to be created on rename: %s", logPath)
-								}
-								time.Sleep(1 * time.Second)
-							}
-
-							logFile, err := os.Open(logPath) // reopen file
-							if err != nil {
-								log.Logger.Error().Err(err).Msgf("Failed to reopen file on rename event: %s", logPath)
-								continue
-							}
-
-							err = ls.watcher.Add(logPath)
-							if err != nil {
-								log.Logger.Error().Err(err).Msgf("Failed to add log path %s to watcher", logPath)
-								continue
-							}
-							logFile.Seek(0, io.SeekEnd) // seek to end of file
-							ls.logPathToFile[logPath] = &fileReader{
-								mu:     sync.Mutex{},
-								Reader: bufio.NewReader(logFile),
-							}
-
-							log.Logger.Info().Msgf("reopened file for rename: %s", logPath)
-							continue
-						} else if event.Has(fsnotify.Write) {
-							// TODO: apps that writes too much logs might block small applications and causes lag on small apps logs
-							// we don't have to read logs on every write event ??
-
-							err := ls.sendLogs(logPath)
-							if err != nil {
-								log.Logger.Error().Err(err).Msgf("Failed to send logs for %s", logPath)
-							}
-						}
-					case err, ok := <-ls.watcher.Errors:
-						if !ok {
-							return
-						}
-						log.Logger.Error().Err(err).Msgf("fsnotify error")
+				for logPath := range logPathChan {
+					err := ls.sendLogs(logPath)
+					if err != nil {
+						log.Logger.Error().Err(err).Msgf("Failed to send logs for %s", logPath)
+					} else {
+						mu.Lock()
+						lastSendTimeMap[logPath] = time.Now()
+						mu.Unlock()
 					}
 				}
 			}()
 		}
+	}()
+
+	// start listening for fsnotify events
+	go func() {
+		restartCh := make(chan struct{}, 1)
+		worker := func(restartCh chan struct{}) {
+			for {
+				select {
+				case <-ls.ctx.Done():
+					log.Logger.Info().Msg("context done, stopping fsnotify worker")
+					return
+				case event, ok := <-ls.watcher.Events:
+					if !ok {
+						log.Logger.Info().Msg("fsnotify events channel closed")
+						return
+					}
+					logPath := event.Name
+					if logPath == "" {
+						log.Logger.Warn().Str("op", event.Op.String()).Msgf("empty log path from fsnotify")
+						continue
+					}
+					if event.Has(fsnotify.Rename) { // logrotate case
+						// containerd compresses logs, and recreates the file, it comes as a rename event
+						for {
+							_, err := os.Stat(logPath)
+							if err == nil {
+								break
+							} else {
+								log.Logger.Info().Msgf("waiting for file to be created on rename: %s", logPath)
+							}
+							time.Sleep(1 * time.Second)
+						}
+
+						logFile, err := os.Open(logPath) // reopen file
+						if err != nil {
+							log.Logger.Error().Err(err).Msgf("Failed to reopen file on rename event: %s", logPath)
+							continue
+						}
+
+						err = ls.watcher.Add(logPath)
+						if err != nil {
+							log.Logger.Error().Err(err).Msgf("Failed to add log path %s to watcher", logPath)
+							continue
+						}
+						logFile.Seek(0, io.SeekEnd) // seek to end of file
+						ls.logPathToFile[logPath] = &fileReader{
+							mu:     sync.Mutex{},
+							Reader: bufio.NewReader(logFile),
+						}
+
+						log.Logger.Info().Msgf("reopened file for rename: %s", logPath)
+						continue
+					} else if event.Has(fsnotify.Write) {
+						// When too many write events come from fsnotify
+						// and waits unprocessed, inotify buffer overflows
+						// to prevent this, we skip some write events that happens frequently
+						mu.RLock()
+						lastSendTime, ok := lastSendTimeMap[logPath]
+						mu.RUnlock()
+
+						// if a log data is sent in the last 2 seconds, skip this one
+						if ok && time.Since(lastSendTime) < 2*time.Second {
+							lastSkippedWriteEventTimeMap[logPath] = time.Now()
+							continue
+						}
+						logPathChan <- logPath
+					}
+				case err, ok := <-ls.watcher.Errors:
+					if !ok {
+						log.Logger.Info().Msg("fsnotify errors channel closed")
+						return
+					}
+					log.Logger.Error().Err(err).Msgf("fsnotify error")
+					// watcher stops working on fsnotify: queue or buffer overflow
+					// we need to recreate the watcher
+					ls.watcher.Close()
+					restartCh <- struct{}{}
+				}
+			}
+		}
+
+		startWorkers := func() {
+			// start workers
+			for i := 0; i < workerCount; i++ {
+				go worker(restartCh)
+			}
+		}
+
+		go func() {
+			for {
+				select {
+				case <-ls.ctx.Done():
+					return
+				case <-restartCh:
+					log.Logger.Warn().Msg("restarting fsnotify watcher")
+					watcher, err := createFsNotifyWatcher()
+					if err != nil {
+						log.Logger.Error().Err(err).Msg("failed to recreate fsnotify watcher")
+						return
+					}
+					ls.watcher = watcher
+					err = ls.watchContainers()
+					if err != nil {
+						log.Logger.Error().Err(err).Msg("failed to watch containers on watcher restart")
+						return
+					}
+
+					// start workers
+					log.Logger.Info().Msg("restarting fsnotify workers after watcher recreation")
+					go startWorkers()
+				}
+			}
+		}()
+
+		go startWorkers()
+
 	}()
 
 	return nil
