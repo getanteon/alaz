@@ -579,7 +579,16 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 			}
 
 			go func(l7Event *L7Event) {
-				ch <- l7Event
+				select {
+				case ch <- l7Event:
+				default:
+					log.Logger.Warn().
+						Str("protocol", l7Event.Protocol).
+						Str("method", l7Event.Method).
+						Uint32("pid", l7Event.Pid).
+						Uint32("status", l7Event.Status).
+						Msg("channel full, dropping l7 event")
+				}
 			}(userspacel7Event)
 		}
 		for {
