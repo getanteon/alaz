@@ -28,7 +28,9 @@ type LogStreamer struct {
 	connPool *channelPool
 	watcher  *fsnotify.Watcher
 
-	logPathToFile          map[string]*fileReader
+	readerMapMu   sync.RWMutex
+	logPathToFile map[string]*fileReader
+
 	logPathToContainerMeta map[string]string
 	containerIdToLogPath   map[string]string
 	ctx                    context.Context
@@ -116,6 +118,7 @@ func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, er
 		close(ls.done)
 	}()
 
+	ls.readerMapMu = sync.RWMutex{}
 	ls.logPathToFile = make(map[string]*fileReader, 0)
 	ls.logPathToContainerMeta = make(map[string]string, 0)
 	ls.containerIdToLogPath = make(map[string]string, 0)
@@ -202,7 +205,9 @@ func (ls *LogStreamer) sendLogs(logPath string) error {
 	}()
 
 	// send logs
+	ls.readerMapMu.RLock()
 	reader, ok := ls.logPathToFile[logPath]
+	ls.readerMapMu.RUnlock()
 	if !ok || reader == nil {
 		log.Logger.Error().Msgf("reader for log path %s is not found", logPath)
 		return err
@@ -252,19 +257,23 @@ func (ls *LogStreamer) unwatchContainer(id string) {
 	ls.watcher.Remove(logPath)
 
 	// close reader
+	ls.readerMapMu.Lock()
 	if _, ok := ls.logPathToFile[logPath]; ok {
-		// reader.Reset(nil)
 		delete(ls.logPathToFile, logPath)
 	}
+	ls.readerMapMu.Unlock()
 
 	delete(ls.logPathToContainerMeta, logPath)
 	delete(ls.containerIdToLogPath, id)
 }
 
 func (ls *LogStreamer) readerForLogPath(logPath string) (*fileReader, error) {
+	ls.readerMapMu.RLock()
 	if reader, ok := ls.logPathToFile[logPath]; ok {
+		ls.readerMapMu.RUnlock()
 		return reader, nil
 	}
+	ls.readerMapMu.RUnlock()
 
 	file, err := os.Open(logPath)
 	if err != nil {
@@ -273,12 +282,16 @@ func (ls *LogStreamer) readerForLogPath(logPath string) (*fileReader, error) {
 
 	file.Seek(0, io.SeekEnd) // seek to end of file
 	reader := bufio.NewReader(file)
-	ls.logPathToFile[logPath] = &fileReader{
+
+	ls.readerMapMu.Lock()
+	r := &fileReader{
 		mu:     sync.Mutex{},
 		Reader: reader,
 	}
+	ls.logPathToFile[logPath] = r
+	ls.readerMapMu.Unlock()
 
-	return ls.logPathToFile[logPath], nil
+	return r, nil
 }
 
 func (ls *LogStreamer) watchContainers() error {
@@ -447,10 +460,12 @@ func (ls *LogStreamer) StreamLogs() error {
 							continue
 						}
 						logFile.Seek(0, io.SeekEnd) // seek to end of file
+						ls.readerMapMu.Lock()
 						ls.logPathToFile[logPath] = &fileReader{
 							mu:     sync.Mutex{},
 							Reader: bufio.NewReader(logFile),
 						}
+						ls.readerMapMu.Unlock()
 
 						log.Logger.Info().Msgf("reopened file for rename: %s", logPath)
 						continue
