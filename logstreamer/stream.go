@@ -390,7 +390,7 @@ func (ls *LogStreamer) StreamLogs() error {
 					mu.RLock()
 					lastSendTime, ok := lastSendTimeMap[logPath]
 					mu.RUnlock()
-					if ok && lastSkippedWriteTime.After(lastSendTime) {
+					if ok && (lastSkippedWriteTime.Sub(lastSendTime) > 2*time.Second) {
 						logPathChan <- logPath
 						log.Logger.Info().Msgf("flushing logs for %s", logPath)
 					}
@@ -479,7 +479,9 @@ func (ls *LogStreamer) StreamLogs() error {
 
 						// if a log data is sent in the last 2 seconds, skip this one
 						if ok && time.Since(lastSendTime) < 2*time.Second {
+							mu2.Lock()
 							lastSkippedWriteEventTimeMap[logPath] = time.Now()
+							mu2.Unlock()
 							continue
 						}
 						logPathChan <- logPath
