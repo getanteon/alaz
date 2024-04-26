@@ -130,7 +130,7 @@ func (ls *LogStreamer) Done() chan struct{} {
 	return ls.done
 }
 
-func (ls *LogStreamer) watchContainer(id string, name string) error {
+func (ls *LogStreamer) watchContainer(id string, name string, new bool) error {
 	resp, err := ls.critool.ContainerStatus(id)
 	if err != nil {
 		log.Logger.Error().Err(err).Msgf("Failed to get container status for container [%s]", id)
@@ -148,7 +148,7 @@ func (ls *LogStreamer) watchContainer(id string, name string) error {
 		return err
 	}
 
-	_, err = ls.readerForLogPath(logPath)
+	_, err = ls.readerForLogPath(logPath, new)
 	if err != nil {
 		log.Logger.Error().Err(err).Msgf("Failed to get reader for log path %s", logPath)
 		return err
@@ -250,7 +250,9 @@ func (ls *LogStreamer) unwatchContainer(id string) {
 
 	// we must read until EOF and then remove the reader
 	// otherwise the last logs may be lost
-	// trigger manually
+	// trigger manually, container runtime still can add some latest logs after deletion
+	// wait for 1 second to ensure all logs are read
+	time.Sleep(1 * time.Second)
 	ls.sendLogs(logPath)
 	log.Logger.Info().Msgf("manually read for last time for %s", logPath)
 
@@ -267,7 +269,7 @@ func (ls *LogStreamer) unwatchContainer(id string) {
 	delete(ls.containerIdToLogPath, id)
 }
 
-func (ls *LogStreamer) readerForLogPath(logPath string) (*fileReader, error) {
+func (ls *LogStreamer) readerForLogPath(logPath string, new bool) (*fileReader, error) {
 	ls.readerMapMu.RLock()
 	if reader, ok := ls.logPathToFile[logPath]; ok {
 		ls.readerMapMu.RUnlock()
@@ -280,7 +282,11 @@ func (ls *LogStreamer) readerForLogPath(logPath string) (*fileReader, error) {
 		return nil, err
 	}
 
-	file.Seek(0, io.SeekEnd) // seek to end of file
+	// this container was alive before alaz installation, seek to end of file
+	if !new {
+		file.Seek(0, io.SeekEnd) // seek to end of file
+	}
+
 	reader := bufio.NewReader(file)
 
 	ls.readerMapMu.Lock()
@@ -300,7 +306,7 @@ func (ls *LogStreamer) watchContainers() error {
 		return err
 	}
 	for _, c := range containers {
-		err := ls.watchContainer(c.Id, c.Metadata.Name)
+		err := ls.watchContainer(c.Id, c.Metadata.Name, false)
 		if err != nil {
 			log.Logger.Error().Err(err).Msgf("Failed to watch container %s, %s", c.Id, c.Metadata.Name)
 		}
@@ -347,7 +353,7 @@ func (ls *LogStreamer) StreamLogs() error {
 					} else {
 						// new container
 						log.Logger.Debug().Msgf("new container found: %s, %s", c.Id, c.Metadata.Name)
-						err := ls.watchContainer(c.Id, c.Metadata.Name)
+						err := ls.watchContainer(c.Id, c.Metadata.Name, true)
 						if err != nil {
 							log.Logger.Error().Err(err).Msgf("Failed to watch new container %s, %s", c.Id, c.Metadata.Name)
 						}
