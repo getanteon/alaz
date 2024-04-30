@@ -1,26 +1,4 @@
 //go:build ignore
-#include "../headers/bpf.h"
-#include "../headers/common.h"
-#include "../headers/l7_req.h"
-
-// order is important
-#include <bpf/bpf_core_read.h>
-#include <bpf/bpf_helpers.h>
-#include <bpf/bpf_endian.h>
-#include <bpf/bpf_tracing.h>
-#include <stddef.h>
-#include "../headers/pt_regs.h"
-#include <sys/socket.h>
-
-#include "../headers/log.h"
-#include "http.c"
-#include "amqp.c"
-#include "postgres.c"
-#include "openssl.c"
-#include "http2.c"
-#include "tcp_sock.c"
-#include "go_internal.h"
-
 #define PROTOCOL_UNKNOWN    0
 #define PROTOCOL_HTTP	    1
 #define PROTOCOL_AMQP	2
@@ -30,10 +8,7 @@
 #define MAX_PAYLOAD_SIZE 1024
 #define PAYLOAD_PREFIX_SIZE 16
 
-
 #define TLS_MASK 0x8000000000000000
-
-char __license[] SEC("license") = "Dual MIT/GPL";
 
 struct l7_event {
     __u64 fd;
@@ -275,6 +250,16 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
                 e->payload_read_complete = 1;
             }
             
+            #ifdef FILTER_OUT_NON_CONTAINER
+            __u8 *val = bpf_map_lookup_elem(&container_pids, &(e->pid));
+            if (!val)
+            {
+                // unsigned char log_msg[] = "filter out l7 event -- pid|fd|psize";
+                // log_to_userspace(ctx, DEBUG, func_name, log_msg, e->pid, e->fd, 0);        
+                return 0; // not a container process, ignore    
+            }
+            #endif
+
             long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
             if (r < 0) {
                 unsigned char log_msg[] = "failed write to l7_events -- res|fd|psize";
@@ -358,7 +343,6 @@ int process_enter_of_syscalls_read_recvfrom(void *ctx, struct read_enter_args * 
 
 static __always_inline
 int process_exit_of_syscalls_write_sendto(void* ctx, __s64 ret){
-    // unsigned char func_name[] = "process_exit_of_syscalls_write_sendto";
     __u64 timestamp = bpf_ktime_get_ns();
     __u64 id = bpf_get_current_pid_tgid();
 
@@ -420,6 +404,17 @@ int process_exit_of_syscalls_write_sendto(void* ctx, __s64 ret){
         e->seq = active_req->seq;
         e->tid = active_req->tid;
 
+        #ifdef FILTER_OUT_NON_CONTAINER
+        __u8 *val = bpf_map_lookup_elem(&container_pids, &(e->pid));
+        if (!val)
+        {
+            // unsigned char func_name[] = "process_exit_of_syscalls_write_sendto";
+            // unsigned char log_msg[] = "filter out l7 event -- pid|fd|psize";
+            // log_to_userspace(ctx, DEBUG, func_name, log_msg, e->pid, e->fd, 0);        
+            return 0; // not a container process, ignore    
+        }
+        #endif
+
         bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
     }else{
         // write failed
@@ -462,6 +457,8 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
 
         return 0;
     }
+
+
 
 
     // __u64 id = bpf_get_current_pid_tgid();
@@ -509,6 +506,17 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
         }
         
         bpf_map_delete_elem(&active_reads, &id);
+
+        #ifdef FILTER_OUT_NON_CONTAINER
+        __u8 *val = bpf_map_lookup_elem(&container_pids, &(e->pid));
+        if (!val)
+        {
+            // unsigned char log_msg[] = "filter out l7 event -- pid|fd|psize";
+            // log_to_userspace(ctx, DEBUG, func_name, log_msg, e->pid, e->fd, 0);        
+            return 0; // not a container process, ignore    
+        }
+        #endif
+
         bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
         return 0;
     }
@@ -535,6 +543,17 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
                 e->payload_size = ret;
                 e->payload_read_complete = 1;
             }
+
+            #ifdef FILTER_OUT_NON_CONTAINER
+            __u8 *val = bpf_map_lookup_elem(&container_pids, &(e->pid));
+            if (!val)
+            {
+                // unsigned char log_msg[] = "filter out l7 event -- pid|fd|psize";
+                // log_to_userspace(ctx, DEBUG, func_name, log_msg, e->pid, e->fd, 0);        
+
+                return 0; // not a container process, ignore    
+            }
+            #endif
 
             long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
             if (r < 0) {
@@ -616,6 +635,16 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
     bpf_map_delete_elem(&active_reads, &id);
     bpf_map_delete_elem(&active_l7_requests, &k);
 
+    #ifdef FILTER_OUT_NON_CONTAINER
+    __u8 *val = bpf_map_lookup_elem(&container_pids, &(e->pid));
+    if (!val)
+    {
+        // unsigned char log_msg[] = "filter out l7 event -- pid|fd|psize";
+        // log_to_userspace(ctx, DEBUG, func_name, log_msg, e->pid, e->fd, 0);        
+        return 0; // not a container process, ignore    
+    }
+    #endif
+    
     long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
     if (r < 0) {
         unsigned char log_msg[] = "failed write to l7_events -- res|fd|psize";
@@ -1003,6 +1032,16 @@ int process_enter_of_go_conn_write(void *ctx, __u32 pid, __u32 fd, char *buf_ptr
                 e->payload_read_complete = 1;
             }
             
+            #ifdef FILTER_OUT_NON_CONTAINER
+            __u8 *val = bpf_map_lookup_elem(&container_pids, &(e->pid));
+            if (!val)
+            {
+                // unsigned char log_msg[] = "filter out l7 event -- pid|fd|psize";
+                // log_to_userspace(ctx, DEBUG, func_name, log_msg, e->pid, e->fd, 0);        
+
+                return 0; // not a container process, ignore    
+            }
+            #endif
             long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
             if (r < 0) {
                 unsigned char log_msg[] = "failed write to l7_events -- res|fd|psize";
@@ -1167,6 +1206,17 @@ int BPF_UPROBE(go_tls_conn_read_exit) {
             e->payload_size = ret;
             e->payload_read_complete = 1;
         }
+       
+        #ifdef FILTER_OUT_NON_CONTAINER
+        __u8 *val = bpf_map_lookup_elem(&container_pids, &(e->pid));
+        if (!val)
+        {
+            // unsigned char log_msg[] = "filter out l7 event -- pid|fd|psize";
+            // log_to_userspace(ctx, DEBUG, func_name, log_msg, e->pid, e->fd, 0);        
+
+            return 0; // not a container process, ignore    
+        }
+        #endif
 
         long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
         if (r < 0) {
@@ -1258,6 +1308,17 @@ int BPF_UPROBE(go_tls_conn_read_exit) {
 
     bpf_map_delete_elem(&go_active_reads, &k);
     bpf_map_delete_elem(&go_active_l7_requests, &req_k);
+
+    #ifdef FILTER_OUT_NON_CONTAINER
+    __u8 *val = bpf_map_lookup_elem(&container_pids, &(e->pid));
+    if (!val)
+    {
+        // unsigned char log_msg[] = "filter out l7 event -- pid|fd|psize";
+        // log_to_userspace(ctx, DEBUG, func_name, log_msg, e->pid, e->fd, 0);        
+
+        return 0; // not a container process, ignore    
+    }
+    #endif 
 
     long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
     if (r < 0) {

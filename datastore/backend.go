@@ -161,9 +161,9 @@ type BackendDS struct {
 	epEventChan        chan interface{} // *EndpointsEvent
 	containerEventChan chan interface{} // *ContainerEvent
 	dsEventChan        chan interface{} // *DaemonSetEvent
+	ssEventChan        chan interface{} // *StatefulSetEvent
 
 	// TODO add:
-	// statefulset
 	// job
 	// cronjob
 }
@@ -176,6 +176,7 @@ const (
 	epEndpoint        = "/endpoint/"
 	containerEndpoint = "/container/"
 	dsEndpoint        = "/daemonset/"
+	ssEndpoint        = "/statefulset/"
 	reqEndpoint       = "/requests/"
 	connEndpoint      = "/connections/"
 
@@ -300,6 +301,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 		epEventChan:           make(chan interface{}, resourceChanSize),
 		containerEventChan:    make(chan interface{}, 5*resourceChanSize),
 		dsEventChan:           make(chan interface{}, resourceChanSize),
+		ssEventChan:           make(chan interface{}, resourceChanSize),
 		traceEventQueue:       list.New(),
 		metricsExport:         conf.MetricsExport,
 		gpuMetricsExport:      conf.GpuMetricsExport,
@@ -328,6 +330,7 @@ func (ds *BackendDS) Start() {
 	go ds.sendEventsInBatch(ds.epEventChan, epEndpoint, eventsInterval)
 	go ds.sendEventsInBatch(ds.containerEventChan, containerEndpoint, eventsInterval)
 	go ds.sendEventsInBatch(ds.dsEventChan, dsEndpoint, eventsInterval)
+	go ds.sendEventsInBatch(ds.ssEventChan, ssEndpoint, eventsInterval)
 
 	// send node-exporter and nvidia-gpu metrics
 	go func() {
@@ -828,15 +831,30 @@ func (b *BackendDS) PersistDaemonSet(ds DaemonSet, eventType string) error {
 	return nil
 }
 
+func (b *BackendDS) PersistStatefulSet(ss StatefulSet, eventType string) error {
+	ssEvent := convertSsToSsEvent(ss, eventType)
+	b.ssEventChan <- &ssEvent
+	return nil
+}
+
 func (b *BackendDS) PersistContainer(c Container, eventType string) error {
 	cEvent := convertContainerToContainerEvent(c, eventType)
 	b.containerEventChan <- &cEvent
 	return nil
 }
 
-func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool, dist bool, k8sVersion string) {
+type HealthCheckAction string
+
+const (
+	HealthCheckActionStop HealthCheckAction = "payment_required"
+	HealthCheckActionOK   HealthCheckAction = "ok"
+)
+
+func (b *BackendDS) SendHealthCheck(tracing bool, metrics bool, logs bool, nsFilter string, k8sVersion string) chan HealthCheckAction {
 	t := time.NewTicker(10 * time.Second)
-	defer t.Stop()
+	// defer t.Stop()
+
+	ch := make(chan HealthCheckAction)
 
 	createHealthCheckPayload := func() HealthCheckPayload {
 		return HealthCheckPayload{
@@ -847,13 +865,15 @@ func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool, dist bool, k8sVersi
 				AlazVersion:    tag,
 			},
 			Info: struct {
-				EbpfEnabled        bool `json:"ebpf"`
-				MetricsEnabled     bool `json:"metrics"`
-				DistTracingEnabled bool `json:"traffic"`
+				TracingEnabled  bool   `json:"tracing"`
+				MetricsEnabled  bool   `json:"metrics"`
+				LogsEnabled     bool   `json:"logs"`
+				NamespaceFilter string `json:"namespace_filter"`
 			}{
-				EbpfEnabled:        ebpf,
-				MetricsEnabled:     metrics,
-				DistTracingEnabled: dist,
+				TracingEnabled:  tracing,
+				MetricsEnabled:  metrics,
+				LogsEnabled:     logs,
+				NamespaceFilter: nsFilter,
 			},
 			Telemetry: struct {
 				KernelVersion string `json:"kernel_version"`
@@ -867,15 +887,48 @@ func (b *BackendDS) SendHealthCheck(ebpf bool, metrics bool, dist bool, k8sVersi
 		}
 	}
 
-	for {
-		select {
-		case <-b.ctx.Done():
-			log.Logger.Info().Msg("stopping sending health check")
+	f := func() {
+		payloadBytes, err := json.Marshal(createHealthCheckPayload())
+		if err != nil {
+			log.Logger.Error().Msgf("error marshalling batch: %v", err)
 			return
-		case <-t.C:
-			b.sendToBackend(http.MethodPut, createHealthCheckPayload(), healthCheckEndpoint)
 		}
+
+		req, err := http.NewRequest(http.MethodPut, b.host+healthCheckEndpoint, bytes.NewBuffer(payloadBytes))
+		if err != nil {
+			log.Logger.Error().Msgf("error creating http request: %v", err)
+			return
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+
+		ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
+		// defer cancel()
+
+		resp, err := b.c.Do(req.WithContext(ctx))
+		if err != nil {
+			log.Logger.Error().Msgf("error sending healtcheck request, %v", err)
+			return
+		}
+
+		if resp.StatusCode == http.StatusPaymentRequired {
+			ch <- HealthCheckActionStop
+		} else if resp.StatusCode == http.StatusOK {
+			ch <- HealthCheckActionOK
+		}
+
+		_, _ = io.Copy(io.Discard, resp.Body) // in order to reuse the connection
+		resp.Body.Close()
 	}
+
+	go func() {
+		for range t.C {
+			f()
+		}
+	}()
+
+	return ch
 }
 
 func (b *BackendDS) scrapeNodeMetrics() (io.Reader, error) {

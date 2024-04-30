@@ -5,12 +5,12 @@ import (
 	"os"
 	"unsafe"
 
+	"github.com/ddosify/alaz/ebpf/c"
 	"github.com/ddosify/alaz/log"
 
+	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
-	"github.com/cilium/ebpf/linux"
 	"github.com/cilium/ebpf/perf"
-	"github.com/cilium/ebpf/rlimit"
 )
 
 const (
@@ -38,9 +38,6 @@ func (e ProcEventConversion) String() string {
 	}
 }
 
-// $BPF_CLANG and $BPF_CFLAGS are set by the Makefile.
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc $BPF_CLANG -cflags $BPF_CFLAGS bpf proc.c -- -I../headers
-
 type PEvent struct {
 	Pid   uint32
 	Type_ uint8
@@ -58,8 +55,6 @@ func (e ProcEvent) Type() string {
 	return PROC_EVENT
 }
 
-var objs bpfObjects
-
 type ProcProgConfig struct {
 	ProcEventsMapSize uint32 // specified in terms of os page size
 }
@@ -73,6 +68,7 @@ type ProcProg struct {
 	links             map[string]link.Link // key : hook name
 	ProcEvents        *perf.Reader
 	ProcEventsMapSize uint32
+	ContainerPidMap   *ebpf.Map // for filtering non-container pids on the node
 }
 
 func InitProcProg(conf *ProcProgConfig) *ProcProg {
@@ -91,45 +87,37 @@ func (pp *ProcProg) Close() {
 		log.Logger.Info().Msgf("unattach %s", hookName)
 		link.Close()
 	}
-	objs.Close()
 }
 
-// Loads bpf programs into kernel
-func (pp *ProcProg) Load() {
-	// Allow the current process to lock memory for eBPF resources.
-	if err := rlimit.RemoveMemlock(); err != nil {
-		log.Logger.Fatal().Err(err).Msg("failed to remove memlock limit")
-	}
-
-	// Load pre-compiled programs and maps into the kernel.
-	objs = bpfObjects{}
-	if err := loadBpfObjects(&objs, nil); err != nil {
-		log.Logger.Fatal().Err(err).Msg("loading objects")
-	}
-
-	linux.FlushCaches()
-
-}
 func (pp *ProcProg) Attach() {
-	l, err := link.Tracepoint("sched", "sched_process_exit", objs.bpfPrograms.SchedProcessExit, nil)
+	l, err := link.Tracepoint("sched", "sched_process_exit", c.BpfObjs.SchedProcessExit, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sched_process_exit tracepoint")
 	}
 	pp.links["sched/sched_process_exit"] = l
 
-	l1, err := link.Tracepoint("sched", "sched_process_exec", objs.bpfPrograms.SchedProcessExec, nil)
+	l1, err := link.Tracepoint("sched", "sched_process_exec", c.BpfObjs.SchedProcessExec, nil)
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("link sched_process_exec tracepoint")
 	}
 	pp.links["sched/sched_process_exec"] = l1
+
+	l2, err := link.Tracepoint("sched", "sched_process_fork", c.BpfObjs.SchedProcessFork, nil)
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("link sched_process_fork tracepoint")
+	}
+	pp.links["sched/sched_process_fork"] = l2
 }
 
 func (pp *ProcProg) InitMaps() {
 	var err error
-	pp.ProcEvents, err = perf.NewReader(objs.ProcEvents, 16*os.Getpagesize())
+	pp.ProcEvents, err = perf.NewReader(c.BpfObjs.ProcEvents, 16*os.Getpagesize())
 	if err != nil {
-		log.Logger.Fatal().Err(err).Msg("error creating ringbuf reader")
+		log.Logger.Fatal().Err(err).Msg("error creating perf reader")
 	}
+
+	// Initialize the pid filter map from user space and populate
+	// the map with the pids of the container processes
 }
 
 func (pp *ProcProg) Consume(ctx context.Context, ch chan interface{}) {

@@ -10,9 +10,10 @@ type Metadata struct {
 type HealthCheckPayload struct {
 	Metadata Metadata `json:"metadata"`
 	Info     struct {
-		EbpfEnabled        bool `json:"ebpf"`
-		MetricsEnabled     bool `json:"metrics"`
-		DistTracingEnabled bool `json:"traffic"`
+		TracingEnabled  bool   `json:"tracing"`
+		MetricsEnabled  bool   `json:"metrics"`
+		LogsEnabled     bool   `json:"logs"`
+		NamespaceFilter string `json:"namespace_filter"`
 	} `json:"alaz_info"`
 	Telemetry struct {
 		KernelVersion string `json:"kernel_version"`
@@ -63,6 +64,12 @@ type RsEvent struct {
 }
 
 type DsEvent struct {
+	UID       string `json:"uid"`
+	EventType string `json:"event_type"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+}
+type SsEvent struct {
 	UID       string `json:"uid"`
 	EventType string `json:"event_type"`
 	Name      string `json:"name"`
@@ -194,6 +201,15 @@ func convertDsToDsEvent(ds DaemonSet, eventType string) DsEvent {
 		EventType: eventType,
 		Name:      ds.Name,
 		Namespace: ds.Namespace,
+	}
+}
+
+func convertSsToSsEvent(ss StatefulSet, eventType string) SsEvent {
+	return SsEvent{
+		UID:       ss.UID,
+		EventType: eventType,
+		Name:      ss.Name,
+		Namespace: ss.Namespace,
 	}
 }
 

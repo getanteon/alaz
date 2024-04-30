@@ -1,85 +1,8 @@
 //go:build ignore
-#include "../headers/bpf.h"
-#include "../headers/common.h"
-#include "../headers/tcp.h"
-
-#include <bpf/bpf_core_read.h>
-#include <bpf/bpf_helpers.h>
-#include <bpf/bpf_tracing.h>
-
-char __license[] SEC("license") = "Dual MIT/GPL";
-
-struct tcp_event
-{
-  __u64 fd;
-  __u64 timestamp;
-  __u32 type;
-  __u32 pid;
-  __u16 sport;
-  __u16 dport;
-  __u8 saddr[16];
-  __u8 daddr[16];
-};
-
-// used for sending events to user space
-// EVENT_TCP_LISTEN, EVENT_TCP_LISTEN_CLOSED
-struct
-{
-  __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
-  __uint(key_size, sizeof(int));
-  __uint(value_size, sizeof(int));
-} tcp_listen_events SEC(".maps");
-
-// used for sending events to user space
-// EVENT_TCP_ESTABLISHED, EVENT_TCP_CLOSED, EVENT_TCP_CONNECT_FAILED
-struct
-{
-  __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
-  __uint(key_size, sizeof(int));
-  __uint(value_size, sizeof(int));
-} tcp_connect_events SEC(".maps");
-
-// keeps the pid and fd of the process that opened the socket
-struct
-{
-  __uint(type, BPF_MAP_TYPE_HASH);
-  __uint(key_size, sizeof(__u64));
-  __uint(value_size, sizeof(__u64));
-  __uint(max_entries, 10240);
-} fd_by_pid_tgid SEC(".maps");
-
-// pid and fd of socket
-struct sk_info
-{
-  __u64 fd;
-  __u32 pid;
-};
-
-// keeps open sockets
-// key: skaddr
-// value: sk_info
-// remove when connection is established or when socket is closed
-struct
-{
-  __uint(type, BPF_MAP_TYPE_HASH);
-  __uint(max_entries, 10240);
-  __type(key, void *);
-  __type(value, struct sk_info);
-} sock_map SEC(".maps");
-
-
-// opening sockets, delete when connection is established or connection fails
-struct
-{
-  __uint(type, BPF_MAP_TYPE_HASH);
-  __uint(max_entries, 10240);
-  __type(key, void *);
-  __type(value, struct sk_info);
-} sock_map_temp SEC(".maps");
-
 SEC("tracepoint/sock/inet_sock_set_state")
 int inet_sock_set_state(void *ctx)
 {
+    unsigned char func_name[] = "inet_sock_set_state";
   __u64 timestamp = bpf_ktime_get_ns();
   struct trace_event_raw_inet_sock_set_state args = {};
   if (bpf_core_read(&args, sizeof(args), ctx) < 0)
@@ -96,6 +19,7 @@ int inet_sock_set_state(void *ctx)
   // get pid
   __u64 id = bpf_get_current_pid_tgid();
   __u32 pid = id >> 32;
+
   const void *skaddr;
 
   // if state transition is from BPF_TCP_CLOSE to BPF_TCP_SYN_SENT,
@@ -203,8 +127,16 @@ int inet_sock_set_state(void *ctx)
   __builtin_memcpy(&e.saddr, &args.saddr, sizeof(e.saddr));
   __builtin_memcpy(&e.daddr, &args.daddr, sizeof(e.saddr));
 
-  bpf_perf_event_output(ctx, map, BPF_F_CURRENT_CPU, &e, sizeof(e));
+  __u8 *val = bpf_map_lookup_elem(&container_pids, &e.pid);
+  if (!val)
+  {
+    unsigned char log_msg[] = "tcp connect event for plain second -- pid|fd|psize";
+    log_to_userspace(ctx, DEBUG, func_name, log_msg, pid, 0, 0);        
 
+    return 0; // not a container process, ignore    
+  }
+
+  bpf_perf_event_output(ctx, map, BPF_F_CURRENT_CPU, &e, sizeof(e));
   return 0;
 }
 
@@ -212,12 +144,20 @@ int inet_sock_set_state(void *ctx)
 SEC("tracepoint/syscalls/sys_enter_connect")
 int sys_enter_connect(void *ctx)
 {
+  __u64 id = bpf_get_current_pid_tgid();
+  __u32 pid = id >> 32;
+
+  __u8 *val = bpf_map_lookup_elem(&container_pids, &pid);
+  if (!val)
+  {
+    return 0; // not a container process, ignore
+  }
+
   struct trace_event_sys_enter_connect args = {};
   if (bpf_core_read(&args, sizeof(args), ctx) < 0)
   {
     return 0;
   }
-  __u64 id = bpf_get_current_pid_tgid();
   bpf_map_update_elem(&fd_by_pid_tgid, &id, &args.fd, BPF_ANY);
   return 0;
 }
@@ -226,6 +166,14 @@ SEC("tracepoint/syscalls/sys_exit_connect")
 int sys_exit_connect(void *ctx)
 {
   __u64 id = bpf_get_current_pid_tgid();
+  __u32 pid = id >> 32;
+
+  __u8 *val = bpf_map_lookup_elem(&container_pids, &pid);
+  if (!val)
+  {
+    return 0; // not a container process, ignore
+  }
+
   bpf_map_delete_elem(&fd_by_pid_tgid, &id);
   return 0;
 }
