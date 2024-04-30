@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-<img src="https://raw.githubusercontent.com/getanteon/alaz/master/assets/anteon_service_map.png" alt="Anteon Kubernetes Monitoring Service Map" />
+<img src="https://raw.githubusercontent.com/getanteon/anteon/master/assets/anteon_service_map.png" alt="Anteon Kubernetes Monitoring Service Map" />
 <i>Anteon automatically generates Service Map of your K8s cluster without code instrumentation or sidecars with eBPF Agent Alaz. So you can easily find the bottlenecks in your system. Red lines indicate the high latency between services.</i>
 </p>
 
@@ -33,7 +33,7 @@ Alaz can create a **Service Map** that helps identify golden signals and problem
 Additionally, Anteon tracks and displays live data on your cluster instances CPU, memory, disk, and network usage. All of the dashboards are generated out-of-box and you can create alerts based on these metrics values. Check out the [docs](https://getanteon.com/docs/) for more. 
 
 <p align="center">
-<img src="https://raw.githubusercontent.com/getanteon/alaz/master/assets/anteon_metrics.png" alt="Anteon Kubernetes Monitoring Metrics" />
+<img src="https://raw.githubusercontent.com/getanteon/anteon/master/assets/anteon_metrics.png" alt="Anteon Kubernetes Monitoring Metrics" />
 <i>Anteon tracks and displays live data on your cluster instances CPU, memory, disk, and network usage.</i>
 </p>
 
