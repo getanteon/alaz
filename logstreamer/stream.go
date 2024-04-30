@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/ddosify/alaz/log"
-	"k8s.io/apimachinery/pkg/util/uuid"
 
 	"github.com/ddosify/alaz/cri"
 	"github.com/fsnotify/fsnotify"
@@ -191,101 +190,76 @@ func (ls *LogStreamer) watchContainer(id string, name string, new bool) error {
 	return nil
 }
 
-func (ls *LogStreamer) sendLogs(logPath string, id string) error {
+func (ls *LogStreamer) sendLogs(logPath string) error {
 	var err error
 	var poolConn *PoolConn = nil
-
-	// id := string(uuid.NewUUID())
-	log.Logger.Info().Str("uuid", id).Msgf("consumed logs for %s", logPath)
 
 	t := 1
 	for {
 		poolConn, err = ls.connPool.Get()
 		if err != nil {
-			log.Logger.Error().Str("uuid", id).Err(err).Msgf("connect failed, retryconn..")
+			log.Logger.Error().Err(err).Msgf("connect failed, retryconn..")
 			time.Sleep(time.Duration(t) * time.Second)
 			t *= 2
 			continue
 		}
 		if poolConn == nil {
-			log.Logger.Info().Str("uuid", id).Msgf("poolConn is nil, retryconn..")
+			log.Logger.Info().Msgf("poolConn is nil, retryconn..")
 			time.Sleep(time.Duration(t) * time.Second)
 			t *= 2
 			continue
 		}
 		break
 	}
-	log.Logger.Info().Str("uuid", id).Msgf("got connection from pool %s", logPath)
-
-	// defer func() {
-	// 	if poolConn != nil && poolConn.unusable {
-	// 		log.Logger.Info().Msgf("connection is unusable, closing..")
-	// 		err := poolConn.Close()
-	// 		if err != nil {
-	// 			log.Logger.Error().Err(err).Msgf("Failed to close connection")
-	// 		}
-	// 	}
-	// }()
 
 	// send logs
-	log.Logger.Info().Str("uuid", id).Msgf("before ls.readerMapMu.RLock() %s", logPath)
 	ls.readerMapMu.RLock()
 	reader, ok := ls.logPathToFile[logPath]
 	ls.readerMapMu.RUnlock()
-	log.Logger.Info().Str("uuid", id).Msgf("after ls.readerMapMu.RUnLock() %s", logPath)
+
 	if !ok || reader == nil {
-		log.Logger.Error().Str("uuid", id).Msgf("reader for log path %s is not found", logPath)
+		log.Logger.Error().Msgf("reader for log path %s is not found", logPath)
 		poolConn.Close() // put back, it will close underlying connection
 		return err
 	}
 
-	log.Logger.Info().Str("uuid", id).Msgf("before reader.mu.Lock() %s", logPath)
-	reader.mu.Lock() // readeri alamiyo ?
-	log.Logger.Info().Str("uuid", id).Msgf("after reader.mu.Lock() %s", logPath)
+	reader.mu.Lock()
 
 	// send metadata first
 	ls.metaMapMu.RLock()
-	log.Logger.Info().Str("uuid", id).Msgf("after ls.metaMapMu.RLock() %s", logPath)
-
 	metaLine, ok := ls.logPathToContainerMeta[logPath]
 	ls.metaMapMu.RUnlock()
-	log.Logger.Info().Str("uuid", id).Msgf("after ls.metaMapMu.RUnlock() %s", logPath)
 
 	if !ok {
-		log.Logger.Warn().Str("uuid", id).Msgf("metadata for log path %s is not found", logPath)
+		log.Logger.Warn().Msgf("metadata for log path %s is not found", logPath)
 		reader.mu.Unlock()
 		poolConn.Close() // put back, it will close underlying connection
 		return nil
 	}
 
-	log.Logger.Info().Str("uuid", id).Msgf("copying metadata %s", logPath)
 	_, err = io.Copy(poolConn, bytes.NewBufferString(metaLine))
 	if err != nil {
-		log.Logger.Error().Str("uuid", id).Err(err).Msgf("metadata could not be sent to backend: %v", err)
+		log.Logger.Error().Err(err).Msgf("metadata could not be sent to backend: %v", err)
 		poolConn.MarkUnusable()
 		poolConn.Close() // put back, it will close underlying connection
 		reader.mu.Unlock()
 		return err
 	}
-	log.Logger.Info().Str("uuid", id).Msgf("copied metadata %s", logPath)
 
 	_, err = io.Copy(poolConn, reader)
 	if err != nil {
-		log.Logger.Error().Str("uuid", id).Err(err).Msgf("logs could not be sent to backend: %v", err)
+		log.Logger.Error().Err(err).Msgf("logs could not be sent to backend: %v", err)
 		poolConn.MarkUnusable()
 		poolConn.Close() // put back, it will close underlying connection
 		reader.mu.Unlock()
 		return err
 	} else {
-		log.Logger.Info().Str("uuid", id).Msgf("logs sent to backend for %s", logPath)
+		log.Logger.Debug().Msgf("logs sent to backend for %s", logPath)
 	}
 	reader.mu.Unlock()
-	log.Logger.Info().Str("uuid", id).Msgf("after reader.mu.Unlock() %s", logPath)
 
 	// put the connection back to the pool, closes if unusable
 	poolConn.Close()
-	log.Logger.Info().Str("uuid", id).Msgf("after poolConn.Close() %s", logPath)
-
 	return nil
 }
 
@@ -300,8 +274,7 @@ func (ls *LogStreamer) unwatchContainer(id string) {
 	// trigger manually, container runtime still can add some latest logs after deletion
 	// wait for 1 second to ensure all logs are read
 	time.Sleep(1 * time.Second)
-	uid := string(uuid.NewUUID())
-	ls.sendLogs(logPath, uid)
+	ls.sendLogs(logPath)
 	log.Logger.Info().Msgf("manually read for last time for %s", logPath)
 
 	ls.watcher.Remove(logPath)
@@ -468,12 +441,9 @@ func (ls *LogStreamer) StreamLogs() error {
 		for i := 0; i < workerCount; i++ {
 			go func() {
 				for logPath := range logPathChan {
-					uid := string(uuid.NewUUID())
-					log.Logger.Info().Str("uuid", uid).Msgf("sendLogs called...: %s", logPath)
-					err := ls.sendLogs(logPath, uid)
-					log.Logger.Info().Str("uuid", uid).Msgf("sendLogs returned...: %s", logPath)
+					err := ls.sendLogs(logPath)
 					if err != nil {
-						log.Logger.Error().Err(err).Str("uuid", uid).Msgf("Failed to send logs for %s", logPath)
+						log.Logger.Error().Err(err).Msgf("Failed to send logs for %s", logPath)
 					} else {
 						mu.Lock()
 						lastSendTimeMap[logPath] = time.Now()
@@ -505,7 +475,6 @@ func (ls *LogStreamer) StreamLogs() error {
 					}
 				}
 			}()
-			c := 0
 			for {
 				select {
 				case <-ls.ctx.Done():
@@ -516,10 +485,7 @@ func (ls *LogStreamer) StreamLogs() error {
 						log.Logger.Info().Msg("fsnotify events channel closed")
 						return
 					}
-					c++
-					if c%10 == 0 {
-						log.Logger.Info().Msgf("fsnotify event: %s", event)
-					}
+
 					logPath := event.Name
 					if logPath == "" {
 						log.Logger.Warn().Str("op", event.Op.String()).Msgf("empty log path from fsnotify")
@@ -579,13 +545,10 @@ func (ls *LogStreamer) StreamLogs() error {
 							continue
 						}
 
-						log.Logger.Info().Msgf("logPath sending...: %s", logPath)
 						select {
 						case logPathChan <- logPath:
-							log.Logger.Info().Msgf("logPathChan sent to chan: %s", logPath)
 						default:
-							log.Logger.Info().Msgf("logPath fail...: %s", logPath)
-
+							log.Logger.Info().Msgf("throttling logs, skipping: %s", logPath)
 							// increase timeWindow to prevent frequent writes
 							if timeWindow < 10*time.Second { // upperlimit
 								// log.Logger.Warn().Msgf("logPathChan is full, increasing timeWindow to %s", timeWindow.String())
