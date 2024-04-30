@@ -1,16 +1,18 @@
 package logstreamer
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
-	"net"
 	"sync"
+
+	"github.com/ddosify/alaz/log"
 )
 
 var ErrClosed = errors.New("pool is closed")
 
 type PoolConn struct {
-	net.Conn
+	*tls.Conn
 	mu       sync.RWMutex
 	c        *channelPool
 	unusable bool
@@ -23,11 +25,12 @@ func (p *PoolConn) Close() error {
 
 	if p.unusable {
 		if p.Conn != nil {
+			log.Logger.Info().Msg("connection is unusable, closing it")
 			return p.Conn.Close()
 		}
 		return nil
 	}
-	return p.c.put(p.Conn)
+	return p.c.put(p)
 }
 
 // MarkUnusable() marks the connection not usable any more, to let the pool close it instead of returning it to pool.
@@ -38,7 +41,7 @@ func (p *PoolConn) MarkUnusable() {
 }
 
 // newConn wraps a standard net.Conn to a poolConn net.Conn.
-func (c *channelPool) wrapConn(conn net.Conn) *PoolConn {
+func (c *channelPool) wrapConn(conn *tls.Conn) *PoolConn {
 	p := &PoolConn{c: c}
 	p.Conn = conn
 	return p
@@ -47,13 +50,13 @@ func (c *channelPool) wrapConn(conn net.Conn) *PoolConn {
 type channelPool struct {
 	// storage for our net.Conn connections
 	mu    sync.RWMutex
-	conns chan net.Conn
+	conns chan *PoolConn
 
 	// net.Conn generator
 	factory Factory
 }
 
-func (c *channelPool) getConnsAndFactory() (chan net.Conn, Factory) {
+func (c *channelPool) getConnsAndFactory() (chan *PoolConn, Factory) {
 	c.mu.RLock()
 	conns := c.conns
 	factory := c.factory
@@ -77,21 +80,26 @@ func (c *channelPool) Get() (*PoolConn, error) {
 		if conn == nil {
 			return nil, ErrClosed
 		}
+		if conn.unusable {
+			log.Logger.Info().Msg("connection is unusable on Get, closing it")
+			conn.Close()
+			return nil, ErrClosed
+		}
 
-		return c.wrapConn(conn), nil
+		return conn, nil
 	default:
 		conn, err := factory()
 		if err != nil {
 			return nil, err
 		}
-
+		log.Logger.Info().Msg("no connection available, created a new one")
 		return c.wrapConn(conn), nil
 	}
 }
 
 // put puts the connection back to the pool. If the pool is full or closed,
 // conn is simply closed. A nil conn will be rejected.
-func (c *channelPool) put(conn net.Conn) error {
+func (c *channelPool) put(conn *PoolConn) error {
 	if conn == nil {
 		return errors.New("connection is nil. rejecting")
 	}
@@ -108,9 +116,11 @@ func (c *channelPool) put(conn net.Conn) error {
 	// block and the default case will be executed.
 	select {
 	case c.conns <- conn:
+		// log.Logger.Info().Msg("putting connection back into the pool")
 		return nil
 	default:
 		// pool is full, close passed connection
+		log.Logger.Info().Msg("pool is full, close passed connection")
 		return conn.Close()
 	}
 }
@@ -143,7 +153,7 @@ func NewChannelPool(initialCap, maxCap int, factory Factory) (*channelPool, erro
 	}
 
 	c := &channelPool{
-		conns:   make(chan net.Conn, maxCap),
+		conns:   make(chan *PoolConn, maxCap),
 		factory: factory,
 	}
 
@@ -155,11 +165,12 @@ func NewChannelPool(initialCap, maxCap int, factory Factory) (*channelPool, erro
 			c.Close()
 			return nil, fmt.Errorf("factory is not able to fill the pool: %s", err)
 		}
-		c.conns <- conn
+		log.Logger.Debug().Msg("new connection created for log streaming")
+		c.conns <- c.wrapConn(conn)
 	}
 
 	return c, nil
 }
 
 // Factory is a function to create new connections.
-type Factory func() (net.Conn, error)
+type Factory func() (*tls.Conn, error)
