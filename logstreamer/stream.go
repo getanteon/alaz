@@ -242,9 +242,9 @@ func (ls *LogStreamer) sendLogs(logPath string) error {
 	_, err = io.Copy(poolConn, bytes.NewBufferString(metaLine))
 	if err != nil {
 		log.Logger.Error().Err(err).Msgf("metadata could not be sent to backend: %v", err)
+		reader.mu.Unlock()
 		poolConn.MarkUnusable()
 		poolConn.Close() // put back, it will close underlying connection
-		reader.mu.Unlock()
 		return err
 	}
 
@@ -253,9 +253,9 @@ func (ls *LogStreamer) sendLogs(logPath string) error {
 	_, err = io.Copy(poolConn, reader)
 	if err != nil {
 		log.Logger.Error().Err(err).Msgf("logs could not be sent to backend: %v", err)
+		reader.mu.Unlock()
 		poolConn.MarkUnusable()
 		poolConn.Close() // put back, it will close underlying connection
-		reader.mu.Unlock()
 		return err
 	} else {
 		log.Logger.Debug().Msgf("logs sent to backend for %s", logPath)
