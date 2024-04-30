@@ -237,6 +237,8 @@ func (ls *LogStreamer) sendLogs(logPath string) error {
 		return nil
 	}
 
+	poolConn.SetWriteDeadline(time.Now().Add(1 * time.Second))
+	defer poolConn.SetWriteDeadline(time.Time{})
 	_, err = io.Copy(poolConn, bytes.NewBufferString(metaLine))
 	if err != nil {
 		log.Logger.Error().Err(err).Msgf("metadata could not be sent to backend: %v", err)
@@ -246,6 +248,8 @@ func (ls *LogStreamer) sendLogs(logPath string) error {
 		return err
 	}
 
+	poolConn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	defer poolConn.SetWriteDeadline(time.Time{})
 	_, err = io.Copy(poolConn, reader)
 	if err != nil {
 		log.Logger.Error().Err(err).Msgf("logs could not be sent to backend: %v", err)

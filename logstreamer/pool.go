@@ -88,13 +88,11 @@ func (c *channelPool) Get() (*PoolConn, error) {
 
 		return conn, nil
 	default:
-		log.Logger.Info().Msg("no connection available, creating a new one")
 		conn, err := factory()
 		if err != nil {
 			return nil, err
 		}
-
-		log.Logger.Info().Msg("new connection created")
+		log.Logger.Info().Msg("no connection available, created a new one")
 		return c.wrapConn(conn), nil
 	}
 }
