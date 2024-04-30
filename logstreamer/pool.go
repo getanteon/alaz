@@ -165,7 +165,7 @@ func NewChannelPool(initialCap, maxCap int, factory Factory) (*channelPool, erro
 			c.Close()
 			return nil, fmt.Errorf("factory is not able to fill the pool: %s", err)
 		}
-		log.Logger.Info().Msg("new connection created")
+		log.Logger.Debug().Msg("new connection created for log streaming")
 		c.conns <- c.wrapConn(conn)
 	}
 

@@ -99,7 +99,7 @@ func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, er
 	}
 
 	connPool, err := NewChannelPool(5, max_connection, func() (*tls.Conn, error) {
-		log.Logger.Info().Msgf("dialing to log backend: %s", logBackend)
+		log.Logger.Debug().Msgf("dialing to log backend: %s", logBackend)
 		return tls.DialWithDialer(dialer, "tcp", logBackend, tlsConfig)
 		// return tls.Dial("tcp", logBackend, tlsConfig)
 	})
@@ -552,7 +552,7 @@ func (ls *LogStreamer) StreamLogs() error {
 						select {
 						case logPathChan <- logPath:
 						default:
-							log.Logger.Info().Msgf("throttling logs, skipping: %s", logPath)
+							log.Logger.Debug().Msgf("throttling logs, skipping: %s", logPath)
 							// increase timeWindow to prevent frequent writes
 							if timeWindow < 10*time.Second { // upperlimit
 								// log.Logger.Warn().Msgf("logPathChan is full, increasing timeWindow to %s", timeWindow.String())
