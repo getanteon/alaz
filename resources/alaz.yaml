@@ -62,7 +62,7 @@ spec:
         - name: METRICS_ENABLED
           value: "true"
         - name: LOGS_ENABLED
-          value: "true"
+          value: "false"
         - name: BACKEND_HOST
           value: https://api-alaz.getanteon.com:443
         - name: LOG_LEVEL
