@@ -127,6 +127,7 @@ func main() {
 						}
 						backoff *= 2
 					} else {
+						log.Logger.Info().Msg("logstreamer successfully created")
 						break
 					}
 				}

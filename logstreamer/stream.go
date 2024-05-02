@@ -98,11 +98,26 @@ func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, er
 		}
 	}
 
-	connPool, err := NewChannelPool(5, max_connection, func() (*tls.Conn, error) {
+	tlsFunc := func() (net.Conn, error) {
 		log.Logger.Debug().Msgf("dialing to log backend: %s", logBackend)
 		return tls.DialWithDialer(dialer, "tcp", logBackend, tlsConfig)
-		// return tls.Dial("tcp", logBackend, tlsConfig)
-	})
+	}
+
+	plainFunc := func() (net.Conn, error) {
+		log.Logger.Debug().Msgf("dialing to log backend: %s", logBackend)
+		return net.Dial("tcp", logBackend)
+	}
+
+	var factory Factory
+
+	logTls, _ := strconv.ParseBool(os.Getenv("LOG_BACKEND_TLS"))
+	if logTls {
+		factory = tlsFunc
+	} else {
+		factory = plainFunc
+	}
+
+	connPool, err := NewChannelPool(5, max_connection, factory, logTls)
 	ls.connPool = connPool
 	ls.maxConnection = max_connection
 
