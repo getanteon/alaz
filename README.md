@@ -1,28 +1,28 @@
 
-<h1 align="center">Alaz - Ddosify eBPF Agent for Kubernetes Monitoring</h1>
+<h1 align="center">Alaz - Anteon (Formerly Ddosify) eBPF Agent for Kubernetes Monitoring</h1>
 
 <p align="center">
-    <a href="https://github.com/ddosify/alaz/blob/master/LICENSE" target="_blank"><img src="https://img.shields.io/badge/LICENSE-AGPL--3.0-orange?style=for-the-badge&logo=none" alt="alaz license" /></a>
-    <a href="https://discord.gg/9KdnrSUZQg" target="_blank"><img src="https://img.shields.io/discord/898523141788287017?style=for-the-badge&logo=discord&label=DISCORD" alt="ddosify discord server" /></a>
+    <a href="https://github.com/getanteon/alaz/blob/master/LICENSE" target="_blank"><img src="https://img.shields.io/badge/LICENSE-AGPL--3.0-orange?style=for-the-badge&logo=none" alt="alaz license" /></a>
+    <a href="https://discord.gg/9KdnrSUZQg" target="_blank"><img src="https://img.shields.io/discord/898523141788287017?style=for-the-badge&logo=discord&label=DISCORD" alt="Anteon discord server" /></a>
     <a href="https://hub.docker.com/r/ddosify/alaz" target="_blank"><img src="https://img.shields.io/docker/v/ddosify/alaz?style=for-the-badge&logo=docker&label=docker&sort=semver" alt="alaz docker image" /></a>
 </p>
 
 <p align="center">
-<img src="https://raw.githubusercontent.com/ddosify/alaz/master/assets/ddosify_service_map.png" alt="Ddosify Kubernetes Monitoring Service Map" />
-<i>Ddosify automatically generates Service Map of your K8s cluster without code instrumentation or sidecars with eBPF Agent Alaz. So you can easily find the bottlenecks in your system. Red lines indicate the high latency between services.</i>
+<img src="https://raw.githubusercontent.com/getanteon/anteon/master/assets/anteon_service_map.png" alt="Anteon Kubernetes Monitoring Service Map" />
+<i>Anteon automatically generates Service Map of your K8s cluster without code instrumentation or sidecars with eBPF Agent Alaz. So you can easily find the bottlenecks in your system. Red lines indicate the high latency between services.</i>
 </p>
 
 <h2 align="center">
-    <a href="https://demo.ddosify.com/clusters/0ce2ef05-ef64-459d-90d9-7f2cbd65fff8" target="_blank">Live Demo</a> •
-    <a href="https://docs.ddosify.com/" target="_blank">Documentation</a> •
-    <a href="https://docs.ddosify.com/ddosify/deployment" target="_blank">Deployment</a> •
-    <a href="https://docs.ddosify.com/ddosify/deployment" target="_blank">Discord</a>
+    <a href="https://demo.getanteo.com/clusters/0ce2ef05-ef64-459d-90d9-7f2cbd65fff8" target="_blank">Live Demo</a> •
+    <a href="https://getanteon.com/docs/" target="_blank">Documentation</a> •
+    <a href="https://getanteon.com/docs/deployment" target="_blank">Deployment</a> •
+    <a href="https://discord.com/invite/9KdnrSUZQg" target="_blank">Discord</a>
 </h2>
 
 
 ## What is Alaz?
 
-[Alaz](https://github.com/ddosify/alaz) is an open-source Ddosify eBPF agent that can inspect and collect Kubernetes (K8s) service traffic without the need for code instrumentation, sidecars, or service restarts. This is possible due to its use of eBPF technology. 
+[Alaz](https://github.com/getanteon/alaz) is an open-source Anteon eBPF agent that can inspect and collect Kubernetes (K8s) service traffic without the need for code instrumentation, sidecars, or service restarts. This is possible due to its use of eBPF technology. 
 
 Alaz can create a **Service Map** that helps identify golden signals and problems like:
 - High latencies between K8s services
@@ -30,15 +30,15 @@ Alaz can create a **Service Map** that helps identify golden signals and problem
 - Detect Idle / Zombie services
 - Detect slow SQL queries
 
-Additionally, Ddosify tracks and displays live data on your cluster instances CPU, memory, disk, and network usage. All of the dashboards are generated out-of-box and you can create alerts based on these metrics values. Check out the [docs](https://docs.ddosify.com/) for more. 
+Additionally, Anteon tracks and displays live data on your cluster instances CPU, memory, disk, and network usage. All of the dashboards are generated out-of-box and you can create alerts based on these metrics values. Check out the [docs](https://getanteon.com/docs/) for more. 
 
 <p align="center">
-<img src="https://raw.githubusercontent.com/ddosify/alaz/master/assets/ddosify_metrics.png" alt="Ddosify Kubernetes Monitoring Metrics" />
-<i>Ddosify tracks and displays live data on your cluster instances CPU, memory, disk, and network usage.</i>
+<img src="https://raw.githubusercontent.com/getanteon/anteon/master/assets/anteon_metrics.png" alt="Anteon Kubernetes Monitoring Metrics" />
+<i>Anteon tracks and displays live data on your cluster instances CPU, memory, disk, and network usage.</i>
 </p>
 
 
-➡️ For more information about Ddosify, see [Ddosify](https://github.com/ddosify/ddosify).
+➡️ For more information about Anteon, see [Anteon](https://github.com/getanteon/anteon).
 
 ## Features
 
@@ -48,7 +48,7 @@ Inspect and collect K8s service traffic without the need for code instrumentatio
 
 ✅ **Effortless:** 
 
-Ddosify will create the Service Map & Metrics Dashboard that helps identify golden signals and issues such as high latencies, 5xx errors, zombie services.
+Anteon will create the Service Map & Metrics Dashboard that helps identify golden signals and issues such as high latencies, 5xx errors, zombie services.
 
 ✅ **Prometheus Compatible:** 
 
@@ -56,90 +56,90 @@ Gather system information and resources via the Prometheus Node Exporter, which 
 
 ✅ **Cloud or On-premise:** 
 
-Export metrics to [Ddosify Cloud](https://ddosify.com), or install the [Ddosify Self-Hosted](https://github.com/ddosify/ddosify/tree/master/selfhosted) in your infrastructure and manage everything according to your needs.
+Export metrics to [Anteon Cloud](https://getanteon.com), or install the [Anteon Self-Hosted](https://github.com/getanteon/anteon/tree/master/selfhosted) in your infrastructure and manage everything according to your needs.
 
 ✅ **Test & Observe:** 
 
-Ddosify Performance Testing and Alaz can work collaboratively. You can start a load test and monitor your system simultaneously. This will help you spot performance issues instantly. Check out the [Ddosify GitHub Repository](https://github.com/ddosify/ddosify) for more information about Ddosify Stack.
+Anteon Performance Testing and Alaz can work collaboratively. You can start a load test and monitor your system simultaneously. This will help you spot performance issues instantly. Check out the [Anteon GitHub Repository](https://github.com/getanteon/anteon) for more information about Anteon Stack.
 
-✅ **Alerts for Anomalies:** If something unusual, like a sudden increase in CPU usage, happens in your Kubernetes (K8s) cluster, Ddosify immediately sends alerts to your Slack.
+✅ **Alerts for Anomalies:** If something unusual, like a sudden increase in CPU usage, happens in your Kubernetes (K8s) cluster, Anteon immediately sends alerts to your Slack.
 
 ✅ Works on both Arm64 and x86_64 architectures.
 
 ## Getting Started
 
-To use Alaz, you need to have a [Ddosify Cloud](https://app.ddosify.com/register) account or [Ddosify Self-Hosted](https://github.com/ddosify/ddosify/tree/master/selfhosted) installed. 
+To use Alaz, you need to have a [Anteon Cloud](https://app.getanteon.com/register) account or [Anteon Self-Hosted](https://github.com/getanteon/anteon/tree/master/selfhosted) installed. 
 
-### ☁️ For Ddosify Cloud
+### ☁️ For Anteon Cloud
 
-1. Register for a [Ddosify Cloud account](https://app.ddosify.com/register).
-2. Add a cluster on the [Observability page](https://app.ddosify.com/clusters). You will receive a Monitoring ID and instructions.
+1. Register for a [Anteon Cloud account](https://app.getanteon.com/register).
+2. Add a cluster on the [Observability page](https://app.getanteon.com/clusters). You will receive a Monitoring ID and instructions.
 3. Run the agent on your Kubernetes cluster using the instructions you received. There are two options for Kubernetes deployment: 
 
 #### Using the kubectl
 
 ```bash
-# Replace <MONITORING_ID> with your monitoring ID from the Ddosify Cloud. Change XXXXX with your monitoring ID.
+# Replace <MONITORING_ID> with your monitoring ID from the Anteon Cloud. Change XXXXX with your monitoring ID.
 MONITORING_ID=XXXXX
-curl -sSL https://raw.githubusercontent.com/ddosify/alaz/master/resources/alaz.yaml -o alaz.yaml
+curl -sSL https://raw.githubusercontent.com/getanteon/alaz/master/resources/alaz.yaml -o alaz.yaml
 sed -i"" -e "s/<MONITORING_ID>/$MONITORING_ID/g" alaz.yaml
-kubectl create namespace ddosify
+kubectl create namespace anteon
 kubectl apply -f alaz.yaml
 ```
 
 #### Using the Helm
 
 ```bash
-# Replace <MONITORING_ID> with your monitoring ID from the Ddosify Cloud. Change XXXXX with your monitoring ID.
+# Replace <MONITORING_ID> with your monitoring ID from the Anteon Cloud. Change XXXXX with your monitoring ID.
 MONITORING_ID=XXXXX
-helm repo add ddosify https://ddosify.github.io/ddosify-helm-charts/
+helm repo add anteon https://getanteon.github.io/anteon-helm-charts/
 helm repo update
-kubectl create namespace ddosify
-helm upgrade --install --namespace ddosify alaz ddosify/alaz --set monitoringID=$MONITORING_ID
+kubectl create namespace anteon
+helm upgrade --install --namespace anteon alaz anteon/alaz --set monitoringID=$MONITORING_ID
 ```
 
-Then you can view the metrics and Kubernetes Service Map on the [Ddosify Observability dashboard](https://app.ddosify.com/clusters). For more information, see [Ddosify Kubernetes Monitoring](https://docs.ddosify.com/ddosify/kubernetes-monitoring).
+Then you can view the metrics and Kubernetes Service Map on the [Anteon Observability dashboard](https://app.getanteon.com/clusters). For more information, see [Anteon Kubernetes Monitoring](https://getanteon.com/docs/kubernetes-monitoring/).
 
-### 🏠 For Ddosify Self-Hosted
+### 🏠 For Anteon Self-Hosted
 
-1. Install [Ddosify Self-Hosted](https://github.com/ddosify/ddosify/tree/master/selfhosted)
+1. Install [Anteon Self-Hosted](https://github.com/getanteon/anteon/tree/master/selfhosted)
 2. Add a cluster on the Observability page of your Self-Hosted frontend. You will receive a Monitoring ID and instructions.
 3. Run the agent on your Kubernetes cluster using the instructions you received. 
 
-Note: After you install Ddosify Self-Hosted, you will have a Ddosify Self-Hosted endpoint of nginx reverse proxy. The base URL of the Ddosify Self-Hosted endpoint forwards traffic to the frontend. The base URL of the Ddosify Self-Hosted endpoint with `/api` suffix forwards traffic to the backend. So you need to set the backend host variable as `http://<your-ddosify-self-hosted-endpoint>/api`.
+Note: After you install Anteon Self-Hosted, you will have a Anteon Self-Hosted endpoint of nginx reverse proxy. The base URL of the Anteon Self-Hosted endpoint forwards traffic to the frontend. The base URL of the Anteon Self-Hosted endpoint with `/api` suffix forwards traffic to the backend. So you need to set the backend host variable as `http://<your-anteon-self-hosted-endpoint>/api`.
 
 There are two options for Kubernetes deployment:
 
 #### Using the kubectl
 
 ```bash
-# Replace <MONITORING_ID> with your monitoring ID from the Ddosify Cloud. Change XXXXX with your monitoring ID.
+# Replace <MONITORING_ID> with your monitoring ID from the Anteon Cloud. Change XXXXX with your monitoring ID.
 MONITORING_ID=XXXXX
-# Set BACKEND_HOST with your Ddosify Self Hosted Endpoint. If your Ddosify Self Hosted endpoint is http://localhost:8014, then BACKEND_HOST=localhost:8014
+# Set BACKEND_HOST with your Anteon Self Hosted Endpoint. If your Anteon Self Hosted endpoint is http://localhost:8014, then BACKEND_HOST=localhost:8014
 BACKEND_HOST=XXXXX
-curl -sSL https://raw.githubusercontent.com/ddosify/alaz/master/resources/alaz.yaml -o alaz.yaml
+curl -sSL https://raw.githubusercontent.com/getanteon/alaz/master/resources/alaz.yaml -o alaz.yaml
 sed -i"" -e "s/<MONITORING_ID>/$MONITORING_ID/g" alaz.yaml
-sed -i"" -e "s/https:\/\/api-alaz.ddosify.com:443/http:\/\/$BACKEND_HOST\/api/g" alaz.yaml
-kubectl create namespace ddosify
+sed -i"" -e "s/https:\/\/api-alaz.getanteon.com:443/http:\/\/$BACKEND_HOST\/api/g" alaz.yaml
+kubectl create namespace anteon
 kubectl apply -f alaz.yaml
 ```
 
 #### Using the Helm
 
 ```bash
-# Replace <MONITORING_ID> with your monitoring ID from the Ddosify Cloud. Change XXXXX with your monitoring ID.
+# Replace <MONITORING_ID> with your monitoring ID from the Anteon Cloud. Change XXXXX with your monitoring ID.
 MONITORING_ID=XXXXX
-# Set BACKEND_HOST with your Ddosify Self Hosted Endpoint. If your Ddosify Self Hosted endpoint is http://localhost:8014, then BACKEND_HOST=http://localhost:8014/api
+# Set BACKEND_HOST with your Anteon Self Hosted Endpoint. If your Anteon Self Hosted endpoint is http://localhost:8014, then BACKEND_HOST=http://localhost:8014/api
 BACKEND_HOST=XXXXX
-helm repo add ddosify https://ddosify.github.io/ddosify-helm-charts/
+helm repo add anteon https://getanteon.github.io/anteon-helm-charts/
 helm repo update
-kubectl create namespace ddosify
-helm upgrade --install --namespace ddosify alaz ddosify/alaz --set monitoringID=$MONITORING_ID --set backendHost=$BACKEND_HOST
+kubectl create namespace anteon
+helm upgrade --install --namespace anteon alaz anteon/alaz --set monitoringID=$MONITORING_ID --set backendHost=$BACKEND_HOST
 ```
 
-Then you can view the metrics and Kubernetes Service Map on the Ddosify Self-Hosted Observability dashboard. For more information, see [Ddosify Monitoring Docs](https://docs.ddosify.com/ddosify/kubernetes-monitoring).
+Then you can view the metrics and Kubernetes Service Map on the Anteon Self-Hosted Observability dashboard. For more information, see [Anteon Monitoring Docs](https://getanteon.com/docs/kubernetes-monitoring/).
 
-Alaz runs as a DaemonSet on your Kubernetes cluster. It collects metrics and sends them to Ddosify Cloud or Ddosify Self-Hosted. You can view the metrics on the Ddosify Observability dashboard. For the detailed Alaz architecture, see [Alaz Architecture](https://github.com/ddosify/alaz/blob/master/Alaz-Architecture.md).
+Alaz runs as a DaemonSet on your Kubernetes cluster. It collects metrics and sends them to Anteon Cloud or Anteon Self-Hosted. You can view the metrics on the Anteon Observability dashboard. For the detailed Alaz architecture, see [Alaz Architecture](https://github.com/getanteon/alaz/blob/master/Alaz-Architecture.md).
 
 ## Cleanup
 
@@ -148,13 +148,13 @@ To remove Alaz from your Kubernetes cluster, run the following command:
 - For Kubectl
 
 ```bash
-kubectl delete -f https://raw.githubusercontent.com/ddosify/alaz/master/resources/alaz.yaml
+kubectl delete -f https://raw.githubusercontent.com/getanteon/alaz/master/resources/alaz.yaml
 ```
 
 - For Helm
 
 ```bash
-helm delete alaz --namespace ddosify
+helm delete alaz --namespace anteon
 ```
 
 ## Supported Protocols

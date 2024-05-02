@@ -55,7 +55,7 @@ func createTLSConfig() (*tls.Config, error) {
 
 	serverName := os.Getenv("LOG_BACKEND_SERVER_NAME")
 	if serverName == "" {
-		serverName = "log-alaz-staging.getanteon.com"
+		serverName = "log-alaz.getanteon.com"
 	}
 
 	return &tls.Config{
