@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"net"
 	"sync"
 
 	"github.com/ddosify/alaz/log"
@@ -12,10 +13,11 @@ import (
 var ErrClosed = errors.New("pool is closed")
 
 type PoolConn struct {
-	*tls.Conn
+	net.Conn
 	mu       sync.RWMutex
 	c        *channelPool
 	unusable bool
+	tls      bool
 }
 
 // Close() puts the given connects back to the pool instead of closing it.
@@ -26,7 +28,11 @@ func (p *PoolConn) Close() error {
 	if p.unusable {
 		if p.Conn != nil {
 			log.Logger.Info().Msg("connection is unusable, closing it")
-			return p.Conn.Close()
+			if p.tls {
+				return p.Conn.(*tls.Conn).Close()
+			} else {
+				return p.Conn.Close()
+			}
 		}
 		return nil
 	}
@@ -41,9 +47,10 @@ func (p *PoolConn) MarkUnusable() {
 }
 
 // newConn wraps a standard net.Conn to a poolConn net.Conn.
-func (c *channelPool) wrapConn(conn *tls.Conn) *PoolConn {
+func (c *channelPool) wrapConn(conn net.Conn) *PoolConn {
 	p := &PoolConn{c: c}
 	p.Conn = conn
+	p.tls = c.tls
 	return p
 }
 
@@ -54,6 +61,7 @@ type channelPool struct {
 
 	// net.Conn generator
 	factory Factory
+	tls     bool
 }
 
 func (c *channelPool) getConnsAndFactory() (chan *PoolConn, Factory) {
@@ -147,7 +155,7 @@ func (c *channelPool) Len() int {
 	return len(conns)
 }
 
-func NewChannelPool(initialCap, maxCap int, factory Factory) (*channelPool, error) {
+func NewChannelPool(initialCap, maxCap int, factory Factory, isTls bool) (*channelPool, error) {
 	if initialCap < 0 || maxCap <= 0 || initialCap > maxCap {
 		return nil, errors.New("invalid capacity settings")
 	}
@@ -155,6 +163,7 @@ func NewChannelPool(initialCap, maxCap int, factory Factory) (*channelPool, erro
 	c := &channelPool{
 		conns:   make(chan *PoolConn, maxCap),
 		factory: factory,
+		tls:     isTls,
 	}
 
 	// create initial connections, if something goes wrong,
@@ -173,4 +182,4 @@ func NewChannelPool(initialCap, maxCap int, factory Factory) (*channelPool, erro
 }
 
 // Factory is a function to create new connections.
-type Factory func() (*tls.Conn, error)
+type Factory func() (net.Conn, error)
