@@ -76,7 +76,7 @@ func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, er
 
 	logBackend := os.Getenv("LOG_BACKEND")
 	if logBackend == "" {
-		logBackend = "log-backend.ddosify:8282"
+		logBackend = "log-alaz.getanteon.com:443"
 	}
 
 	dialer := &net.Dialer{
@@ -98,11 +98,32 @@ func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, er
 		}
 	}
 
-	connPool, err := NewChannelPool(5, max_connection, func() (*tls.Conn, error) {
+	tlsFunc := func() (net.Conn, error) {
 		log.Logger.Debug().Msgf("dialing to log backend: %s", logBackend)
 		return tls.DialWithDialer(dialer, "tcp", logBackend, tlsConfig)
-		// return tls.Dial("tcp", logBackend, tlsConfig)
-	})
+	}
+
+	plainFunc := func() (net.Conn, error) {
+		log.Logger.Debug().Msgf("dialing to log backend: %s", logBackend)
+		return net.Dial("tcp", logBackend)
+	}
+
+	var factory Factory
+
+	var logTls = true
+
+	logTlsEnv, err := strconv.ParseBool(os.Getenv("LOG_BACKEND_TLS"))
+	if err == nil && logTlsEnv == false {
+		logTls = false
+	}
+
+	if logTls {
+		factory = tlsFunc
+	} else {
+		factory = plainFunc
+	}
+
+	connPool, err := NewChannelPool(5, max_connection, factory, logTls)
 	ls.connPool = connPool
 	ls.maxConnection = max_connection
 
@@ -242,9 +263,9 @@ func (ls *LogStreamer) sendLogs(logPath string) error {
 	_, err = io.Copy(poolConn, bytes.NewBufferString(metaLine))
 	if err != nil {
 		log.Logger.Error().Err(err).Msgf("metadata could not be sent to backend: %v", err)
+		reader.mu.Unlock()
 		poolConn.MarkUnusable()
 		poolConn.Close() // put back, it will close underlying connection
-		reader.mu.Unlock()
 		return err
 	}
 
@@ -253,9 +274,9 @@ func (ls *LogStreamer) sendLogs(logPath string) error {
 	_, err = io.Copy(poolConn, reader)
 	if err != nil {
 		log.Logger.Error().Err(err).Msgf("logs could not be sent to backend: %v", err)
+		reader.mu.Unlock()
 		poolConn.MarkUnusable()
 		poolConn.Close() // put back, it will close underlying connection
-		reader.mu.Unlock()
 		return err
 	} else {
 		log.Logger.Debug().Msgf("logs sent to backend for %s", logPath)
