@@ -63,6 +63,10 @@ spec:
           value: "true"
         - name: LOGS_ENABLED
           value: "false"
+        - name: LOG_BACKEND
+          value: log-alaz.getanteon.com:443
+        - name: LOG_BACKEND_TLS
+          value: "true"
         - name: BACKEND_HOST
           value: https://api-alaz.getanteon.com:443
         - name: LOG_LEVEL
