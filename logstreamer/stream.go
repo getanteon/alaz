@@ -76,7 +76,7 @@ func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, er
 
 	logBackend := os.Getenv("LOG_BACKEND")
 	if logBackend == "" {
-		logBackend = "log-backend.ddosify:8282"
+		logBackend = "log-alaz.getanteon.com:443"
 	}
 
 	dialer := &net.Dialer{
@@ -110,7 +110,13 @@ func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, er
 
 	var factory Factory
 
-	logTls, _ := strconv.ParseBool(os.Getenv("LOG_BACKEND_TLS"))
+	var logTls = true
+
+	logTlsEnv, err := strconv.ParseBool(os.Getenv("LOG_BACKEND_TLS"))
+	if err == nil && logTlsEnv == false {
+		logTls = false
+	}
+
 	if logTls {
 		factory = tlsFunc
 	} else {
