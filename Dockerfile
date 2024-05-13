@@ -1,9 +1,12 @@
-FROM golang:1.20-alpine as builder
+FROM golang:1.22.1-bullseye as builder
 WORKDIR /app
 COPY . ./
-RUN apk update && apk add gcc musl-dev
+RUN apt update
+
 ARG VERSION
-RUN GOOS=linux go build -ldflags="-X 'github.com/ddosify/alaz/datastore.tag=$VERSION'" -o alaz
+ENV GOCACHE=/root/.cache/go-build
+RUN go mod tidy -v
+RUN --mount=type=cache,target="/root/.cache/go-build" GOOS=linux go build -ldflags="-X 'github.com/ddosify/alaz/datastore.tag=$VERSION'" -o alaz
 
 FROM registry.access.redhat.com/ubi9/ubi-minimal:9.3-1552
 RUN microdnf update -y && microdnf install procps ca-certificates -y && microdnf clean all
