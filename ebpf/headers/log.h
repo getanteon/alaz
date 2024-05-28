@@ -38,11 +38,25 @@ struct {
      __uint(max_entries, 1);
 } log_heap SEC(".maps");
 
+// use while development
+//    struct log_message l = {};
+//    l.level = DEBUG;
+//    BPF_SNPRINTF(l.payload, sizeof(l.payload),"process_enter_of_syscalls_write_sendto %d %s\n", 1, "cakir");
+//    log_to_trace_pipe(l.payload, sizeof(l.payload));
+static __always_inline
+void log_to_trace_pipe(char *msg, __u32 size) {
+   long res = bpf_trace_printk(msg, size);
+   if(res < 0){
+      bpf_printk("bpf_trace_printk failed %d\n", res);
+   }
+}
+
 static __always_inline 
 void log_to_userspace(void *ctx, __u32 level, unsigned char *func_name, unsigned char * log_msg, __u64 arg1, __u64 arg2, __u64 arg3){
     int zero = 0;
     struct log_message *l = bpf_map_lookup_elem(&log_heap, &zero);
     if (!l) {
+        bpf_printk("log_to_userspace failed, %s %s\n",func_name, log_msg);
         return;
     }
 
@@ -57,15 +71,4 @@ void log_to_userspace(void *ctx, __u32 level, unsigned char *func_name, unsigned
     bpf_perf_event_output(ctx, &log_map, BPF_F_CURRENT_CPU, l, sizeof(*l));
 }
 
-// use while development
-//    struct log_message l = {};
-//    l.level = DEBUG;
-//    BPF_SNPRINTF(l.payload, sizeof(l.payload),"process_enter_of_syscalls_write_sendto %d %s\n", 1, "cakir");
-//    log_to_trace_pipe(l.payload, sizeof(l.payload));
-static __always_inline
-void log_to_trace_pipe(const char *msg, __u32 size) {
-   long res = bpf_trace_printk(msg, size);
-   if(res < 0){
-      bpf_printk("bpf_trace_printk failed %d\n", res);
-   }
-}
+
