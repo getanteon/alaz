@@ -1046,6 +1046,10 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 		_, path, _, reqHostHeader = parseHttpPayload(string(d.Payload[0:d.PayloadSize]))
 	}
 
+	if d.Protocol == l7_req.L7_PROTOCOL_REDIS {
+		path = string(d.Payload[0:d.PayloadSize])
+	}
+
 	err := a.setFromTo(skInfo, d, &reqDto, reqHostHeader)
 	if err != nil {
 		return
@@ -1054,11 +1058,12 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 	reqDto.Path = path
 	reqDto.Completed = !d.Failed
 
-	// In AMQP-DELIVER event, we are capturing from read syscall,
+	// In AMQP-DELIVER or REDIS-PUSHED_EVENT event, we are capturing from read syscall,
 	// exchange sockets
 	// In Alaz context, From is always the one that makes the write
 	// and To is the one that makes the read
-	if d.Protocol == l7_req.L7_PROTOCOL_AMQP && d.Method == l7_req.DELIVER {
+	if (d.Protocol == l7_req.L7_PROTOCOL_AMQP && d.Method == l7_req.DELIVER) ||
+		(d.Protocol == l7_req.L7_PROTOCOL_REDIS && d.Method == l7_req.REDIS_PUSHED_EVENT) {
 		reqDto.FromIP, reqDto.ToIP = reqDto.ToIP, reqDto.FromIP
 		reqDto.FromPort, reqDto.ToPort = reqDto.ToPort, reqDto.FromPort
 		reqDto.FromUID, reqDto.ToUID = reqDto.ToUID, reqDto.FromUID

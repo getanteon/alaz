@@ -21,6 +21,7 @@ const (
 	BPF_L7_PROTOCOL_AMQP
 	BPF_L7_PROTOCOL_POSTGRES
 	BPF_L7_PROTOCOL_HTTP2
+	BPF_L7_PROTOCOL_REDIS
 )
 
 // for user space
@@ -29,6 +30,7 @@ const (
 	L7_PROTOCOL_HTTP2    = "HTTP2"
 	L7_PROTOCOL_AMQP     = "AMQP"
 	L7_PROTOCOL_POSTGRES = "POSTGRES"
+	L7_PROTOCOL_REDIS    = "REDIS"
 	L7_PROTOCOL_UNKNOWN  = "UNKNOWN"
 )
 
@@ -46,6 +48,8 @@ func (e L7ProtocolConversion) String() string {
 		return L7_PROTOCOL_POSTGRES
 	case BPF_L7_PROTOCOL_HTTP2:
 		return L7_PROTOCOL_HTTP2
+	case BPF_L7_PROTOCOL_REDIS:
+		return L7_PROTOCOL_REDIS
 	case BPF_L7_PROTOCOL_UNKNOWN:
 		return L7_PROTOCOL_UNKNOWN
 	default:
@@ -103,6 +107,14 @@ const (
 	//...
 )
 
+// match with values in l7.c, order is important
+const (
+	BPF_REDIS_METHOD_UNKNOWN = iota
+	METHOD_REDIS_COMMAND
+	METHOD_REDIS_PUSHED_EVENT
+	METHOD_REDIS_PING
+)
+
 // for http, user space
 const (
 	GET     = "GET"
@@ -133,6 +145,13 @@ const (
 const (
 	CLIENT_FRAME = "CLIENT_FRAME"
 	SERVER_FRAME = "SERVER_FRAME"
+)
+
+// for http2, user space
+const (
+	REDIS_COMMAND      = "COMMAND"
+	REDIS_PUSHED_EVENT = "PUSHED_EVENT"
+	REDIS_PING         = "PING"
 )
 
 // Custom type for the enumeration
@@ -211,10 +230,25 @@ func (e Http2MethodConversion) String() string {
 	}
 }
 
+// Custom type for the enumeration
+type RedisMethodConversion uint32
+
+// String representation of the enumeration values
+func (e RedisMethodConversion) String() string {
+	switch e {
+	case METHOD_REDIS_COMMAND:
+		return REDIS_COMMAND
+	case METHOD_REDIS_PUSHED_EVENT:
+		return REDIS_PUSHED_EVENT
+	case METHOD_REDIS_PING:
+		return REDIS_PING
+	default:
+		return "Unknown"
+	}
+}
+
 // $BPF_CLANG and $BPF_CFLAGS are set by the Makefile.
 // // go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc $BPF_CLANG -cflags $BPF_CFLAGS bpf l7.c -- -I../headers
-
-const mapKey uint32 = 0
 
 // bpf structs, copy from generated code
 type bpfLogMessage struct {
@@ -388,6 +422,18 @@ func (l7p *L7Prog) Attach() {
 		log.Logger.Fatal().Err(err).Msg("link sys_exit_write tracepoint")
 	}
 	l7p.links["syscalls/sys_exit_write"] = l7
+
+	l8, err := link.Tracepoint("syscalls", "sys_enter_writev", c.BpfObjs.SysEnterWritev, nil)
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("link sys_enter_writev tracepoint")
+	}
+	l7p.links["syscalls/sys_enter_writev"] = l8
+
+	l9, err := link.Tracepoint("syscalls", "sys_exit_writev", c.BpfObjs.SysExitWritev, nil)
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("link sys_exit_writev tracepoint")
+	}
+	l7p.links["syscalls/sys_exit_writev"] = l9
 }
 
 func (l7p *L7Prog) InitMaps() {
@@ -553,6 +599,8 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 				method = PostgresMethodConversion(l7Event.Method).String()
 			case L7_PROTOCOL_HTTP2:
 				method = Http2MethodConversion(l7Event.Method).String()
+			case L7_PROTOCOL_REDIS:
+				method = RedisMethodConversion(l7Event.Method).String()
 			default:
 				method = "Unknown"
 			}
