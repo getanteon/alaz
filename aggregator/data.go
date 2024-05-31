@@ -1046,6 +1046,10 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 		_, path, _, reqHostHeader = parseHttpPayload(string(d.Payload[0:d.PayloadSize]))
 	}
 
+	if d.Protocol == l7_req.L7_PROTOCOL_REDIS {
+		path = string(d.Payload[0:d.PayloadSize])
+	}
+
 	err := a.setFromTo(skInfo, d, &reqDto, reqHostHeader)
 	if err != nil {
 		return
