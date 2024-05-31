@@ -422,6 +422,18 @@ func (l7p *L7Prog) Attach() {
 		log.Logger.Fatal().Err(err).Msg("link sys_exit_write tracepoint")
 	}
 	l7p.links["syscalls/sys_exit_write"] = l7
+
+	l8, err := link.Tracepoint("syscalls", "sys_enter_writev", c.BpfObjs.SysEnterWritev, nil)
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("link sys_enter_writev tracepoint")
+	}
+	l7p.links["syscalls/sys_enter_writev"] = l8
+
+	l9, err := link.Tracepoint("syscalls", "sys_exit_writev", c.BpfObjs.SysExitWritev, nil)
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("link sys_exit_writev tracepoint")
+	}
+	l7p.links["syscalls/sys_exit_writev"] = l9
 }
 
 func (l7p *L7Prog) InitMaps() {

@@ -56,12 +56,26 @@ struct trace_event_raw_sys_exit_sendto {
     __s64 ret;
 };
 
+
+struct trace_event_raw_sys_exit_writev {
+    __u64 unused;
+    __s32 id;
+    __s64 ret;
+};
 struct trace_event_raw_sys_enter_write {
 	struct trace_entry ent;
     __s32 __syscall_nr;
     __u64 fd;
     char * buf;
     __u64 count;
+};
+
+struct trace_event_raw_sys_enter_writev {
+	struct trace_entry ent;
+    __s32 __syscall_nr;
+    __u64 fd;
+    struct iovec * vec; // struct iovec * 
+    __u64 vlen;
 };
 
 // TODO: remove unused fields ?

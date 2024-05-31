@@ -903,6 +903,25 @@ int sys_enter_write(struct trace_event_raw_sys_enter_write* ctx) {
    return process_enter_of_syscalls_write_sendto(ctx, ctx->fd, 0, ctx->buf, ctx->count);
 }
 
+// SEC("tracepoint/syscalls/sys_enter_writev")
+// int sys_enter_writev(struct trace_event_raw_sys_enter_write* ctx) {
+//    return process_enter_of_syscalls_write_sendto(ctx, ctx->fd, 0, ctx->buf, ctx->count);
+// }
+
+
+struct iov {
+    char* buf;
+    __u64 size;
+};
+SEC("tracepoint/syscalls/sys_enter_writev")
+int sys_enter_writev(struct trace_event_raw_sys_enter_writev* ctx) {
+    struct iov iov0 = {};
+    if (bpf_probe_read(&iov0, sizeof(struct iov), (void *)ctx->vec) < 0) {
+        return 0;
+    }
+    return process_enter_of_syscalls_write_sendto(ctx, ctx->fd, 0, iov0.buf, iov0.size);
+}
+
 SEC("tracepoint/syscalls/sys_enter_sendto")
 int sys_enter_sendto(struct trace_event_raw_sys_enter_sendto* ctx) {
    return process_enter_of_syscalls_write_sendto(ctx, ctx->fd, 0 ,ctx->buff, ctx->len);
@@ -910,6 +929,11 @@ int sys_enter_sendto(struct trace_event_raw_sys_enter_sendto* ctx) {
 
 SEC("tracepoint/syscalls/sys_exit_write")
 int sys_exit_write(struct trace_event_raw_sys_exit_write* ctx) {
+    return process_exit_of_syscalls_write_sendto(ctx, ctx->ret);
+}
+
+SEC("tracepoint/syscalls/sys_exit_writev")
+int sys_exit_writev(struct trace_event_raw_sys_exit_writev* ctx) {
     return process_exit_of_syscalls_write_sendto(ctx, ctx->ret);
 }
 
