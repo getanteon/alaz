@@ -157,11 +157,13 @@ type bpfProgramSpecs struct {
 	SysEnterRecvfrom    *ebpf.ProgramSpec `ebpf:"sys_enter_recvfrom"`
 	SysEnterSendto      *ebpf.ProgramSpec `ebpf:"sys_enter_sendto"`
 	SysEnterWrite       *ebpf.ProgramSpec `ebpf:"sys_enter_write"`
+	SysEnterWritev      *ebpf.ProgramSpec `ebpf:"sys_enter_writev"`
 	SysExitConnect      *ebpf.ProgramSpec `ebpf:"sys_exit_connect"`
 	SysExitRead         *ebpf.ProgramSpec `ebpf:"sys_exit_read"`
 	SysExitRecvfrom     *ebpf.ProgramSpec `ebpf:"sys_exit_recvfrom"`
 	SysExitSendto       *ebpf.ProgramSpec `ebpf:"sys_exit_sendto"`
 	SysExitWrite        *ebpf.ProgramSpec `ebpf:"sys_exit_write"`
+	SysExitWritev       *ebpf.ProgramSpec `ebpf:"sys_exit_writev"`
 }
 
 // bpfMapSpecs contains maps before they are loaded into the kernel.
@@ -282,11 +284,13 @@ type bpfPrograms struct {
 	SysEnterRecvfrom    *ebpf.Program `ebpf:"sys_enter_recvfrom"`
 	SysEnterSendto      *ebpf.Program `ebpf:"sys_enter_sendto"`
 	SysEnterWrite       *ebpf.Program `ebpf:"sys_enter_write"`
+	SysEnterWritev      *ebpf.Program `ebpf:"sys_enter_writev"`
 	SysExitConnect      *ebpf.Program `ebpf:"sys_exit_connect"`
 	SysExitRead         *ebpf.Program `ebpf:"sys_exit_read"`
 	SysExitRecvfrom     *ebpf.Program `ebpf:"sys_exit_recvfrom"`
 	SysExitSendto       *ebpf.Program `ebpf:"sys_exit_sendto"`
 	SysExitWrite        *ebpf.Program `ebpf:"sys_exit_write"`
+	SysExitWritev       *ebpf.Program `ebpf:"sys_exit_writev"`
 }
 
 func (p *bpfPrograms) Close() error {
@@ -310,11 +314,13 @@ func (p *bpfPrograms) Close() error {
 		p.SysEnterRecvfrom,
 		p.SysEnterSendto,
 		p.SysEnterWrite,
+		p.SysEnterWritev,
 		p.SysExitConnect,
 		p.SysExitRead,
 		p.SysExitRecvfrom,
 		p.SysExitSendto,
 		p.SysExitWrite,
+		p.SysExitWritev,
 	)
 }
 
