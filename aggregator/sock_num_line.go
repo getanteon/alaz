@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ddosify/alaz/log"
 	"inet.af/netaddr"
 )
 
@@ -88,9 +89,25 @@ func (nl *SocketLine) DeleteUnused() {
 	nl.mu.Lock()
 	defer nl.mu.Unlock()
 
-	if len(nl.Values) == 0 {
+	if len(nl.Values) <= 1 {
 		return
 	}
+
+	// if two open sockets are alined, delete the first one
+	// in case first ones close event did not arrive
+	result := make([]TimestampedSocket, 0)
+	i := 0
+	for i < len(nl.Values)-1 {
+		if nl.Values[i].SockInfo != nil && nl.Values[i+1].SockInfo != nil {
+			result = append(result, nl.Values[i+1])
+			log.Logger.Debug().Msgf("deleting socket line %v", nl.Values[i])
+			i = i + 2
+		} else {
+			result = append(result, nl.Values[i])
+			i++
+		}
+	}
+	nl.Values = result
 
 	var lastMatchedReqTime uint64 = 0
 
@@ -102,7 +119,7 @@ func (nl *SocketLine) DeleteUnused() {
 	}
 
 	// assumedInterval is inversely proportional to the number of requests being discarded
-	assumedInterval := uint64(1 * time.Minute)
+	assumedInterval := uint64(5 * time.Minute)
 
 	// delete all values that
 	// closed and its LastMatch + assumedInterval < lastMatchedReqTime

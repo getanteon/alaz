@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 	"unsafe"
 
 	"github.com/ddosify/alaz/ebpf/c"
@@ -206,6 +207,7 @@ func findEndIndex(b [100]uint8) (endIndex int) {
 
 // returns when program is detached
 func (tsp *TcpStateProg) Consume(ctx context.Context, ch chan interface{}) {
+	printTs := true
 	for {
 		read := func() {
 			record, err := tsp.tcpConnectEvents.Read()
@@ -223,9 +225,9 @@ func (tsp *TcpStateProg) Consume(ctx context.Context, ch chan interface{}) {
 
 			bpfEvent := (*BpfTcpEvent)(unsafe.Pointer(&record.RawSample[0]))
 
-			if bpfEvent.Pid == 3738744 {
-				log.Logger.Debug().Uint64("ts", bpfEvent.Timestamp).
-					Str("type", TcpStateConversion(bpfEvent.Type).String()).Uint64("fd", bpfEvent.Fd).Msg("tcp event of pid 3738744")
+			if printTs {
+				log.Logger.Info().Uint64("now", uint64(time.Now().UnixNano())).Msgf("first-bpf-timestamp: %d", bpfEvent.Timestamp)
+				printTs = false
 			}
 
 			go func() {
