@@ -1421,7 +1421,7 @@ func (a *Aggregator) sendOpenConnection(sl *SocketLine) {
 }
 
 func (a *Aggregator) clearSocketLines(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(120 * time.Second)
 	skLineCh := make(chan *SocketLine, 1000)
 
 	go func() {
