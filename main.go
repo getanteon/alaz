@@ -103,6 +103,7 @@ func main() {
 
 		a := aggregator.NewAggregator(ctx, kubeEvents, ec.EbpfEvents(), ec.EbpfProcEvents(), ec.EbpfTcpEvents(), ec.TlsAttachQueue(), dsBackend)
 		a.Run()
+		a.AdvertiseDebugData()
 
 		ec.Init()
 		go ec.ListenEvents()

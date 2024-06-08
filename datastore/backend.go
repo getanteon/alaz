@@ -528,7 +528,7 @@ func (b *BackendDS) sendToBackend(method string, payload interface{}, endpoint s
 		return
 	}
 
-	log.Logger.Debug().Str("endpoint", endpoint).Any("payload", payload).Msg("sending batch to backend")
+	// log.Logger.Debug().Str("endpoint", endpoint).Any("payload", payload).Msg("sending batch to backend")
 	err = b.DoRequest(httpReq)
 	if err != nil {
 		log.Logger.Error().Msgf("backend persist error at ep %s : %v", endpoint, err)

@@ -11,9 +11,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path"
@@ -82,6 +84,14 @@ type Aggregator struct {
 	// Used to find the correct mutex for the pid, some pids can share the same mutex
 	muIndex atomic.Uint64
 	muArray []*sync.RWMutex
+
+	totalLatency atomic.Uint64 // total cumulative latency
+	latencyCount atomic.Uint64 // event count
+
+	totalTCPLatency atomic.Uint64 // total cumulative latency
+	latencyTCPCount atomic.Uint64 // event count
+
+	socketNotFoundCount atomic.Uint64
 }
 
 // We need to keep track of the following
@@ -380,8 +390,10 @@ func (a *Aggregator) processEbpfProc(ctx context.Context) {
 			case proc.PROC_EVENT:
 				d := data.(*proc.ProcEvent) // copy data's value
 				if d.Type_ == proc.EVENT_PROC_EXEC {
+					log.Logger.Debug().Msgf("exec event pid %d", d.Pid)
 					a.processExec(d)
 				} else if d.Type_ == proc.EVENT_PROC_EXIT {
+					log.Logger.Debug().Msgf("exit event pid %d", d.Pid)
 					a.processExit(d.Pid)
 				}
 			}
@@ -403,6 +415,11 @@ func (a *Aggregator) processEbpfTcp(ctx context.Context) {
 			switch bpfEvent.Type() {
 			case tcp_state.TCP_CONNECT_EVENT:
 				d := data.(*tcp_state.TcpConnectEvent) // copy data's value
+				eventTime := convertKernelTimeToUserspaceTime(d.Timestamp)
+				now := uint64(time.Now().UnixNano())
+				latency := now - eventTime
+				// add to overall latency
+				a.AddTCPLatency(latency)
 				a.processTcpConnect(d)
 			}
 		}
@@ -423,6 +440,12 @@ func (a *Aggregator) processEbpf(ctx context.Context) {
 			switch bpfEvent.Type() {
 			case l7_req.L7_EVENT:
 				d := data.(*l7_req.L7Event) // copy data's value
+				eventTime := convertKernelTimeToUserspaceTime(d.WriteTimeNs)
+				now := uint64(time.Now().UnixNano())
+				latency := now - eventTime
+				// add to overall latency
+				a.AddL7Latency(latency)
+
 				a.processL7(ctx, d)
 			case l7_req.TRACE_EVENT:
 				d := data.(*l7_req.TraceEvent)
@@ -433,6 +456,83 @@ func (a *Aggregator) processEbpf(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (a *Aggregator) AddL7Latency(latency uint64) {
+	a.totalLatency.Add(latency)
+	a.latencyCount.Add(1)
+}
+
+func (a *Aggregator) AddTCPLatency(latency uint64) {
+	a.totalTCPLatency.Add(latency)
+	a.latencyTCPCount.Add(1)
+}
+
+func (a *Aggregator) AdvertiseDebugData() {
+	http.HandleFunc("/pid-sock-map",
+		func(w http.ResponseWriter, r *http.Request) {
+			queryParam := r.URL.Query().Get("number")
+			if queryParam == "" {
+				http.Error(w, "Missing query parameter 'number'", http.StatusBadRequest)
+				return
+			}
+			number, err := strconv.ParseUint(queryParam, 10, 32)
+			if err != nil {
+				http.Error(w, "Invalid query parameter 'number'", http.StatusBadRequest)
+				return
+			}
+			pid := uint32(number)
+
+			sockMap := a.clusterInfo.SocketMaps[pid]
+			if sockMap == nil {
+				http.Error(w, "Pid not found", http.StatusNotFound)
+				return
+			} else {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_ = json.NewEncoder(w).Encode(sockMap)
+				return
+			}
+		},
+	)
+
+	http.HandleFunc("/process-latency",
+		func(w http.ResponseWriter, r *http.Request) {
+			latency := a.totalLatency.Load()
+			count := a.latencyCount.Load()
+			notFoundCount := a.socketNotFoundCount.Load()
+			if count == 0 {
+				http.Error(w, "No data available", http.StatusNotFound)
+				return
+			}
+
+			tcpLatency := a.totalTCPLatency.Load()
+			tcpCount := a.latencyTCPCount.Load()
+
+			avgLatency := latency / count
+			avgTcpLatency := tcpLatency / tcpCount
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"average_latency_in_ns": avgLatency,
+				"count":                 count,
+				"avg_tcp_latency_in_ns": avgTcpLatency,
+				"tcp_count":             tcpCount,
+				"first_kernel_time":     l7_req.FirstKernelTime,
+				"first_user_time":       l7_req.FirstUserspaceTime,
+				"socketNotFoundCount":   notFoundCount,
+			})
+			return
+		})
+	http.HandleFunc("/live-procs",
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			a.liveProcessesMu.RLock()
+			_ = json.NewEncoder(w).Encode(a.liveProcesses)
+			a.liveProcessesMu.RUnlock()
+			return
+		})
 }
 
 func (a *Aggregator) getRateLimiterForPid(pid uint32) *rate.Limiter {
@@ -1019,7 +1119,11 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 		log.Logger.Debug().Uint32("pid", d.Pid).
 			Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
 			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("socket not found")
-		return
+
+		a.socketNotFoundCount.Add(1)
+
+		// go check pid-fd for the socket
+		a.fetchSocketOnNotFound(ctx, d)
 	}
 
 	reqDto := datastore.Request{
@@ -1245,6 +1349,35 @@ func (a *Aggregator) fetchSocketMap(pid uint32) *SocketMap {
 	return sockMap
 }
 
+func (a *Aggregator) fetchSocketOnNotFound(ctx context.Context, d *l7_req.L7Event) bool {
+	sockMap := a.clusterInfo.SocketMaps[d.Pid]
+	// acquire sockMap lock
+
+	// pid does not exists
+	if sockMap.mu == nil {
+		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("fetchSocketOnNotFound: pid not found")
+
+		a.muIndex.Add(1)
+		a.muArray[(a.muIndex.Load())%uint64(len(a.muArray))] = &sync.RWMutex{}
+		a.clusterInfo.SocketMaps[d.Pid].mu = a.muArray[(a.muIndex.Load())%uint64(len(a.muArray))]
+	}
+
+	// creates sockMap.M
+	skInfo := a.findRelatedSocket(ctx, d)
+	if skInfo == nil {
+		// go try reading from kernel files
+		err := sockMap.M[d.Fd].getConnectionInfo(d.Pid, d.Fd)
+		if err != nil {
+			log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Err(err).Msg("fetchSocketOnNotFound: failed to get connection info")
+			return false
+		} else {
+			log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("fetchSocketOnNotFound: connection info found")
+			return true
+		}
+	}
+	return true
+}
+
 func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) *SockInfo {
 	sockMap := a.clusterInfo.SocketMaps[d.Pid]
 	// acquire sockMap lock
@@ -1261,7 +1394,7 @@ func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) *
 
 	skLine, ok := sockMap.M[d.Fd]
 	if !ok {
-		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("error finding skLine, go look for it")
+		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("create skLine...")
 		// start new socket line, find already established connections
 		skLine = NewSocketLine(d.Pid, d.Fd)
 		sockMap.M[d.Fd] = skLine
@@ -1432,7 +1565,7 @@ func (a *Aggregator) clearSocketLines(ctx context.Context) {
 					// send open connections to datastore
 					a.sendOpenConnection(skLine)
 					// clear socket history
-					skLine.DeleteUnused()
+					// skLine.DeleteUnused()
 				}
 			}()
 		}
@@ -1474,4 +1607,13 @@ func getPidMax() (int, error) {
 		return 0, err
 	}
 	return pidMax, nil
+}
+
+func convertKernelTimeToUserspaceTime(writeTime uint64) uint64 {
+	// get first timestamp from kernel and corresponding userspace time
+	return l7_req.FirstUserspaceTime - (l7_req.FirstKernelTime - writeTime)
+}
+
+func convertUserTimeToKernelTime(now uint64) uint64 {
+	return l7_req.FirstKernelTime - (l7_req.FirstUserspaceTime - now)
 }

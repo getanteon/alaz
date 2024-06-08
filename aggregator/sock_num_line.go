@@ -5,10 +5,13 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +31,7 @@ type SocketLine struct {
 	pid    uint32
 	fd     uint64
 	Values []TimestampedSocket
+	f      *os.File
 }
 
 func NewSocketLine(pid uint32, fd uint64) *SocketLine {
@@ -38,12 +42,30 @@ func NewSocketLine(pid uint32, fd uint64) *SocketLine {
 		Values: make([]TimestampedSocket, 0),
 	}
 
+	// for debugging purposes
+	// write every event to a file
+	f, err := os.Create(fmt.Sprintf("socket_line_%d_%d.info", pid, fd))
+	if err != nil {
+		log.Logger.Error().Err(err).Msg("error creating file")
+	}
+	skLine.f = f
+
 	return skLine
 }
 
 func (nl *SocketLine) AddValue(timestamp uint64, sockInfo *SockInfo) {
 	nl.mu.Lock()
 	defer nl.mu.Unlock()
+
+	if nl.f != nil {
+		_ = json.NewEncoder(nl.f).Encode(timestamp)
+		_ = json.NewEncoder(nl.f).Encode(sockInfo)
+	}
+
+	// ignore close events
+	if sockInfo == nil {
+		return
+	}
 
 	nl.Values = insertIntoSortedSlice(nl.Values, TimestampedSocket{Timestamp: timestamp, SockInfo: sockInfo})
 }
@@ -249,3 +271,137 @@ func insertIntoSortedSlice(sortedSlice []TimestampedSocket, newItem TimestampedS
 
 	return sortedSlice
 }
+
+// reverse slice
+func reverseSlice(s []string) []string {
+	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
+		s[i], s[j] = s[j], s[i]
+	}
+	return s
+}
+
+// convertHexToIP converts a hex string IP address to a human-readable IP address.
+func convertHexToIP(hex string) string {
+	var ipParts []string
+	for i := 0; i < len(hex); i += 2 {
+		part, _ := strconv.ParseInt(hex[i:i+2], 16, 64)
+		ipParts = append(ipParts, fmt.Sprintf("%d", part))
+	}
+	ipParts = reverseSlice(ipParts)
+	return strings.Join(ipParts, ".")
+}
+
+// convertHexToPort converts a hex string port to a human-readable port.
+func convertHexToPort(hex string) int {
+	port, _ := strconv.ParseInt(hex, 16, 64)
+	return int(port)
+}
+
+func getInodeFromFD(pid, fd string) (string, error) {
+	fdPath := fmt.Sprintf("/proc/%s/fd/%s", pid, fd)
+	link, err := os.Readlink(fdPath)
+	if err != nil {
+		return "", err
+	}
+
+	re := regexp.MustCompile(`socket:\[(\d+)\]`)
+	match := re.FindStringSubmatch(link)
+	if len(match) < 2 {
+		return "", fmt.Errorf("no inode found in link: %s", link)
+	}
+
+	return match[1], nil
+}
+
+func findTCPConnection(inode string, pid string) (string, error) {
+	tcpFile, err := os.Open(fmt.Sprintf("/proc/%s/net/tcp", pid))
+	if err != nil {
+		return "", err
+	}
+	defer tcpFile.Close()
+
+	scanner := bufio.NewScanner(tcpFile)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.Contains(line, inode) {
+			return line, nil
+		}
+	}
+
+	return "", fmt.Errorf("no TCP connection found for inode %s", inode)
+}
+
+func parseTcpLine(line string) (localIP string, localPort int, remoteIP string, remotePort int) {
+	fields := strings.Fields(line)
+	localAddress := fields[1]
+	remoteAddress := fields[2]
+
+	localIP = convertHexToIP(localAddress[:8])
+	localPort = convertHexToPort(localAddress[9:])
+	remoteIP = convertHexToIP(remoteAddress[:8])
+	remotePort = convertHexToPort(remoteAddress[9:])
+
+	return
+}
+
+func (nl *SocketLine) getConnectionInfo(pid uint32, fd uint64) error {
+	inode, err := getInodeFromFD(fmt.Sprintf("%d", pid), fmt.Sprintf("%d", fd))
+	if err != nil {
+		return err
+	}
+
+	connectionInfo, err := findTCPConnection(inode, fmt.Sprintf("%d", pid))
+	if err != nil {
+		return err
+	}
+
+	localIP, localPort, remoteIP, remotePort := parseTcpLine(connectionInfo)
+
+	skInfo := &SockInfo{
+		Pid:   pid,
+		Fd:    fd,
+		Saddr: localIP,
+		Sport: uint16(localPort),
+		Daddr: remoteIP,
+		Dport: uint16(remotePort),
+	}
+
+	// add to socket line
+	// convert to bpf time
+	log.Logger.Debug().Msgf("Adding socket line read from user space %v", skInfo)
+	nl.AddValue(convertUserTimeToKernelTime(uint64(time.Now().UnixNano())), skInfo)
+	return nil
+}
+
+// func main() {
+// 	if len(os.Args) < 3 {
+// 		fmt.Println("Usage: find_tcp_connection <pid> <fd>")
+// 		return
+// 	}
+// 	pid := os.Args[1]
+// 	fd := os.Args[2]
+
+// 	// Get inode number from file descriptor
+// 	inode, err := getInodeFromFD(pid, fd)
+// 	if err != nil {
+// 		log.Fatalf("Error getting inode from FD: %v", err)
+// 	}
+
+// 	fmt.Printf("Found inode: %s\n", inode)
+
+// 	// Find TCP connection associated with inode
+// 	connectionInfo, err := findTCPConnection(inode, pid)
+// 	if err != nil {
+// 		log.Fatalf("Error finding TCP connection: %v", err)
+// 	}
+
+// 	fmt.Printf("Found TCP connection: %s\n", connectionInfo)
+
+// 	// Parse TCP connection information
+// 	localIP, localPort, remoteIP, remotePort := parseTcpLine(connectionInfo)
+
+// 	fmt.Printf("Local IP: %s\n", localIP)
+// 	fmt.Printf("Local Port: %d\n", localPort)
+// 	fmt.Printf("Remote IP: %s\n", remoteIP)
+// 	fmt.Printf("Remote Port: %d\n", remotePort)
+// }
