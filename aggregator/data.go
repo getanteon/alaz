@@ -1350,10 +1350,16 @@ func (a *Aggregator) fetchSocketMap(pid uint32) *SocketMap {
 }
 
 func (a *Aggregator) fetchSocketOnNotFound(ctx context.Context, d *l7_req.L7Event) bool {
+	a.liveProcessesMu.Lock()
+
+	a.liveProcesses[d.Pid] = struct{}{}
 	sockMap := a.clusterInfo.SocketMaps[d.Pid]
+	// pid does not exists
 	// acquire sockMap lock
 
-	// pid does not exists
+	// in case of reference to mu is nil, pid exec event did not come yet
+	// create a new mutex for the pid
+	// to avoid race around the mutex, we need to lock the liveProcessesMu
 	if sockMap.mu == nil {
 		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("fetchSocketOnNotFound: pid not found")
 
@@ -1361,6 +1367,7 @@ func (a *Aggregator) fetchSocketOnNotFound(ctx context.Context, d *l7_req.L7Even
 		a.muArray[(a.muIndex.Load())%uint64(len(a.muArray))] = &sync.RWMutex{}
 		a.clusterInfo.SocketMaps[d.Pid].mu = a.muArray[(a.muIndex.Load())%uint64(len(a.muArray))]
 	}
+	a.liveProcessesMu.Unlock()
 
 	// creates sockMap.M
 	skInfo := a.findRelatedSocket(ctx, d)
@@ -1565,7 +1572,7 @@ func (a *Aggregator) clearSocketLines(ctx context.Context) {
 					// send open connections to datastore
 					a.sendOpenConnection(skLine)
 					// clear socket history
-					// skLine.DeleteUnused()
+					skLine.DeleteUnused()
 				}
 			}()
 		}
