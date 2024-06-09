@@ -597,9 +597,8 @@ func (sim *Simulator) httpTraffic(ctx context.Context, t *Traffic) {
 					WriteTimeNs:         t.pod.OpenConnections[t.fd] + 10,
 
 					// tracing purposes
-					Tid:           0,
-					Seq:           0,
-					EventReadTime: 0,
+					Tid: 0,
+					Seq: 0,
 				}
 				// 	select {
 				// 	case

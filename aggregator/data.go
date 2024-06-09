@@ -390,10 +390,8 @@ func (a *Aggregator) processEbpfProc(ctx context.Context) {
 			case proc.PROC_EVENT:
 				d := data.(*proc.ProcEvent) // copy data's value
 				if d.Type_ == proc.EVENT_PROC_EXEC {
-					log.Logger.Debug().Msgf("exec event pid %d", d.Pid)
 					a.processExec(d)
 				} else if d.Type_ == proc.EVENT_PROC_EXIT {
-					log.Logger.Debug().Msgf("exit event pid %d", d.Pid)
 					a.processExit(d.Pid)
 				}
 			}
@@ -789,7 +787,7 @@ func (a *Aggregator) processHttp2Frames() {
 		}
 
 		req.Latency = d.WriteTimeNs - req.Latency
-		req.StartTime = d.EventReadTime
+		req.StartTime = int64(convertKernelTimeToUserspaceTime(d.WriteTimeNs))
 		req.Completed = true
 		req.FromIP = skInfo.Saddr
 		req.ToIP = skInfo.Daddr
@@ -1127,7 +1125,7 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 	}
 
 	reqDto := datastore.Request{
-		StartTime:  d.EventReadTime,
+		StartTime:  int64(convertKernelTimeToUserspaceTime(d.WriteTimeNs)),
 		Latency:    d.Duration,
 		FromIP:     skInfo.Saddr,
 		ToIP:       skInfo.Daddr,

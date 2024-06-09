@@ -324,7 +324,6 @@ type L7Event struct {
 	WriteTimeNs         uint64 // start time of write syscall
 	Tid                 uint32
 	Seq                 uint32 // tcp seq num
-	EventReadTime       int64
 }
 
 const L7_EVENT = "l7_event"
@@ -635,7 +634,6 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 				WriteTimeNs:         l7Event.WriteTimeNs,
 				Tid:                 l7Event.Tid,
 				Seq:                 l7Event.Seq,
-				EventReadTime:       time.Now().UnixMilli(), // TODO: conversion gerekli, bpf tarafindan okunma tarafinda latency olusuyor.
 			}
 
 			go func(l7Event *L7Event) {
