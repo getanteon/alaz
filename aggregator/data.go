@@ -246,6 +246,7 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{},
 	}
 
 	go a.clearSocketLines(ctx)
+	go a.updateSocketMap(ctx)
 	return a
 }
 
@@ -619,6 +620,7 @@ func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
 		var skLine *SocketLine
 
 		if sockMap.mu == nil {
+			log.Logger.Warn().Any("tcp-established-event", d).Msgf("sockMap mu is nil for pid: %d", d.Pid)
 			return
 		}
 
@@ -1347,6 +1349,35 @@ func (a *Aggregator) fetchSocketMap(pid uint32) *SocketMap {
 	return sockMap
 }
 
+// This is a mitigation for the case a tcp event is missed
+func (a *Aggregator) updateSocketMap(ctx context.Context) {
+	ticker := time.NewTicker(3 * time.Minute)
+
+	f := func() {
+		for pid := range a.liveProcesses {
+			sockMap := a.clusterInfo.SocketMaps[pid]
+			if sockMap.mu == nil {
+				continue
+			}
+
+			sockMap.mu.Lock()
+			for _, skLine := range sockMap.M {
+				skLine.getConnectionInfo()
+			}
+			sockMap.mu.Unlock()
+		}
+	}
+
+	for {
+		select {
+		case <-ticker.C:
+			f()
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
 func (a *Aggregator) fetchSocketOnNotFound(ctx context.Context, d *l7_req.L7Event) bool {
 	a.liveProcessesMu.Lock()
 
@@ -1371,7 +1402,7 @@ func (a *Aggregator) fetchSocketOnNotFound(ctx context.Context, d *l7_req.L7Even
 	skInfo := a.findRelatedSocket(ctx, d)
 	if skInfo == nil {
 		// go try reading from kernel files
-		err := sockMap.M[d.Fd].getConnectionInfo(d.Pid, d.Fd)
+		err := sockMap.M[d.Fd].getConnectionInfo()
 		if err != nil {
 			log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Err(err).Msg("fetchSocketOnNotFound: failed to get connection info")
 			return false

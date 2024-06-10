@@ -67,6 +67,14 @@ func (nl *SocketLine) AddValue(timestamp uint64, sockInfo *SockInfo) {
 		return
 	}
 
+	// if last element is equal to the current element, ignore
+	if len(nl.Values) > 0 {
+		last := nl.Values[len(nl.Values)-1].SockInfo
+		if last != nil && last.Saddr == sockInfo.Saddr && last.Sport == sockInfo.Sport && last.Daddr == sockInfo.Daddr && last.Dport == sockInfo.Dport {
+			return
+		}
+	}
+
 	nl.Values = insertIntoSortedSlice(nl.Values, TimestampedSocket{Timestamp: timestamp, SockInfo: sockInfo})
 }
 
@@ -122,7 +130,6 @@ func (nl *SocketLine) DeleteUnused() {
 	for i < len(nl.Values)-1 {
 		if nl.Values[i].SockInfo != nil && nl.Values[i+1].SockInfo != nil {
 			result = append(result, nl.Values[i+1])
-			log.Logger.Debug().Msgf("deleting socket line %v", nl.Values[i])
 			i = i + 2
 		} else {
 			result = append(result, nl.Values[i])
@@ -344,13 +351,13 @@ func parseTcpLine(line string) (localIP string, localPort int, remoteIP string, 
 	return
 }
 
-func (nl *SocketLine) getConnectionInfo(pid uint32, fd uint64) error {
-	inode, err := getInodeFromFD(fmt.Sprintf("%d", pid), fmt.Sprintf("%d", fd))
+func (nl *SocketLine) getConnectionInfo() error {
+	inode, err := getInodeFromFD(fmt.Sprintf("%d", nl.pid), fmt.Sprintf("%d", nl.fd))
 	if err != nil {
 		return err
 	}
 
-	connectionInfo, err := findTCPConnection(inode, fmt.Sprintf("%d", pid))
+	connectionInfo, err := findTCPConnection(inode, fmt.Sprintf("%d", nl.pid))
 	if err != nil {
 		return err
 	}
@@ -358,8 +365,8 @@ func (nl *SocketLine) getConnectionInfo(pid uint32, fd uint64) error {
 	localIP, localPort, remoteIP, remotePort := parseTcpLine(connectionInfo)
 
 	skInfo := &SockInfo{
-		Pid:   pid,
-		Fd:    fd,
+		Pid:   nl.pid,
+		Fd:    nl.fd,
 		Saddr: localIP,
 		Sport: uint16(localPort),
 		Daddr: remoteIP,
