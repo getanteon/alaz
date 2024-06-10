@@ -46,6 +46,7 @@ type SvcEvent struct {
 	Type       string   `json:"type"`
 	ClusterIPs []string `json:"cluster_ips"`
 	Ports      []struct {
+		Name     string `json:"name"`
 		Src      int32  `json:"src"`
 		Dest     int32  `json:"dest"`
 		Protocol string `json:"protocol"`
