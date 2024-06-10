@@ -19,6 +19,7 @@ type Service struct {
 	ClusterIP  string
 	ClusterIPs []string
 	Ports      []struct {
+		Name     string `json:"name"`
 		Src      int32  `json:"src"`
 		Dest     int32  `json:"dest"`
 		Protocol string `json:"protocol"`
@@ -72,6 +73,7 @@ type AddressIP struct {
 type AddressPort struct {
 	Port     int32  `json:"port"`     // Port number
 	Protocol string `json:"protocol"` // TCP or UDP
+	Name     string `json:"name"`
 }
 
 // Subsets
