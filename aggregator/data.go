@@ -1253,6 +1253,8 @@ func (a *Aggregator) updateSocketMap(ctx context.Context) {
 	ticker := time.NewTicker(3 * time.Minute)
 
 	f := func() {
+		a.liveProcessesMu.RLock()
+		defer a.liveProcessesMu.RUnlock()
 		for pid := range a.liveProcesses {
 			sockMap := a.clusterInfo.SocketMaps[pid]
 			if sockMap.mu == nil {
