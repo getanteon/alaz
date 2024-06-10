@@ -11,11 +11,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path"
@@ -84,14 +82,6 @@ type Aggregator struct {
 	// Used to find the correct mutex for the pid, some pids can share the same mutex
 	muIndex atomic.Uint64
 	muArray []*sync.RWMutex
-
-	totalLatency atomic.Uint64 // total cumulative latency
-	latencyCount atomic.Uint64 // event count
-
-	totalTCPLatency atomic.Uint64 // total cumulative latency
-	latencyTCPCount atomic.Uint64 // event count
-
-	socketNotFoundCount atomic.Uint64
 }
 
 // We need to keep track of the following
@@ -414,11 +404,6 @@ func (a *Aggregator) processEbpfTcp(ctx context.Context) {
 			switch bpfEvent.Type() {
 			case tcp_state.TCP_CONNECT_EVENT:
 				d := data.(*tcp_state.TcpConnectEvent) // copy data's value
-				eventTime := convertKernelTimeToUserspaceTime(d.Timestamp)
-				now := uint64(time.Now().UnixNano())
-				latency := now - eventTime
-				// add to overall latency
-				a.AddTCPLatency(latency)
 				a.processTcpConnect(d)
 			}
 		}
@@ -439,12 +424,6 @@ func (a *Aggregator) processEbpf(ctx context.Context) {
 			switch bpfEvent.Type() {
 			case l7_req.L7_EVENT:
 				d := data.(*l7_req.L7Event) // copy data's value
-				eventTime := convertKernelTimeToUserspaceTime(d.WriteTimeNs)
-				now := uint64(time.Now().UnixNano())
-				latency := now - eventTime
-				// add to overall latency
-				a.AddL7Latency(latency)
-
 				a.processL7(ctx, d)
 			case l7_req.TRACE_EVENT:
 				d := data.(*l7_req.TraceEvent)
@@ -455,83 +434,6 @@ func (a *Aggregator) processEbpf(ctx context.Context) {
 			}
 		}
 	}
-}
-
-func (a *Aggregator) AddL7Latency(latency uint64) {
-	a.totalLatency.Add(latency)
-	a.latencyCount.Add(1)
-}
-
-func (a *Aggregator) AddTCPLatency(latency uint64) {
-	a.totalTCPLatency.Add(latency)
-	a.latencyTCPCount.Add(1)
-}
-
-func (a *Aggregator) AdvertiseDebugData() {
-	http.HandleFunc("/pid-sock-map",
-		func(w http.ResponseWriter, r *http.Request) {
-			queryParam := r.URL.Query().Get("number")
-			if queryParam == "" {
-				http.Error(w, "Missing query parameter 'number'", http.StatusBadRequest)
-				return
-			}
-			number, err := strconv.ParseUint(queryParam, 10, 32)
-			if err != nil {
-				http.Error(w, "Invalid query parameter 'number'", http.StatusBadRequest)
-				return
-			}
-			pid := uint32(number)
-
-			sockMap := a.clusterInfo.SocketMaps[pid]
-			if sockMap == nil {
-				http.Error(w, "Pid not found", http.StatusNotFound)
-				return
-			} else {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusOK)
-				_ = json.NewEncoder(w).Encode(sockMap)
-				return
-			}
-		},
-	)
-
-	http.HandleFunc("/process-latency",
-		func(w http.ResponseWriter, r *http.Request) {
-			latency := a.totalLatency.Load()
-			count := a.latencyCount.Load()
-			notFoundCount := a.socketNotFoundCount.Load()
-			if count == 0 {
-				http.Error(w, "No data available", http.StatusNotFound)
-				return
-			}
-
-			tcpLatency := a.totalTCPLatency.Load()
-			tcpCount := a.latencyTCPCount.Load()
-
-			avgLatency := latency / count
-			avgTcpLatency := tcpLatency / tcpCount
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"average_latency_in_ns": avgLatency,
-				"count":                 count,
-				"avg_tcp_latency_in_ns": avgTcpLatency,
-				"tcp_count":             tcpCount,
-				"first_kernel_time":     l7_req.FirstKernelTime,
-				"first_user_time":       l7_req.FirstUserspaceTime,
-				"socketNotFoundCount":   notFoundCount,
-			})
-			return
-		})
-	http.HandleFunc("/live-procs",
-		func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			a.liveProcessesMu.RLock()
-			_ = json.NewEncoder(w).Encode(a.liveProcesses)
-			a.liveProcessesMu.RUnlock()
-			return
-		})
 }
 
 func (a *Aggregator) getRateLimiterForPid(pid uint32) *rate.Limiter {
@@ -620,7 +522,6 @@ func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
 		var skLine *SocketLine
 
 		if sockMap.mu == nil {
-			log.Logger.Warn().Any("tcp-established-event", d).Msgf("sockMap mu is nil for pid: %d", d.Pid)
 			return
 		}
 
@@ -789,7 +690,7 @@ func (a *Aggregator) processHttp2Frames() {
 		}
 
 		req.Latency = d.WriteTimeNs - req.Latency
-		req.StartTime = int64(convertKernelTimeToUserspaceTime(d.WriteTimeNs))
+		req.StartTime = int64(convertKernelTimeToUserspaceTime(d.WriteTimeNs) / 1e6) // nano to milli
 		req.Completed = true
 		req.FromIP = skInfo.Saddr
 		req.ToIP = skInfo.Daddr
@@ -1120,14 +1021,12 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 			Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
 			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("socket not found")
 
-		a.socketNotFoundCount.Add(1)
-
 		// go check pid-fd for the socket
 		a.fetchSocketOnNotFound(ctx, d)
 	}
 
 	reqDto := datastore.Request{
-		StartTime:  int64(convertKernelTimeToUserspaceTime(d.WriteTimeNs)),
+		StartTime:  int64(convertKernelTimeToUserspaceTime(d.WriteTimeNs) / 1e6),
 		Latency:    d.Duration,
 		FromIP:     skInfo.Saddr,
 		ToIP:       skInfo.Daddr,

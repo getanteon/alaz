@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -31,7 +30,6 @@ type SocketLine struct {
 	pid    uint32
 	fd     uint64
 	Values []TimestampedSocket
-	f      *os.File
 }
 
 func NewSocketLine(pid uint32, fd uint64) *SocketLine {
@@ -42,25 +40,12 @@ func NewSocketLine(pid uint32, fd uint64) *SocketLine {
 		Values: make([]TimestampedSocket, 0),
 	}
 
-	// for debugging purposes
-	// write every event to a file
-	f, err := os.Create(fmt.Sprintf("socket_line_%d_%d.info", pid, fd))
-	if err != nil {
-		log.Logger.Error().Err(err).Msg("error creating file")
-	}
-	skLine.f = f
-
 	return skLine
 }
 
 func (nl *SocketLine) AddValue(timestamp uint64, sockInfo *SockInfo) {
 	nl.mu.Lock()
 	defer nl.mu.Unlock()
-
-	if nl.f != nil {
-		_ = json.NewEncoder(nl.f).Encode(timestamp)
-		_ = json.NewEncoder(nl.f).Encode(sockInfo)
-	}
 
 	// ignore close events
 	if sockInfo == nil {
@@ -379,36 +364,3 @@ func (nl *SocketLine) getConnectionInfo() error {
 	nl.AddValue(convertUserTimeToKernelTime(uint64(time.Now().UnixNano())), skInfo)
 	return nil
 }
-
-// func main() {
-// 	if len(os.Args) < 3 {
-// 		fmt.Println("Usage: find_tcp_connection <pid> <fd>")
-// 		return
-// 	}
-// 	pid := os.Args[1]
-// 	fd := os.Args[2]
-
-// 	// Get inode number from file descriptor
-// 	inode, err := getInodeFromFD(pid, fd)
-// 	if err != nil {
-// 		log.Fatalf("Error getting inode from FD: %v", err)
-// 	}
-
-// 	fmt.Printf("Found inode: %s\n", inode)
-
-// 	// Find TCP connection associated with inode
-// 	connectionInfo, err := findTCPConnection(inode, pid)
-// 	if err != nil {
-// 		log.Fatalf("Error finding TCP connection: %v", err)
-// 	}
-
-// 	fmt.Printf("Found TCP connection: %s\n", connectionInfo)
-
-// 	// Parse TCP connection information
-// 	localIP, localPort, remoteIP, remotePort := parseTcpLine(connectionInfo)
-
-// 	fmt.Printf("Local IP: %s\n", localIP)
-// 	fmt.Printf("Local Port: %d\n", localPort)
-// 	fmt.Printf("Remote IP: %s\n", remoteIP)
-// 	fmt.Printf("Remote Port: %d\n", remotePort)
-// }
