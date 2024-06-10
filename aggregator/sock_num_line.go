@@ -286,6 +286,9 @@ func convertHexToIP(hex string) string {
 // convertHexToPort converts a hex string port to a human-readable port.
 func convertHexToPort(hex string) int {
 	port, _ := strconv.ParseInt(hex, 16, 64)
+	if port < 0 || port > 65535 {
+		return 0
+	}
 	return int(port)
 }
 
