@@ -236,6 +236,7 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{},
 	}
 
 	go a.clearSocketLines(ctx)
+	go a.updateSocketMap(ctx)
 	return a
 }
 
@@ -689,7 +690,7 @@ func (a *Aggregator) processHttp2Frames() {
 		}
 
 		req.Latency = d.WriteTimeNs - req.Latency
-		req.StartTime = d.EventReadTime
+		req.StartTime = int64(convertKernelTimeToUserspaceTime(d.WriteTimeNs) / 1e6) // nano to milli
 		req.Completed = true
 		req.FromIP = skInfo.Saddr
 		req.ToIP = skInfo.Daddr
@@ -1019,11 +1020,13 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 		log.Logger.Debug().Uint32("pid", d.Pid).
 			Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
 			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("socket not found")
-		return
+
+		// go check pid-fd for the socket
+		a.fetchSocketOnNotFound(ctx, d)
 	}
 
 	reqDto := datastore.Request{
-		StartTime:  d.EventReadTime,
+		StartTime:  int64(convertKernelTimeToUserspaceTime(d.WriteTimeNs) / 1e6),
 		Latency:    d.Duration,
 		FromIP:     skInfo.Saddr,
 		ToIP:       skInfo.Daddr,
@@ -1245,6 +1248,73 @@ func (a *Aggregator) fetchSocketMap(pid uint32) *SocketMap {
 	return sockMap
 }
 
+// This is a mitigation for the case a tcp event is missed
+func (a *Aggregator) updateSocketMap(ctx context.Context) {
+	ticker := time.NewTicker(3 * time.Minute)
+
+	f := func() {
+		a.liveProcessesMu.RLock()
+		defer a.liveProcessesMu.RUnlock()
+		for pid := range a.liveProcesses {
+			sockMap := a.clusterInfo.SocketMaps[pid]
+			if sockMap.mu == nil {
+				continue
+			}
+
+			sockMap.mu.Lock()
+			for _, skLine := range sockMap.M {
+				skLine.getConnectionInfo()
+			}
+			sockMap.mu.Unlock()
+		}
+	}
+
+	for {
+		select {
+		case <-ticker.C:
+			f()
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (a *Aggregator) fetchSocketOnNotFound(ctx context.Context, d *l7_req.L7Event) bool {
+	a.liveProcessesMu.Lock()
+
+	a.liveProcesses[d.Pid] = struct{}{}
+	sockMap := a.clusterInfo.SocketMaps[d.Pid]
+	// pid does not exists
+	// acquire sockMap lock
+
+	// in case of reference to mu is nil, pid exec event did not come yet
+	// create a new mutex for the pid
+	// to avoid race around the mutex, we need to lock the liveProcessesMu
+	if sockMap.mu == nil {
+		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("fetchSocketOnNotFound: pid not found")
+
+		a.muIndex.Add(1)
+		a.muArray[(a.muIndex.Load())%uint64(len(a.muArray))] = &sync.RWMutex{}
+		a.clusterInfo.SocketMaps[d.Pid].mu = a.muArray[(a.muIndex.Load())%uint64(len(a.muArray))]
+	}
+	a.liveProcessesMu.Unlock()
+
+	// creates sockMap.M
+	skInfo := a.findRelatedSocket(ctx, d)
+	if skInfo == nil {
+		// go try reading from kernel files
+		err := sockMap.M[d.Fd].getConnectionInfo()
+		if err != nil {
+			log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Err(err).Msg("fetchSocketOnNotFound: failed to get connection info")
+			return false
+		} else {
+			log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("fetchSocketOnNotFound: connection info found")
+			return true
+		}
+	}
+	return true
+}
+
 func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) *SockInfo {
 	sockMap := a.clusterInfo.SocketMaps[d.Pid]
 	// acquire sockMap lock
@@ -1261,7 +1331,7 @@ func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) *
 
 	skLine, ok := sockMap.M[d.Fd]
 	if !ok {
-		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("error finding skLine, go look for it")
+		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("create skLine...")
 		// start new socket line, find already established connections
 		skLine = NewSocketLine(d.Pid, d.Fd)
 		sockMap.M[d.Fd] = skLine
@@ -1474,4 +1544,13 @@ func getPidMax() (int, error) {
 		return 0, err
 	}
 	return pidMax, nil
+}
+
+func convertKernelTimeToUserspaceTime(writeTime uint64) uint64 {
+	// get first timestamp from kernel and corresponding userspace time
+	return l7_req.FirstUserspaceTime - (l7_req.FirstKernelTime - writeTime)
+}
+
+func convertUserTimeToKernelTime(now uint64) uint64 {
+	return l7_req.FirstKernelTime - (l7_req.FirstUserspaceTime - now)
 }

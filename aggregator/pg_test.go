@@ -31,7 +31,6 @@ func TestPostgresParseWithKnownStmt(t *testing.T) {
 		WriteTimeNs:         0,
 		Tid:                 0,
 		Seq:                 0,
-		EventReadTime:       0,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -72,7 +71,6 @@ func TestPostgresParseWithKnownStmt(t *testing.T) {
 		WriteTimeNs:         0,
 		Tid:                 0,
 		Seq:                 0,
-		EventReadTime:       0,
 	})
 
 	if err != nil {
@@ -109,7 +107,6 @@ func TestPostgresParseWithUnknownStmt(t *testing.T) {
 		WriteTimeNs:         0,
 		Tid:                 0,
 		Seq:                 0,
-		EventReadTime:       0,
 	})
 
 	if err != nil {
