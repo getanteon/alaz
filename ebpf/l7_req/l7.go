@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"sync"
 	"time"
 	"unsafe"
 
@@ -247,6 +248,9 @@ func (e RedisMethodConversion) String() string {
 	}
 }
 
+var FirstKernelTime uint64 = 0 // nanoseconds since boot
+var FirstUserspaceTime uint64 = 0
+
 // $BPF_CLANG and $BPF_CFLAGS are set by the Makefile.
 // // go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc $BPF_CLANG -cflags $BPF_CFLAGS bpf l7.c -- -I../headers
 
@@ -320,7 +324,6 @@ type L7Event struct {
 	WriteTimeNs         uint64 // start time of write syscall
 	Tid                 uint32
 	Seq                 uint32 // tcp seq num
-	EventReadTime       int64
 }
 
 const L7_EVENT = "l7_event"
@@ -567,6 +570,7 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 		}
 	}()
 
+	readKernelTime := &sync.Once{}
 	go func() {
 		var record perf.Record
 		droppedCount := 0
@@ -587,6 +591,12 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 			}
 
 			l7Event := (*bpfL7Event)(unsafe.Pointer(&record.RawSample[0]))
+
+			// runs once
+			readKernelTime.Do(func() {
+				FirstUserspaceTime = uint64(time.Now().UnixNano())
+				FirstKernelTime = l7Event.WriteTimeNs
+			})
 
 			protocol := L7ProtocolConversion(l7Event.Protocol).String()
 			var method string
@@ -624,7 +634,6 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 				WriteTimeNs:         l7Event.WriteTimeNs,
 				Tid:                 l7Event.Tid,
 				Seq:                 l7Event.Seq,
-				EventReadTime:       time.Now().UnixMilli(),
 			}
 
 			go func(l7Event *L7Event) {

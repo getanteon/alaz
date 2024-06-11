@@ -163,14 +163,15 @@ SEC("tracepoint/syscalls/sys_exit_connect")
 int sys_exit_connect(void *ctx)
 {
   __u64 id = bpf_get_current_pid_tgid();
-  __u32 pid = id >> 32;
-
-  __u8 *val = bpf_map_lookup_elem(&container_pids, &pid);
-  if (!val)
-  {
-    return 0; // not a container process, ignore
-  }
+  // __u32 pid = id >> 32;
 
   bpf_map_delete_elem(&fd_by_pid_tgid, &id);
+  
+  // __u8 *val = bpf_map_lookup_elem(&container_pids, &pid);
+  // if (!val)
+  // {
+  //   return 0; // not a container process, ignore
+  // }
+
   return 0;
 }
