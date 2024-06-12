@@ -82,6 +82,7 @@ func (a *Aggregator) processSvc(d k8s.K8sResourceMessage) {
 	service := d.Object.(*corev1.Service)
 
 	ports := []struct {
+		Name     string "json:\"name\""
 		Src      int32  "json:\"src\""
 		Dest     int32  "json:\"dest\""
 		Protocol string "json:\"protocol\""
@@ -89,10 +90,12 @@ func (a *Aggregator) processSvc(d k8s.K8sResourceMessage) {
 
 	for _, port := range service.Spec.Ports {
 		ports = append(ports, struct {
+			Name     string "json:\"name\""
 			Src      int32  "json:\"src\""
 			Dest     int32  "json:\"dest\""
 			Protocol string "json:\"protocol\""
 		}{
+			Name:     port.Name, // https://kubernetes.io/docs/concepts/services-networking/service/#field-spec-ports
 			Src:      port.Port,
 			Dest:     int32(port.TargetPort.IntValue()),
 			Protocol: string(port.Protocol),
@@ -268,6 +271,7 @@ func (a *Aggregator) processEndpoints(ep k8s.K8sResourceMessage) {
 			ports = append(ports, datastore.AddressPort{
 				Port:     port.Port,
 				Protocol: string(port.Protocol),
+				Name:     port.Name,
 			})
 		}
 
