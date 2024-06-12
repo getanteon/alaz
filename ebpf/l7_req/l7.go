@@ -23,6 +23,7 @@ const (
 	BPF_L7_PROTOCOL_POSTGRES
 	BPF_L7_PROTOCOL_HTTP2
 	BPF_L7_PROTOCOL_REDIS
+	BPF_L7_PROTOCOL_KAFKA
 )
 
 // for user space
@@ -32,6 +33,7 @@ const (
 	L7_PROTOCOL_AMQP     = "AMQP"
 	L7_PROTOCOL_POSTGRES = "POSTGRES"
 	L7_PROTOCOL_REDIS    = "REDIS"
+	L7_PROTOCOL_KAFKA    = "KAFKA"
 	L7_PROTOCOL_UNKNOWN  = "UNKNOWN"
 )
 
@@ -51,6 +53,8 @@ func (e L7ProtocolConversion) String() string {
 		return L7_PROTOCOL_HTTP2
 	case BPF_L7_PROTOCOL_REDIS:
 		return L7_PROTOCOL_REDIS
+	case BPF_L7_PROTOCOL_KAFKA:
+		return L7_PROTOCOL_KAFKA
 	case BPF_L7_PROTOCOL_UNKNOWN:
 		return L7_PROTOCOL_UNKNOWN
 	default:
@@ -611,6 +615,7 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 				method = Http2MethodConversion(l7Event.Method).String()
 			case L7_PROTOCOL_REDIS:
 				method = RedisMethodConversion(l7Event.Method).String()
+			// no method set for kafka on kernel side
 			default:
 				method = "Unknown"
 			}
@@ -634,6 +639,22 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 				WriteTimeNs:         l7Event.WriteTimeNs,
 				Tid:                 l7Event.Tid,
 				Seq:                 l7Event.Seq,
+			}
+
+			if userspacel7Event.Protocol == L7_PROTOCOL_KAFKA {
+				// log all information
+				log.Logger.Info().
+					Uint32("pid", userspacel7Event.Pid).
+					Uint32("status", userspacel7Event.Status).
+					Uint64("duration", userspacel7Event.Duration).
+					Str("protocol", userspacel7Event.Protocol).
+					Str("method", userspacel7Event.Method).
+					Uint64("write-time-ns", userspacel7Event.WriteTimeNs).
+					Uint32("tid", userspacel7Event.Tid).
+					Uint32("seq", userspacel7Event.Seq).
+					Str("payload", string(userspacel7Event.Payload[:userspacel7Event.PayloadSize])).
+					Msg("kafka event")
+				return
 			}
 
 			go func(l7Event *L7Event) {

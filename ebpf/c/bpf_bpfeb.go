@@ -65,7 +65,7 @@ type bpfL7Request struct {
 	_                   [2]byte
 	Seq                 uint32
 	Tid                 uint32
-	_                   [4]byte
+	CorrelationId       int32
 }
 
 type bpfLogMessage struct {

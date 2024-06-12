@@ -5,6 +5,8 @@
 #define PROTOCOL_POSTGRES	3
 #define PROTOCOL_HTTP2	    4
 #define PROTOCOL_REDIS	    5
+#define PROTOCOL_KAFKA	    6
+
 
 #define MAX_PAYLOAD_SIZE 1024
 #define PAYLOAD_PREFIX_SIZE 16
@@ -40,6 +42,7 @@ struct l7_request {
     __u8 request_type;
     __u32 seq;
     __u32 tid;
+    __s32 correlation_id; // used only for kafka
 };
 
 struct socket_key {
@@ -234,6 +237,25 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
             req->method = METHOD_REDIS_PING;
         }else if (!is_redis_pong(buf,count) && is_redis_command(buf,count)){
             req->protocol = PROTOCOL_REDIS;
+            req->method = METHOD_UNKNOWN;
+        }else if (is_kafka_request_header(buf, count, &req->correlation_id)){
+            // request pipelining, batch publish
+            // if multiple writes are done subsequently over the same connection
+            // do not change record in active_l7_requests
+            // correlation ids can mismatch
+
+            // order is guaranteed over the same socket on kafka.
+
+            // write(first_part_of_batch_req_corr1
+            // write(second_part_of_batch_req_corr2 ----> do not write to active_l7_requests, wait for the response
+            // read(first_part_of_batch_resp_corr1
+            // read(second_part_of_batch_resp_corr2
+
+            struct l7_request *prev_req = bpf_map_lookup_elem(&active_l7_requests, &k);
+            if (prev_req && prev_req->protocol == PROTOCOL_KAFKA) {
+                return 0;
+            }
+            req->protocol = PROTOCOL_KAFKA;
             req->method = METHOD_UNKNOWN;
         }else if (is_rabbitmq_publish(buf,count)){
             req->protocol = PROTOCOL_AMQP;
@@ -671,6 +693,8 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
                 e->status = parse_redis_response(read_info->buf, ret);
                 e->method = METHOD_REDIS_COMMAND;
             }
+        }else if (e->protocol == PROTOCOL_KAFKA){
+            e->status = is_kafka_response_header(read_info->buf, active_req->correlation_id);
         }
     }else{
         bpf_map_delete_elem(&active_reads, &id);
