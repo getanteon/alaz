@@ -30,6 +30,8 @@ struct l7_event {
     
     __u32 seq; // tcp sequence number
     __u32 tid;
+
+    __s16 kafka_api_version; // used only for kafka
 };
 
 struct l7_request {
@@ -43,6 +45,8 @@ struct l7_request {
     __u32 seq;
     __u32 tid;
     __s32 correlation_id; // used only for kafka
+    __s16 api_key; // used only for kafka
+    __s16 api_version; // used only for kafka
 };
 
 struct socket_key {
@@ -238,7 +242,7 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
         }else if (!is_redis_pong(buf,count) && is_redis_command(buf,count)){
             req->protocol = PROTOCOL_REDIS;
             req->method = METHOD_UNKNOWN;
-        }else if (is_kafka_request_header(buf, count, &req->correlation_id)){
+        }else if (is_kafka_request_header(buf, count, &req->correlation_id, &req->api_key, &req->api_version)){
             // request pipelining, batch publish
             // if multiple writes are done subsequently over the same connection
             // do not change record in active_l7_requests
@@ -695,6 +699,21 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
             }
         }else if (e->protocol == PROTOCOL_KAFKA){
             e->status = is_kafka_response_header(read_info->buf, active_req->correlation_id);
+            if (active_req->api_key == KAFKA_API_KEY_PRODUCE_API){
+                e->method = METHOD_KAFKA_PRODUCE_REQUEST;
+            }else if (active_req->api_key == KAFKA_API_KEY_FETCH_API){
+                e->method = METHOD_KAFKA_FETCH_RESPONSE;
+                // send the response to userspace
+                // copy req payload
+                e->payload_size = ret;
+                bpf_probe_read(e->payload, MAX_PAYLOAD_SIZE, read_info->buf);
+                if(ret > MAX_PAYLOAD_SIZE){
+                    e->payload_read_complete = 0;
+                }else{
+                    e->payload_read_complete = 1;
+                }
+                e->kafka_api_version = active_req->api_version;
+            }
         }
     }else{
         bpf_map_delete_elem(&active_reads, &id);

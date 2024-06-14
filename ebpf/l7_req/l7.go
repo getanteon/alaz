@@ -120,6 +120,13 @@ const (
 	METHOD_REDIS_PING
 )
 
+// match with values in l7.c, order is important
+const (
+	BPF_KAFKA_METHOD_UNKNOWN = iota
+	METHOD_KAFKA_PRODUCE_REQUEST
+	METHOD_KAFKA_FETCH_RESPONSE
+)
+
 // for http, user space
 const (
 	GET     = "GET"
@@ -157,6 +164,12 @@ const (
 	REDIS_COMMAND      = "COMMAND"
 	REDIS_PUSHED_EVENT = "PUSHED_EVENT"
 	REDIS_PING         = "PING"
+)
+
+// for kafka, user space
+const (
+	KAFKA_PRODUCE_REQUEST = "PRODUCE_REQUEST"
+	KAFKA_FETCH_RESPONSE  = "FETCH_RESPONSE"
 )
 
 // Custom type for the enumeration
@@ -252,6 +265,21 @@ func (e RedisMethodConversion) String() string {
 	}
 }
 
+// Custom type for the enumeration
+type KafkaMethodConversion uint32
+
+// String representation of the enumeration values
+func (e KafkaMethodConversion) String() string {
+	switch e {
+	case METHOD_KAFKA_PRODUCE_REQUEST:
+		return KAFKA_PRODUCE_REQUEST
+	case METHOD_KAFKA_FETCH_RESPONSE:
+		return KAFKA_FETCH_RESPONSE
+	default:
+		return "Unknown"
+	}
+}
+
 var FirstKernelTime uint64 = 0 // nanoseconds since boot
 var FirstUserspaceTime uint64 = 0
 
@@ -286,7 +314,8 @@ type bpfL7Event struct {
 	_                   [1]byte
 	Seq                 uint32
 	Tid                 uint32
-	_                   [4]byte
+	KafkaApiVersion     int16
+	_                   [2]byte
 }
 
 type bpfTraceEvent struct {
@@ -328,6 +357,7 @@ type L7Event struct {
 	WriteTimeNs         uint64 // start time of write syscall
 	Tid                 uint32
 	Seq                 uint32 // tcp seq num
+	KafkaApiVersion     int16
 }
 
 const L7_EVENT = "l7_event"
@@ -615,6 +645,8 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 				method = Http2MethodConversion(l7Event.Method).String()
 			case L7_PROTOCOL_REDIS:
 				method = RedisMethodConversion(l7Event.Method).String()
+			case L7_PROTOCOL_KAFKA:
+				method = KafkaMethodConversion(l7Event.Method).String()
 			// no method set for kafka on kernel side
 			default:
 				method = "Unknown"
@@ -639,11 +671,12 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 				WriteTimeNs:         l7Event.WriteTimeNs,
 				Tid:                 l7Event.Tid,
 				Seq:                 l7Event.Seq,
+				KafkaApiVersion:     l7Event.KafkaApiVersion,
 			}
 
 			if userspacel7Event.Protocol == L7_PROTOCOL_KAFKA {
 				// log all information
-				log.Logger.Info().
+				log.Logger.Warn().
 					Uint32("pid", userspacel7Event.Pid).
 					Uint32("status", userspacel7Event.Status).
 					Uint64("duration", userspacel7Event.Duration).
@@ -654,7 +687,7 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 					Uint32("seq", userspacel7Event.Seq).
 					Str("payload", string(userspacel7Event.Payload[:userspacel7Event.PayloadSize])).
 					Msg("kafka event")
-				return
+				// return
 			}
 
 			go func(l7Event *L7Event) {
@@ -663,12 +696,22 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 				default:
 					droppedCount++
 					if droppedCount%100 == 0 {
-						log.Logger.Warn().
-							Str("protocol", l7Event.Protocol).
-							Str("method", l7Event.Method).
-							Uint32("pid", l7Event.Pid).
-							Uint32("status", l7Event.Status).
-							Msg("channel full, dropping l7 event")
+						if l7Event.Protocol == L7_PROTOCOL_KAFKA {
+							log.Logger.Warn().
+								Str("protocol", l7Event.Protocol).
+								Str("method", l7Event.Method).
+								Uint32("pid", l7Event.Pid).
+								Uint32("status", l7Event.Status).
+								Msg("channel full, dropping kafka event")
+						} else {
+							log.Logger.Debug().
+								Str("protocol", l7Event.Protocol).
+								Str("method", l7Event.Method).
+								Uint32("pid", l7Event.Pid).
+								Uint32("status", l7Event.Status).
+								Msg("channel full, dropping l7 event")
+						}
+
 					}
 				}
 			}(userspacel7Event)
