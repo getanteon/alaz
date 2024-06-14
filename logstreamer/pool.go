@@ -110,12 +110,12 @@ func (c *channelPool) Get() (*PoolConn, error) {
 	select {
 	case conn := <-conns:
 		if conn == nil {
-			return nil, ErrClosed
+			return nil, fmt.Errorf("connection is nil")
 		}
 		if conn.unusable {
 			log.Logger.Info().Msg("connection is unusable on Get, closing it")
 			conn.Close()
-			return nil, ErrClosed
+			return nil, fmt.Errorf("connection is unusable")
 		}
 
 		if conn.isAlive() {
@@ -123,7 +123,7 @@ func (c *channelPool) Get() (*PoolConn, error) {
 		} else {
 			conn.MarkUnusable()
 			conn.Close()
-			return nil, ErrClosed
+			return nil, fmt.Errorf("connection is dead")
 		}
 	default:
 		conn, err := factory()
