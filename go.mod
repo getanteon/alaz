@@ -7,6 +7,7 @@ require (
 	github.com/alecthomas/kingpin/v2 v2.4.0
 	github.com/cilium/ebpf v0.10.1-0.20230626090016-654491c8a500
 	github.com/cilium/fake v0.6.1
+	github.com/cisco-open/libnasp/components/kafka-protocol-go/pkg v0.0.0-20240528033116-a905e3260e31
 	github.com/fsnotify/fsnotify v1.7.0
 	github.com/go-kit/log v0.2.1
 	github.com/golang/protobuf v1.5.3
@@ -15,6 +16,7 @@ require (
 	github.com/prometheus/common v0.48.0
 	github.com/prometheus/node_exporter v1.6.1
 	github.com/rs/zerolog v1.29.1
+	github.com/segmentio/kafka-go v0.4.47
 	github.com/stretchr/testify v1.8.4
 	golang.org/x/arch v0.5.0
 	golang.org/x/mod v0.12.0
@@ -27,13 +29,19 @@ require (
 )
 
 require (
+	emperror.dev/errors v0.8.1 // indirect
 	github.com/Microsoft/go-winio v0.6.0 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
+	github.com/eapache/go-xerial-snappy v0.0.0-20230111030713-bf00bc1b83b6 // indirect
 	github.com/felixge/httpsnoop v1.0.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/gnostic-models v0.6.8 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.16.0 // indirect
+	github.com/klauspost/compress v1.16.5 // indirect
+	github.com/pierrec/lz4/v4 v4.1.18 // indirect
+	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.46.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.45.0 // indirect
@@ -72,7 +80,7 @@ require (
 	github.com/gogo/protobuf v1.3.2
 	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
-	github.com/google/uuid v1.3.1 // indirect
+	github.com/google/uuid v1.3.1
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-envparse v0.1.0 // indirect
 	github.com/hashicorp/go-hclog v1.2.0 // indirect
