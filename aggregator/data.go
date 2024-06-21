@@ -29,6 +29,7 @@ import (
 
 	"time"
 
+	"github.com/ddosify/alaz/aggregator/kafka"
 	"github.com/ddosify/alaz/datastore"
 	"github.com/ddosify/alaz/ebpf"
 	"github.com/ddosify/alaz/ebpf/l7_req"
@@ -43,16 +44,9 @@ import (
 	"github.com/patrickmn/go-cache"
 	"k8s.io/apimachinery/pkg/types"
 
-	"github.com/segmentio/kafka-go/protocol"
 	_ "github.com/segmentio/kafka-go/protocol/fetch"
 	_ "github.com/segmentio/kafka-go/protocol/produce"
 	_ "github.com/segmentio/kafka-go/protocol/saslauthenticate"
-
-	"github.com/cisco-open/libnasp/components/kafka-protocol-go/pkg/protocol/messages/fetch"
-	"github.com/cisco-open/libnasp/components/kafka-protocol-go/pkg/protocol/messages/produce"
-
-	cisco_req "github.com/cisco-open/libnasp/components/kafka-protocol-go/pkg/request"
-	cisco_resp "github.com/cisco-open/libnasp/components/kafka-protocol-go/pkg/response"
 )
 
 type Aggregator struct {
@@ -989,107 +983,83 @@ func (a *Aggregator) getConnKey(pid uint32, fd uint64) string {
 	return fmt.Sprintf("%d-%d", pid, fd)
 }
 
-func (a *Aggregator) decodeKafkaProduceRequest(req *cisco_req.Request) {
-	produceDatas := req.Data().(*produce.Request).TopicData()
-	for _, produceData := range produceDatas {
-		log.Logger.Warn().Interface("TopicProduceData.name", produceData.Name()).Msg("kafka produce data")
-
-		l := produceData.PartitionData()
-		for _, ppd := range l { // ppd : PartitionProduceData
-			ppd.Index()
-			recordBatches := ppd.Records()
-			for _, recordBatch := range recordBatches.Items() {
-				batchRecords := recordBatch.Records()
-				for _, batchRecord := range batchRecords {
-					log.Logger.Warn().Str("key", string(batchRecord.Key())).Msg("kafka produce data- key")
-					log.Logger.Warn().Str("value", string(batchRecord.Value())).Msg("kafka produce data- value")
-				}
-			}
-			// log.Logger.Info().Int32("PartitionProduceData.partition", ppd.Records()).Msg("kafka produce data")
-		}
-	}
-}
-
-func (a *Aggregator) decodeKafkaFetchResponse(resp *cisco_resp.Response) {
-	responses := resp.Data().(*fetch.Response).Responses()
-	for _, response := range responses {
-		topic := response.Topic()
-		pts := response.Partitions()
-		for _, pt := range pts {
-			ptIndex := pt.PartitionIndex()
-			startOffset := pt.LogStartOffset()
-			lastStableOffset := pt.LastStableOffset()
-
-			log.Logger.Warn().Str("topic", topic.String()).Int32("partition", ptIndex).Int64("startOffset", startOffset).Int64("lastStableOffset", lastStableOffset).Msg("kafka fetch response")
-
-			recordBatches := pt.Records()
-			for _, recordBatch := range recordBatches.Items() {
-				batchRecords := recordBatch.Records()
-				for _, batchRecord := range batchRecords {
-					log.Logger.Warn().Str("key", string(batchRecord.Key())).Msg("kafka fetch data- key")
-					log.Logger.Warn().Str("value", string(batchRecord.Value())).Msg("kafka fetch data- value")
-				}
-			}
-		}
-	}
-}
-
 func (a *Aggregator) decodeKafkaPayload(d *l7_req.L7Event, reqDto *datastore.Request) error {
-	// kafka payload is a json
-	// decode json
-	// extract path, method, status code
-	// set to reqDto
-
-	log.Logger.Warn().Msg("decode kafka payload start")
-
-	r := bytes.NewReader(d.Payload[:d.PayloadSize])
-
 	// apiVersion is written in request header
 	// response header only has correlation_id
-	// so while returning fetch response from kafka, we need to send the api version too.
+	// so while returning a response message from kafka, we need to send the api version to userspace
+	// in order to parse the response message.
+	// d.KafkaApiVersion is set in kafka request event
 
-	var apiVersion int16
-	var correlationID int32
-	var clientID string
-	var message protocol.Message
-	var err error
+	// r := bytes.NewReader(d.Payload[:d.PayloadSize])
+
+	// var apiVersion int16    // only in request
+	// var clientID string     // only in request
+	// var correlationID int32 // both in request and response
+	// var message protocol.Message
+	// var err error
 
 	if d.Method == l7_req.KAFKA_PRODUCE_REQUEST {
-		apiVersion, correlationID, clientID, message, err = protocol.ReadRequest(r)
-	} else if d.Method == l7_req.KAFKA_FETCH_RESPONSE {
-		// apiVersion how to know ???
-		correlationID, message, err = protocol.ReadResponse(r, protocol.Fetch, d.KafkaApiVersion)
-	}
-
-	if err != nil {
-		log.Logger.Error().Err(err).Msg("error reading kafka request")
-		return err
-	} else {
-		log.Logger.Warn().Int16("apiVersion", apiVersion).
-			Int16("d.apiVersion", d.KafkaApiVersion).
-			Int32("correlationID", correlationID).
-			Str("clientID", clientID).
-			Str("apiKey", message.ApiKey().String()).Msg("kafka request")
-
-		switch message.ApiKey() {
-		case protocol.Produce:
-			req, err := cisco_req.Parse(d.Payload[4:d.PayloadSize])
-			if err != nil {
-				log.Logger.Error().Err(err).Msg("error parsing kafka request cisco")
-			} else {
-				a.decodeKafkaProduceRequest(&req)
+		saramaReq, _, err := kafka.DecodeRequest(bytes.NewReader(d.Payload[:d.PayloadSize]))
+		if err != nil {
+			// non-kafka messages sometimes classifed as kafka messages on kernel side
+			return nil
+		} else {
+			rs := saramaReq.Body.(*kafka.ProduceRequest).Records
+			for topicName, r := range rs {
+				for partition, record := range r {
+					records := record.RecordBatch.Records
+					for _, msg := range records {
+						log.Logger.Warn().Str("key", string(msg.Key)).
+							Str("val", string(msg.Value)).
+							Str("topicName", topicName).
+							Int32("partition", partition).
+							Msg("kafka produce data key")
+					}
+				}
 			}
-		case protocol.Fetch:
-			resp, err := cisco_resp.Parse(d.Payload[4:d.PayloadSize], int16(protocol.Fetch), d.KafkaApiVersion, correlationID)
-			if err != nil {
-				log.Logger.Error().Err(err).Msg("error parsing kafka response cisco")
-			} else {
-				a.decodeKafkaFetchResponse(&resp)
+		}
+	} else if d.Method == l7_req.KAFKA_FETCH_RESPONSE {
+		payload := d.Payload[:d.PayloadSize]
+		// decode response header first
+		decodedHeader := &kafka.ResponseHeader{}
+		off, err := kafka.VersionedDecode(payload, decodedHeader, kafka.ResponseHeaderVersion(1, d.KafkaApiVersion))
+		if err != nil {
+			return fmt.Errorf("kafka decode header failure: %w", err)
+		}
+
+		// skip header
+		payload = payload[off:]
+		fetchApiVersion := d.KafkaApiVersion
+
+		res := &kafka.FetchResponse{}
+		_, err = kafka.VersionedDecode(payload, res, fetchApiVersion)
+		if err != nil {
+			return fmt.Errorf("kafka decode fetch response failure: %w", err)
+		} else {
+			for topic, mapfrb := range res.Blocks {
+				for partition, frb := range mapfrb {
+					log.Logger.Warn().Int32("partition", partition).Msg("sarama kafka fetch data- partition")
+					recordSet := frb.RecordsSet
+					for _, record := range recordSet {
+						// record.MsgSet --> legacy records
+						// record.RecordBatch --> default records
+						for _, r := range record.RecordBatch.Records {
+							log.Logger.Warn().
+								Str("key", string(r.Key)).
+								Str("val", string(r.Value)).
+								Str("topicName", topic).
+								Int64("offset", r.OffsetDelta).
+								Int32("partition", partition).
+								Msg("kafka fetch response decoded")
+						}
+					}
+				}
 			}
 		}
 
-		return nil
 	}
+
+	return nil
 }
 
 func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
@@ -1167,14 +1137,6 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 		path = string(d.Payload[0:d.PayloadSize])
 	}
 
-	if d.Protocol == l7_req.L7_PROTOCOL_KAFKA {
-		log.Logger.Warn().Uint32("tid", d.Tid).Uint32("seq", d.Seq).Msg("kafka req in aggregator")
-		err := a.decodeKafkaPayload(d, reqDto)
-		if err != nil {
-			return
-		}
-	}
-
 	err := a.setFromTo(skInfo, d, reqDto, reqHostHeader)
 	if err != nil {
 		return
@@ -1197,6 +1159,14 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 
 	if d.Protocol == l7_req.L7_PROTOCOL_HTTP && d.Tls {
 		reqDto.Protocol = "HTTPS"
+	}
+
+	if d.Protocol == l7_req.L7_PROTOCOL_KAFKA {
+		log.Logger.Warn().Uint32("tid", d.Tid).Uint32("seq", d.Seq).Msg("kafka req in aggregator")
+		err := a.decodeKafkaPayload(d, reqDto)
+		if err != nil {
+			return
+		}
 	}
 
 	err = a.ds.PersistRequest(reqDto)
