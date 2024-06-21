@@ -983,7 +983,15 @@ func (a *Aggregator) getConnKey(pid uint32, fd uint64) string {
 	return fmt.Sprintf("%d-%d", pid, fd)
 }
 
-func (a *Aggregator) decodeKafkaPayload(d *l7_req.L7Event, reqDto *datastore.Request) error {
+type KafkaMessage struct {
+	TopicName string
+	Partition int32
+	Key       string
+	Value     string
+	Type      string // PUBLISH or CONSUME
+}
+
+func (a *Aggregator) decodeKafkaPayload(d *l7_req.L7Event) ([]*KafkaMessage, error) {
 	// apiVersion is written in request header
 	// response header only has correlation_id
 	// so while returning a response message from kafka, we need to send the api version to userspace
@@ -998,22 +1006,26 @@ func (a *Aggregator) decodeKafkaPayload(d *l7_req.L7Event, reqDto *datastore.Req
 	// var message protocol.Message
 	// var err error
 
+	result := make([]*KafkaMessage, 0)
+
 	if d.Method == l7_req.KAFKA_PRODUCE_REQUEST {
 		saramaReq, _, err := kafka.DecodeRequest(bytes.NewReader(d.Payload[:d.PayloadSize]))
 		if err != nil {
 			// non-kafka messages sometimes classifed as kafka messages on kernel side
-			return nil
+			return nil, fmt.Errorf("kafka decode request failure: %w", err)
 		} else {
 			rs := saramaReq.Body.(*kafka.ProduceRequest).Records
 			for topicName, r := range rs {
 				for partition, record := range r {
 					records := record.RecordBatch.Records
 					for _, msg := range records {
-						log.Logger.Warn().Str("key", string(msg.Key)).
-							Str("val", string(msg.Value)).
-							Str("topicName", topicName).
-							Int32("partition", partition).
-							Msg("kafka produce data key")
+						result = append(result, &KafkaMessage{
+							TopicName: topicName,
+							Partition: partition,
+							Key:       string(msg.Key),
+							Value:     string(msg.Value),
+							Type:      "PUBLISH",
+						})
 					}
 				}
 			}
@@ -1024,7 +1036,7 @@ func (a *Aggregator) decodeKafkaPayload(d *l7_req.L7Event, reqDto *datastore.Req
 		decodedHeader := &kafka.ResponseHeader{}
 		off, err := kafka.VersionedDecode(payload, decodedHeader, kafka.ResponseHeaderVersion(1, d.KafkaApiVersion))
 		if err != nil {
-			return fmt.Errorf("kafka decode header failure: %w", err)
+			return nil, fmt.Errorf("kafka decode response header failure: %w", err)
 		}
 
 		// skip header
@@ -1034,7 +1046,7 @@ func (a *Aggregator) decodeKafkaPayload(d *l7_req.L7Event, reqDto *datastore.Req
 		res := &kafka.FetchResponse{}
 		_, err = kafka.VersionedDecode(payload, res, fetchApiVersion)
 		if err != nil {
-			return fmt.Errorf("kafka decode fetch response failure: %w", err)
+			return nil, fmt.Errorf("kafka decode fetch response failure: %w", err)
 		} else {
 			for topic, mapfrb := range res.Blocks {
 				for partition, frb := range mapfrb {
@@ -1044,13 +1056,13 @@ func (a *Aggregator) decodeKafkaPayload(d *l7_req.L7Event, reqDto *datastore.Req
 						// record.MsgSet --> legacy records
 						// record.RecordBatch --> default records
 						for _, r := range record.RecordBatch.Records {
-							log.Logger.Warn().
-								Str("key", string(r.Key)).
-								Str("val", string(r.Value)).
-								Str("topicName", topic).
-								Int64("offset", r.OffsetDelta).
-								Int32("partition", partition).
-								Msg("kafka fetch response decoded")
+							result = append(result, &KafkaMessage{
+								TopicName: topic,
+								Partition: partition,
+								Key:       string(r.Key),
+								Value:     string(r.Value),
+								Type:      "CONSUME",
+							})
 						}
 					}
 				}
@@ -1059,54 +1071,89 @@ func (a *Aggregator) decodeKafkaPayload(d *l7_req.L7Event, reqDto *datastore.Req
 
 	}
 
-	return nil
+	return result, nil
 }
 
-func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
-	// other protocols events come as whole, but http2 events come as frames
+func (a *Aggregator) processHttp2Event(d *l7_req.L7Event) {
+	// http2 events come as frames
 	// we need to aggregate frames to get the whole request
-	defer func() {
-		if r := recover(); r != nil {
-			// TODO: we need to fix this properly
-			log.Logger.Debug().Msgf("probably a http2 frame sent on a closed chan: %v", r)
-		}
-	}()
+	var ok bool
 
-	if d.Protocol == l7_req.L7_PROTOCOL_HTTP2 {
-		var ok bool
-
-		a.liveProcessesMu.RLock()
-		_, ok = a.liveProcesses[d.Pid]
-		a.liveProcessesMu.RUnlock()
-		if !ok {
-			return // if a late event comes, do not create parsers and new worker to avoid memory leak
-		}
-
-		a.h2Ch <- d
-		return
+	a.liveProcessesMu.RLock()
+	_, ok = a.liveProcesses[d.Pid]
+	a.liveProcessesMu.RUnlock()
+	if !ok {
+		return // if a late event comes, do not create parsers and new worker to avoid memory leak
 	}
 
-	var path string
-	if d.Protocol == l7_req.L7_PROTOCOL_POSTGRES {
-		// parse sql command from payload
-		// path = sql command
-		// method = sql message type
-		var err error
-		path, err = a.parseSqlCommand(d)
-		if err != nil {
-			log.Logger.Error().AnErr("err", err)
-			return
-		}
-	}
+	a.h2Ch <- d
+	return
+}
 
+func (a *Aggregator) processKafkaEvent(ctx context.Context, d *l7_req.L7Event) {
 	skInfo := a.findRelatedSocket(ctx, d)
 	if skInfo == nil {
 		log.Logger.Debug().Uint32("pid", d.Pid).
 			Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
-			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("socket not found")
+			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("socket not found for kafka event")
 
-		// go check pid-fd for the socket
-		a.fetchSocketOnNotFound(ctx, d)
+		return
+	}
+
+	kafkaMessages, err := a.decodeKafkaPayload(d)
+	if err != nil {
+		return
+	}
+
+	for _, msg := range kafkaMessages {
+		reqDto := &datastore.Request{
+			StartTime:  int64(convertKernelTimeToUserspaceTime(d.WriteTimeNs) / 1e6),
+			Latency:    d.Duration,
+			FromIP:     skInfo.Saddr,
+			FromType:   "",
+			FromUID:    "",
+			FromPort:   0,
+			ToIP:       skInfo.Daddr,
+			ToType:     "",
+			ToUID:      "",
+			ToPort:     0,
+			Protocol:   d.Protocol,
+			Tls:        d.Tls,
+			Completed:  true,
+			StatusCode: d.Status,
+			FailReason: "",
+			Method:     msg.Type,
+			Path:       msg.Value,
+			Tid:        d.Tid,
+			Seq:        d.Seq,
+		}
+
+		err := a.setFromTo(skInfo, d, reqDto, "")
+		if err != nil {
+			return
+		}
+
+		if reqDto.Method == "CONSUME" {
+			// TODO: reverse the from and to
+			// do we show arrows originating from outbound services ?
+		}
+
+		err = a.ds.PersistRequest(reqDto)
+		if err != nil {
+			log.Logger.Error().Err(err).Msg("error persisting request")
+		}
+	}
+	return
+
+}
+
+func (a *Aggregator) processAmqpEvent(ctx context.Context, d *l7_req.L7Event) {
+	skInfo := a.findRelatedSocket(ctx, d)
+	if skInfo == nil {
+		log.Logger.Debug().Uint32("pid", d.Pid).
+			Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
+			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("socket not found for amqp event")
+		return
 	}
 
 	reqDto := &datastore.Request{
@@ -1120,21 +1167,113 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 		StatusCode: d.Status,
 		FailReason: "",
 		Method:     d.Method,
+		Path:       "",
 		Tid:        d.Tid,
 		Seq:        d.Seq,
 	}
 
-	// Since we process events concurrently
-	// TCP events and L7 events can be processed out of order
+	err := a.setFromTo(skInfo, d, reqDto, "")
+	if err != nil {
+		return
+	}
 
+	// In AMQP-DELIVER or REDIS-PUSHED_EVENT event, we are capturing from read syscall,
+	// exchange sockets
+	// In Alaz context, From is always the one that makes the write
+	// and To is the one that makes the read
+	if d.Method == l7_req.DELIVER {
+		reverseFromTo(reqDto)
+	}
+
+	err = a.ds.PersistRequest(reqDto)
+	if err != nil {
+		log.Logger.Error().Err(err).Msg("error persisting request")
+	}
+}
+
+func (a *Aggregator) processRedisEvent(ctx context.Context, d *l7_req.L7Event) {
+	query := string(d.Payload[0:d.PayloadSize])
+
+	skInfo := a.findRelatedSocket(ctx, d)
+	if skInfo == nil {
+		log.Logger.Debug().Uint32("pid", d.Pid).
+			Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
+			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("socket not found for redis event")
+		return
+	}
+
+	reqDto := &datastore.Request{
+		StartTime:  int64(convertKernelTimeToUserspaceTime(d.WriteTimeNs) / 1e6),
+		Latency:    d.Duration,
+		FromIP:     skInfo.Saddr,
+		ToIP:       skInfo.Daddr,
+		Protocol:   d.Protocol,
+		Tls:        d.Tls,
+		Completed:  true,
+		StatusCode: d.Status,
+		FailReason: "",
+		Method:     d.Method,
+		Path:       query,
+		Tid:        d.Tid,
+		Seq:        d.Seq,
+	}
+
+	err := a.setFromTo(skInfo, d, reqDto, "")
+	if err != nil {
+		return
+	}
+
+	// REDIS-PUSHED_EVENT event, we are capturing from read syscall,
+	// exchange sockets
+	// In Alaz context, From is always the one that makes the write
+	// and To is the one that makes the read
+	if d.Method == l7_req.REDIS_PUSHED_EVENT {
+		reverseFromTo(reqDto)
+	}
+
+	err = a.ds.PersistRequest(reqDto)
+	if err != nil {
+		log.Logger.Error().Err(err).Msg("error persisting request")
+	}
+}
+
+func reverseFromTo(req *datastore.Request) {
+	req.FromIP, req.ToIP = req.ToIP, req.FromIP
+	req.FromPort, req.ToPort = req.ToPort, req.FromPort
+	req.FromUID, req.ToUID = req.ToUID, req.FromUID
+	req.FromType, req.ToType = req.ToType, req.FromType
+}
+
+func (a *Aggregator) processHttpEvent(ctx context.Context, d *l7_req.L7Event) {
 	var reqHostHeader string
+	var path string
 	// parse http payload, extract path, query params, headers
 	if d.Protocol == l7_req.L7_PROTOCOL_HTTP {
 		_, path, _, reqHostHeader = parseHttpPayload(string(d.Payload[0:d.PayloadSize]))
 	}
 
-	if d.Protocol == l7_req.L7_PROTOCOL_REDIS {
-		path = string(d.Payload[0:d.PayloadSize])
+	skInfo := a.findRelatedSocket(ctx, d)
+	if skInfo == nil {
+		log.Logger.Debug().Uint32("pid", d.Pid).
+			Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
+			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("socket not found for http event")
+		return
+	}
+
+	reqDto := &datastore.Request{
+		StartTime:  int64(convertKernelTimeToUserspaceTime(d.WriteTimeNs) / 1e6),
+		Latency:    d.Duration,
+		FromIP:     skInfo.Saddr,
+		ToIP:       skInfo.Daddr,
+		Protocol:   d.Protocol,
+		Tls:        d.Tls,
+		Completed:  true,
+		StatusCode: d.Status,
+		FailReason: "",
+		Method:     d.Method,
+		Path:       path,
+		Tid:        d.Tid,
+		Seq:        d.Seq,
 	}
 
 	err := a.setFromTo(skInfo, d, reqDto, reqHostHeader)
@@ -1142,31 +1281,8 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 		return
 	}
 
-	reqDto.Path = path
-	reqDto.Completed = !d.Failed
-
-	// In AMQP-DELIVER or REDIS-PUSHED_EVENT event, we are capturing from read syscall,
-	// exchange sockets
-	// In Alaz context, From is always the one that makes the write
-	// and To is the one that makes the read
-	if (d.Protocol == l7_req.L7_PROTOCOL_AMQP && d.Method == l7_req.DELIVER) ||
-		(d.Protocol == l7_req.L7_PROTOCOL_REDIS && d.Method == l7_req.REDIS_PUSHED_EVENT) {
-		reqDto.FromIP, reqDto.ToIP = reqDto.ToIP, reqDto.FromIP
-		reqDto.FromPort, reqDto.ToPort = reqDto.ToPort, reqDto.FromPort
-		reqDto.FromUID, reqDto.ToUID = reqDto.ToUID, reqDto.FromUID
-		reqDto.FromType, reqDto.ToType = reqDto.ToType, reqDto.FromType
-	}
-
 	if d.Protocol == l7_req.L7_PROTOCOL_HTTP && d.Tls {
 		reqDto.Protocol = "HTTPS"
-	}
-
-	if d.Protocol == l7_req.L7_PROTOCOL_KAFKA {
-		log.Logger.Warn().Uint32("tid", d.Tid).Uint32("seq", d.Seq).Msg("kafka req in aggregator")
-		err := a.decodeKafkaPayload(d, reqDto)
-		if err != nil {
-			return
-		}
 	}
 
 	err = a.ds.PersistRequest(reqDto)
@@ -1174,6 +1290,79 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 		log.Logger.Error().Err(err).Msg("error persisting request")
 	}
 
+}
+
+func (a *Aggregator) processPostgresEvent(ctx context.Context, d *l7_req.L7Event) {
+	// parse sql command from payload
+	// path = sql command
+	// method = sql message type
+
+	query, err := a.parseSqlCommand(d)
+	if err != nil {
+		log.Logger.Error().AnErr("err", err)
+		return
+	}
+
+	skInfo := a.findRelatedSocket(ctx, d)
+	if skInfo == nil {
+		log.Logger.Debug().Uint32("pid", d.Pid).
+			Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
+			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("socket not found for postgres event")
+
+		return
+	}
+
+	reqDto := &datastore.Request{
+		StartTime:  int64(convertKernelTimeToUserspaceTime(d.WriteTimeNs) / 1e6),
+		Latency:    d.Duration,
+		FromIP:     skInfo.Saddr,
+		ToIP:       skInfo.Daddr,
+		Protocol:   d.Protocol,
+		Tls:        d.Tls,
+		Completed:  true,
+		StatusCode: d.Status,
+		FailReason: "",
+		Method:     d.Method,
+		Path:       query,
+		Tid:        d.Tid,
+		Seq:        d.Seq,
+	}
+
+	err = a.setFromTo(skInfo, d, reqDto, "")
+	if err != nil {
+		return
+	}
+
+	err = a.ds.PersistRequest(reqDto)
+	if err != nil {
+		log.Logger.Error().Err(err).Msg("error persisting request")
+	}
+}
+
+func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
+	// // other protocols events come as whole, but http2 events come as frames
+	// // we need to aggregate frames to get the whole request
+	// defer func() {
+	// 	if r := recover(); r != nil {
+	// 		// TODO: we need to fix this properly
+	// 		log.Logger.Debug().Msgf("probably a http2 frame sent on a closed chan: %v", r)
+	// 	}
+	// }()
+
+	switch d.Protocol {
+	case l7_req.L7_PROTOCOL_HTTP2:
+		a.processHttp2Event(d)
+	case l7_req.L7_PROTOCOL_POSTGRES:
+		a.processPostgresEvent(ctx, d)
+	case l7_req.L7_PROTOCOL_HTTP:
+		a.processHttpEvent(ctx, d)
+	case l7_req.L7_PROTOCOL_REDIS:
+		a.processRedisEvent(ctx, d)
+	case l7_req.L7_PROTOCOL_AMQP:
+		a.processAmqpEvent(ctx, d)
+	case l7_req.L7_PROTOCOL_KAFKA:
+		a.processKafkaEvent(ctx, d)
+	}
 }
 
 // reverse dns lookup
@@ -1391,20 +1580,16 @@ func (a *Aggregator) fetchSocketOnNotFound(ctx context.Context, d *l7_req.L7Even
 	}
 	a.liveProcessesMu.Unlock()
 
-	// creates sockMap.M
-	skInfo := a.findRelatedSocket(ctx, d)
-	if skInfo == nil {
-		// go try reading from kernel files
-		err := sockMap.M[d.Fd].getConnectionInfo()
-		if err != nil {
-			log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Err(err).Msg("fetchSocketOnNotFound: failed to get connection info")
-			return false
-		} else {
-			log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("fetchSocketOnNotFound: connection info found")
-			return true
-		}
+	// go try reading from kernel files
+	err := sockMap.M[d.Fd].getConnectionInfo()
+	if err != nil {
+		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Err(err).Msg("fetchSocketOnNotFound: failed to get connection info")
+		return false
+	} else {
+		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("fetchSocketOnNotFound: connection info found")
+		return true
 	}
-	return true
+
 }
 
 func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) *SockInfo {
@@ -1433,8 +1618,14 @@ func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) *
 	sockMap.mu.Unlock()
 
 	skInfo := a.fetchSkInfo(ctx, skLine, d)
+
 	if skInfo == nil {
-		return nil
+		log.Logger.Debug().Uint32("pid", d.Pid).
+			Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
+			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("socket not found")
+
+		// go check pid-fd for the socket
+		a.fetchSocketOnNotFound(ctx, d)
 	}
 
 	return skInfo
