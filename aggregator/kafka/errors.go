@@ -85,31 +85,6 @@ var ErrCannotTransitionNilError = errors.New("transaction manager: cannot transi
 // ErrTxnUnableToParseResponse when response is nil
 var ErrTxnUnableToParseResponse = errors.New("transaction manager: unable to parse response")
 
-type sentinelError struct {
-	sentinel error
-	wrapped  error
-}
-
-func (err sentinelError) Error() string {
-	if err.wrapped != nil {
-		return fmt.Sprintf("%s: %v", err.sentinel, err.wrapped)
-	} else {
-		return fmt.Sprintf("%s", err.sentinel)
-	}
-}
-
-func (err sentinelError) Is(target error) bool {
-	return errors.Is(err.sentinel, target) || errors.Is(err.wrapped, target)
-}
-
-func (err sentinelError) Unwrap() error {
-	return err.wrapped
-}
-
-// func Wrap(sentinel error, wrapped ...error) sentinelError {
-// 	return sentinelError{sentinel: sentinel, wrapped: multiError(wrapped...)}
-// }
-
 // PacketEncodingError is returned from a failure while encoding a Kafka packet. This can happen, for example,
 // if you try to encode a string over 2^15 characters in length, since Kafka's encoding rules do not permit that.
 type PacketEncodingError struct {

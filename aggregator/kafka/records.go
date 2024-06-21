@@ -17,14 +17,6 @@ type Records struct {
 	RecordBatch *RecordBatch
 }
 
-func newLegacyRecords(msgSet *MessageSet) Records {
-	return Records{recordsType: legacyRecords, MsgSet: msgSet}
-}
-
-func newDefaultRecords(batch *RecordBatch) Records {
-	return Records{recordsType: defaultRecords, RecordBatch: batch}
-}
-
 // setTypeFromFields sets type of Records depending on which of MsgSet or RecordBatch is not nil.
 // The first return value indicates whether both fields are nil (and the type is not set).
 // If both fields are not nil, it returns an error.
@@ -120,25 +112,6 @@ func (r *Records) isPartial() (bool, error) {
 	return false, fmt.Errorf("unknown records type: %v", r.recordsType)
 }
 
-func (r *Records) isControl() (bool, error) {
-	if r.recordsType == unknownRecords {
-		if empty, err := r.setTypeFromFields(); err != nil || empty {
-			return false, err
-		}
-	}
-
-	switch r.recordsType {
-	case legacyRecords:
-		return false, nil
-	case defaultRecords:
-		if r.RecordBatch == nil {
-			return false, nil
-		}
-		return r.RecordBatch.Control, nil
-	}
-	return false, fmt.Errorf("unknown records type: %v", r.recordsType)
-}
-
 func (r *Records) isOverflow() (bool, error) {
 	if r.recordsType == unknownRecords {
 		if empty, err := r.setTypeFromFields(); err != nil || empty {
@@ -178,18 +151,3 @@ func (r *Records) recordsOffset() (*int64, error) {
 func magicValue(pd packetDecoder) (int8, error) {
 	return pd.peekInt8(magicOffset)
 }
-
-// func (r *Records) getControlRecord() (ControlRecord, error) {
-// 	if r.RecordBatch == nil || len(r.RecordBatch.Records) == 0 {
-// 		return ControlRecord{}, fmt.Errorf("cannot get control record, record batch is empty")
-// 	}
-
-// 	firstRecord := r.RecordBatch.Records[0]
-// 	controlRecord := ControlRecord{}
-// 	err := controlRecord.decode(&realDecoder{raw: firstRecord.Key}, &realDecoder{raw: firstRecord.Value})
-// 	if err != nil {
-// 		return ControlRecord{}, err
-// 	}
-
-// 	return controlRecord, nil
-// }

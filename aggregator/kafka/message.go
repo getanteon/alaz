@@ -75,8 +75,8 @@ type Message struct {
 	Version          int8             // v1 requires Kafka 0.10
 	Timestamp        time.Time        // the timestamp of the message (version 1+ only)
 
-	compressedCache []byte
-	compressedSize  int // used for computing the compression ratio metrics
+	// compressedCache []byte
+	// compressedSize  int // used for computing the compression ratio metrics
 }
 
 func (m *Message) decode(pd packetDecoder) (err error) {
@@ -122,7 +122,7 @@ func (m *Message) decode(pd packetDecoder) (err error) {
 
 	// Required for deep equal assertion during tests but might be useful
 	// for future metrics about the compression ratio in fetch requests
-	m.compressedSize = len(m.Value)
+	// m.compressedSize = len(m.Value)
 
 	if m.Value != nil && m.Codec != CompressionNone {
 		m.Value, err = decompress(m.Codec, m.Value)

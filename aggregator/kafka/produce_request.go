@@ -26,20 +26,6 @@ type ProduceRequest struct {
 	Records         map[string]map[int32]Records
 }
 
-func updateMsgSetMetrics(msgSet *MessageSet) int64 {
-	var topicRecordCount int64
-	for _, messageBlock := range msgSet.Messages {
-		// Is this a fake "message" wrapping real messages?
-		if messageBlock.Msg.Set != nil {
-			topicRecordCount += int64(len(messageBlock.Msg.Set.Messages))
-		} else {
-			// A single uncompressed message
-			topicRecordCount++
-		}
-	}
-	return topicRecordCount
-}
-
 func (r *ProduceRequest) decode(pd packetDecoder, version int16) error {
 	r.Version = version
 
@@ -137,36 +123,4 @@ func (r *ProduceRequest) requiredVersion() KafkaVersion {
 	default:
 		return V2_1_0_0
 	}
-}
-
-func (r *ProduceRequest) ensureRecords(topic string, partition int32) {
-	if r.Records == nil {
-		r.Records = make(map[string]map[int32]Records)
-	}
-
-	if r.Records[topic] == nil {
-		r.Records[topic] = make(map[int32]Records)
-	}
-}
-
-func (r *ProduceRequest) AddMessage(topic string, partition int32, msg *Message) {
-	r.ensureRecords(topic, partition)
-	set := r.Records[topic][partition].MsgSet
-
-	if set == nil {
-		set = new(MessageSet)
-		r.Records[topic][partition] = newLegacyRecords(set)
-	}
-
-	set.addMessage(msg)
-}
-
-func (r *ProduceRequest) AddSet(topic string, partition int32, set *MessageSet) {
-	r.ensureRecords(topic, partition)
-	r.Records[topic][partition] = newLegacyRecords(set)
-}
-
-func (r *ProduceRequest) AddBatch(topic string, partition int32, batch *RecordBatch) {
-	r.ensureRecords(topic, partition)
-	r.Records[topic][partition] = newDefaultRecords(batch)
 }

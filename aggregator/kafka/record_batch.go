@@ -142,20 +142,6 @@ func (b *RecordBatch) decode(pd packetDecoder) (err error) {
 	return err
 }
 
-func (b *RecordBatch) computeAttributes() int16 {
-	attr := int16(b.Codec) & int16(compressionCodecMask)
-	if b.Control {
-		attr |= controlMask
-	}
-	if b.LogAppendTime {
-		attr |= timestampTypeMask
-	}
-	if b.IsTransactional {
-		attr |= isTransactionalMask
-	}
-	return attr
-}
-
 func (b *RecordBatch) addRecord(r *Record) {
 	b.Records = append(b.Records, r)
 }

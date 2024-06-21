@@ -84,9 +84,3 @@ func (ms *MessageSet) decode(pd packetDecoder) (err error) {
 
 	return nil
 }
-
-func (ms *MessageSet) addMessage(msg *Message) {
-	block := new(MessageBlock)
-	block.Msg = msg
-	ms.Messages = append(ms.Messages, block)
-}

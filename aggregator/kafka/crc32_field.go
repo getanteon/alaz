@@ -50,15 +50,6 @@ func newCRC32Field(polynomial crcPolynomial) *crc32Field {
 	return &crc32Field{polynomial: polynomial}
 }
 
-func (c *crc32Field) run(curOffset int, buf []byte) error {
-	crc, err := c.crc(curOffset, buf)
-	if err != nil {
-		return err
-	}
-	binary.BigEndian.PutUint32(buf[c.startOffset:], crc)
-	return nil
-}
-
 func (c *crc32Field) check(curOffset int, buf []byte) error {
 	crc, err := c.crc(curOffset, buf)
 	if err != nil {
