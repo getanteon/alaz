@@ -157,6 +157,31 @@ type TracePayload struct {
 	Traces   []*TraceInfo `json:"traffic"`
 }
 
+// 0) StartTime
+// 1) Latency
+// 2) Source IP
+// 3) Source Type
+// 4) Source ID
+// 5) Source Port
+// 6) Destination IP
+// 7) Destination Type
+// 8) Destination ID
+// 9) Destination Port
+// 10) Topic
+// 11) Partition
+// 12) Key
+// 13) Value
+// 14) Type
+// 15) Encrypted (bool)
+// 16) Seq
+// 17) Tid
+type KafkaEventInfo [18]interface{}
+
+type KafkaEventInfoPayload struct {
+	Metadata    Metadata          `json:"metadata"`
+	KafkaEvents []*KafkaEventInfo `json:"kafka_events"`
+}
+
 func convertPodToPodEvent(pod Pod, eventType string) PodEvent {
 	return PodEvent{
 		UID:       pod.UID,

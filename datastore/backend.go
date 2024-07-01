@@ -140,10 +140,13 @@ type BackendDS struct {
 	c         *http.Client
 	batchSize uint64
 
-	reqChanBuffer  chan *ReqInfo
-	connChanBuffer chan *ConnInfo
-	reqInfoPool    *poolutil.Pool[*ReqInfo]
-	aliveConnPool  *poolutil.Pool[*ConnInfo]
+	reqChanBuffer   chan *ReqInfo
+	connChanBuffer  chan *ConnInfo
+	kafkaChanBuffer chan *KafkaEventInfo
+
+	reqInfoPool        *poolutil.Pool[*ReqInfo]
+	aliveConnPool      *poolutil.Pool[*ConnInfo]
+	kafkaEventInfoPool *poolutil.Pool[*KafkaEventInfo]
 
 	traceEventQueue *list.List
 	traceEventMu    sync.RWMutex
@@ -169,16 +172,17 @@ type BackendDS struct {
 }
 
 const (
-	podEndpoint       = "/pod/"
-	svcEndpoint       = "/svc/"
-	rsEndpoint        = "/replicaset/"
-	depEndpoint       = "/deployment/"
-	epEndpoint        = "/endpoint/"
-	containerEndpoint = "/container/"
-	dsEndpoint        = "/daemonset/"
-	ssEndpoint        = "/statefulset/"
-	reqEndpoint       = "/requests/"
-	connEndpoint      = "/connections/"
+	podEndpoint        = "/pod/"
+	svcEndpoint        = "/svc/"
+	rsEndpoint         = "/replicaset/"
+	depEndpoint        = "/deployment/"
+	epEndpoint         = "/endpoint/"
+	containerEndpoint  = "/container/"
+	dsEndpoint         = "/daemonset/"
+	ssEndpoint         = "/statefulset/"
+	reqEndpoint        = "/requests/"
+	connEndpoint       = "/connections/"
+	kafkaEventEndpoint = "/events/kafka/"
 
 	traceEventEndpoint = "/dist_tracing/traffic/"
 
@@ -291,9 +295,11 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 		batchSize:             bs,
 		reqInfoPool:           newReqInfoPool(func() *ReqInfo { return &ReqInfo{} }, func(r *ReqInfo) {}),
 		aliveConnPool:         newAliveConnPool(func() *ConnInfo { return &ConnInfo{} }, func(r *ConnInfo) {}),
+		kafkaEventInfoPool:    newKafkaEventPool(func() *KafkaEventInfo { return &KafkaEventInfo{} }, func(r *KafkaEventInfo) {}),
 		traceInfoPool:         newTraceInfoPool(func() *TraceInfo { return &TraceInfo{} }, func(r *TraceInfo) {}),
 		reqChanBuffer:         make(chan *ReqInfo, conf.ReqBufferSize),
 		connChanBuffer:        make(chan *ConnInfo, conf.ConnBufferSize),
+		kafkaChanBuffer:       make(chan *KafkaEventInfo, conf.ReqBufferSize),
 		podEventChan:          make(chan interface{}, 5*resourceChanSize),
 		svcEventChan:          make(chan interface{}, 2*resourceChanSize),
 		rsEventChan:           make(chan interface{}, 2*resourceChanSize),
@@ -313,7 +319,8 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 
 func (ds *BackendDS) Start() {
 	go ds.sendReqsInBatch(ds.batchSize)
-	go ds.sendConnsInBatch(ds.batchSize)
+	go ds.sendConnsInBatch(ds.batchSize / 2)
+	go ds.sendKafkaEventsInBatch(ds.batchSize / 2)
 	go ds.sendTraceEventsInBatch(10 * ds.batchSize)
 
 	// events are resynced every 60 seconds on k8s informers
@@ -458,6 +465,18 @@ func convertReqsToPayload(batch []*ReqInfo) RequestsPayload {
 	}
 }
 
+func convertKafkaEventsToPayload(batch []*KafkaEventInfo) KafkaEventInfoPayload {
+	return KafkaEventInfoPayload{
+		Metadata: Metadata{
+			MonitoringID:   MonitoringID,
+			IdempotencyKey: string(uuid.NewUUID()),
+			NodeID:         NodeID,
+			AlazVersion:    tag,
+		},
+		KafkaEvents: batch,
+	}
+}
+
 func convertConnsToPayload(batch []*ConnInfo) ConnInfoPayload {
 	return ConnInfoPayload{
 		Metadata: Metadata{
@@ -528,7 +547,7 @@ func (b *BackendDS) sendToBackend(method string, payload interface{}, endpoint s
 		return
 	}
 
-	log.Logger.Debug().Str("endpoint", endpoint).Any("payload", payload).Msg("sending batch to backend")
+	// log.Logger.Debug().Str("endpoint", endpoint).Any("payload", payload).Msg("sending batch to backend")
 	err = b.DoRequest(httpReq)
 	if err != nil {
 		log.Logger.Error().Msgf("backend persist error at ep %s : %v", endpoint, err)
@@ -601,6 +620,47 @@ func (b *BackendDS) sendReqsInBatch(batchSize uint64) {
 		select {
 		case <-b.ctx.Done():
 			log.Logger.Info().Msg("stopping sending reqs to backend")
+			return
+		case <-t.C:
+			send()
+		}
+	}
+
+}
+
+func (b *BackendDS) sendKafkaEventsInBatch(batchSize uint64) {
+	t := time.NewTicker(5 * time.Second)
+	defer t.Stop()
+
+	send := func() {
+		batch := make([]*KafkaEventInfo, 0, batchSize)
+		loop := true
+
+		for i := 0; (i < int(batchSize)) && loop; i++ {
+			select {
+			case req := <-b.kafkaChanBuffer:
+				batch = append(batch, req)
+			case <-time.After(50 * time.Millisecond):
+				loop = false
+			}
+		}
+
+		if len(batch) == 0 {
+			return
+		}
+
+		kEventsPayload := convertKafkaEventsToPayload(batch)
+		go b.sendToBackend(http.MethodPost, kEventsPayload, kafkaEventEndpoint)
+
+		for _, req := range batch {
+			b.kafkaEventInfoPool.Put(req)
+		}
+	}
+
+	for {
+		select {
+		case <-b.ctx.Done():
+			log.Logger.Info().Msg("stopping sending kafka events to backend")
 			return
 		case <-t.C:
 			send()
@@ -724,6 +784,14 @@ func newTraceInfoPool(factory func() *TraceInfo, close func(*TraceInfo)) *poolut
 	}
 }
 
+func newKafkaEventPool(factory func() *KafkaEventInfo, close func(*KafkaEventInfo)) *poolutil.Pool[*KafkaEventInfo] {
+	return &poolutil.Pool[*KafkaEventInfo]{
+		Items:   make(chan *KafkaEventInfo, 1000),
+		Factory: factory,
+		Close:   close,
+	}
+}
+
 func (b *BackendDS) PersistAliveConnection(aliveConn *AliveConnection) error {
 	// get a connInfo from the pool
 	oc := b.aliveConnPool.Get()
@@ -769,6 +837,35 @@ func (b *BackendDS) PersistRequest(request *Request) error {
 	reqInfo[17] = request.Tid
 
 	b.reqChanBuffer <- reqInfo
+
+	return nil
+}
+
+func (b *BackendDS) PersistKafkaEvent(ke *KafkaEvent) error {
+	// get a reqInfo from the pool
+	kafkaInfo := b.kafkaEventInfoPool.Get()
+
+	// overwrite the reqInfo, all fields must be set in order to avoid conflict
+	kafkaInfo[0] = ke.StartTime
+	kafkaInfo[1] = ke.Latency
+	kafkaInfo[2] = ke.FromIP
+	kafkaInfo[3] = ke.FromType
+	kafkaInfo[4] = ke.FromUID
+	kafkaInfo[5] = ke.FromPort
+	kafkaInfo[6] = ke.ToIP
+	kafkaInfo[7] = ke.ToType
+	kafkaInfo[8] = ke.ToUID
+	kafkaInfo[9] = ke.ToPort
+	kafkaInfo[10] = ke.Topic
+	kafkaInfo[11] = ke.Partition
+	kafkaInfo[12] = ke.Key
+	kafkaInfo[13] = ke.Value
+	kafkaInfo[14] = ke.Type
+	kafkaInfo[15] = ke.Tls
+	kafkaInfo[16] = ke.Seq
+	kafkaInfo[17] = ke.Tid
+
+	b.kafkaChanBuffer <- kafkaInfo
 
 	return nil
 }
