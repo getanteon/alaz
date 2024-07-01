@@ -340,6 +340,9 @@ func parseTcpLine(line string) (localIP string, localPort int, remoteIP string, 
 }
 
 func (nl *SocketLine) getConnectionInfo() error {
+	nl.mu.Lock()
+	defer nl.mu.Unlock()
+
 	inode, err := getInodeFromFD(fmt.Sprintf("%d", nl.pid), fmt.Sprintf("%d", nl.fd))
 	if err != nil {
 		return err
