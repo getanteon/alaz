@@ -18,6 +18,10 @@ var (
 	Logger zerolog.Logger
 )
 
+const (
+	LOG_CONTEXT = "log-context" // for hook
+)
+
 func init() {
 	// Get the desired log level from environment variables
 	levelStr := os.Getenv("LOG_LEVEL")
@@ -39,6 +43,33 @@ func init() {
 	if os.Getenv("DISABLE_LOGS") == "true" {
 		Logger = zerolog.New(NoopLogger{})
 	} else {
-		Logger = zerolog.New(os.Stdout).With().Timestamp().Logger()
+		hook := &ContextFilterHook{
+			ContextKey:   LOG_CONTEXT,
+			ContextValue: os.Getenv("LOG_CONTEXT_KEY"),
+		}
+
+		Logger = zerolog.New(os.Stdout).With().Timestamp().Logger().Hook(hook)
+	}
+}
+
+type ContextFilterHook struct {
+	ContextKey   string
+	ContextValue string
+}
+
+func (cfh *ContextFilterHook) Run(e *zerolog.Event, level zerolog.Level, message string) {
+	if os.Getenv("LOG_CONTEXT_KEY") == "" {
+		// if not specified, no filtering
+		return
+	}
+	val := e.GetCtx().Value(cfh.ContextKey)
+	if val != nil {
+		if val.(string) == cfh.ContextValue {
+			e.Str(cfh.ContextKey, cfh.ContextValue)
+		} else {
+			e.Discard()
+		}
+	} else {
+		e.Discard()
 	}
 }
