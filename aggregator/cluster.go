@@ -1,9 +1,12 @@
 package aggregator
 
 import (
+	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 
+	"github.com/ddosify/alaz/log"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -34,8 +37,8 @@ func newClusterInfo(liveProcCount int) *ClusterInfo {
 	// initialize sockMaps
 	for i := range sockMaps {
 		sockMaps[i] = &SocketMap{
-			M:  nil, // initialized on demand later
 			mu: nil,
+			M:  nil,
 		}
 	}
 	ci.SocketMaps = sockMaps
@@ -71,6 +74,12 @@ func (ci *ClusterInfo) SignalSocketMapCreation(pid uint32) {
 // in order to prevent race.
 func (ci *ClusterInfo) handleSocketMapCreation() {
 	for pid := range ci.signalChan {
+		ctxPid := context.WithValue(context.Background(), log.LOG_CONTEXT, fmt.Sprint(pid))
+		log.Logger.Debug().
+			Ctx(ctxPid).
+			Str("func", "handleSocketMapCreation").
+			Uint32("pid", pid).
+			Msg("")
 		if ci.SocketMaps[pid].mu == nil {
 			ci.muIndex.Add(1)
 			i := (ci.muIndex.Load()) % uint64(len(ci.muArray))
@@ -78,16 +87,24 @@ func (ci *ClusterInfo) handleSocketMapCreation() {
 			ci.SocketMaps[pid].mu = ci.muArray[i]
 			ci.SocketMaps[pid].pid = pid
 			ci.SocketMaps[pid].M = make(map[uint64]*SocketLine)
-			ci.SocketMaps[pid].fetchExistingSockets()
+			ci.SocketMaps[pid].waitingFds = make(chan uint64, 1000)
+			ci.SocketMaps[pid].processedFds = make(map[uint64]struct{})
+			ci.SocketMaps[pid].closeCh = make(chan struct{}, 1)
+			ci.SocketMaps[pid].ctx = ctxPid
+			go ci.SocketMaps[pid].ProcessSocketLineCreationRequests()
 		}
 	}
 }
 
 func (ci *ClusterInfo) clearProc(pid uint32) {
-	if ci.SocketMaps[pid].mu == nil {
+	sm := ci.SocketMaps[pid]
+	if sm.mu == nil {
 		return
 	}
-	ci.SocketMaps[pid].mu.Lock()
-	ci.SocketMaps[pid].M = nil
-	ci.SocketMaps[pid].mu.Unlock()
+
+	// stop waiting for socketline creation requests
+	sm.mu.Lock()
+	sm.closeCh <- struct{}{}
+	sm.M = nil
+	sm.mu.Unlock()
 }

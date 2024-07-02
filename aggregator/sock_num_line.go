@@ -3,6 +3,7 @@ package aggregator
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
@@ -29,26 +30,58 @@ type SocketLine struct {
 	mu     sync.RWMutex
 	pid    uint32
 	fd     uint64
-	Values []TimestampedSocket
+	Values []*TimestampedSocket
+
+	ctx context.Context
 }
 
-func NewSocketLine(pid uint32, fd uint64) *SocketLine {
+func NewSocketLine(ctx context.Context, pid uint32, fd uint64, fetch bool) *SocketLine {
 	skLine := &SocketLine{
 		mu:     sync.RWMutex{},
 		pid:    pid,
 		fd:     fd,
-		Values: make([]TimestampedSocket, 0),
+		Values: make([]*TimestampedSocket, 0),
+		ctx:    ctx,
 	}
 
+	if fetch {
+		err := skLine.getConnectionInfo() // populate
+		if err != nil {
+			log.Logger.Error().Ctx(ctx).Err(err).Msg("getConnectionInfo failed")
+		}
+	}
+	log.Logger.Debug().Ctx(ctx).Msg("returning from NewSocketLine")
 	return skLine
 }
 
+// clears all socket history
+func (nl *SocketLine) ClearAll() {
+	clear(nl.Values)          // sets all values to zero values (nil in this case), we do this for garbage collection
+	nl.Values = nl.Values[:0] // change len
+}
+
 func (nl *SocketLine) AddValue(timestamp uint64, sockInfo *SockInfo) {
+	log.Logger.Debug().Ctx(nl.ctx).
+		Any("pid", sockInfo.Pid).
+		Any("fd", sockInfo.Fd).
+		Any("ts", timestamp).
+		Msg("AddValue-start")
 	nl.mu.Lock()
 	defer nl.mu.Unlock()
 
+	log.Logger.Debug().Ctx(nl.ctx).
+		Any("pid", sockInfo.Pid).
+		Any("fd", sockInfo.Fd).
+		Any("ts", timestamp).
+		Msg("AddValue-start1")
+
 	// ignore close events
 	if sockInfo == nil {
+		log.Logger.Debug().Ctx(nl.ctx).
+			Any("pid", sockInfo.Pid).
+			Any("fd", sockInfo.Fd).
+			Any("ts", timestamp).
+			Msg("AddValue-1")
 		return
 	}
 
@@ -56,11 +89,21 @@ func (nl *SocketLine) AddValue(timestamp uint64, sockInfo *SockInfo) {
 	if len(nl.Values) > 0 {
 		last := nl.Values[len(nl.Values)-1].SockInfo
 		if last != nil && last.Saddr == sockInfo.Saddr && last.Sport == sockInfo.Sport && last.Daddr == sockInfo.Daddr && last.Dport == sockInfo.Dport {
+			log.Logger.Debug().Ctx(nl.ctx).
+				Any("pid", sockInfo.Pid).
+				Any("fd", sockInfo.Fd).
+				Any("ts", timestamp).
+				Msg("AddValue-2")
 			return
 		}
 	}
 
-	nl.Values = insertIntoSortedSlice(nl.Values, TimestampedSocket{Timestamp: timestamp, SockInfo: sockInfo})
+	log.Logger.Debug().Ctx(nl.ctx).
+		Any("pid", sockInfo.Pid).
+		Any("fd", sockInfo.Fd).
+		Any("ts", timestamp).
+		Msg("AddValue-end")
+	nl.Values = insertIntoSortedSlice(nl.Values, &TimestampedSocket{Timestamp: timestamp, SockInfo: sockInfo})
 }
 
 func (nl *SocketLine) GetValue(timestamp uint64) (*SockInfo, error) {
@@ -110,7 +153,7 @@ func (nl *SocketLine) DeleteUnused() {
 
 	// if two open sockets are alined, delete the first one
 	// in case first ones close event did not arrive
-	result := make([]TimestampedSocket, 0)
+	result := make([]*TimestampedSocket, 0)
 	i := 0
 	for i < len(nl.Values)-1 {
 		if nl.Values[i].SockInfo != nil && nl.Values[i+1].SockInfo != nil {
@@ -251,13 +294,13 @@ const (
 	stateListen      = "0A"
 )
 
-func insertIntoSortedSlice(sortedSlice []TimestampedSocket, newItem TimestampedSocket) []TimestampedSocket {
+func insertIntoSortedSlice(sortedSlice []*TimestampedSocket, newItem *TimestampedSocket) []*TimestampedSocket {
 	idx := sort.Search(len(sortedSlice), func(i int) bool {
 		return sortedSlice[i].Timestamp >= newItem.Timestamp
 	})
 
 	// Insert the new item at the correct position.
-	sortedSlice = append(sortedSlice, TimestampedSocket{})
+	sortedSlice = append(sortedSlice, &TimestampedSocket{})
 	copy(sortedSlice[idx+1:], sortedSlice[idx:])
 	sortedSlice[idx] = newItem
 
@@ -340,8 +383,8 @@ func parseTcpLine(line string) (localIP string, localPort int, remoteIP string, 
 }
 
 func (nl *SocketLine) getConnectionInfo() error {
-	nl.mu.Lock()
-	defer nl.mu.Unlock()
+	// nl.mu.Lock()
+	// defer nl.mu.Unlock()
 
 	inode, err := getInodeFromFD(fmt.Sprintf("%d", nl.pid), fmt.Sprintf("%d", nl.fd))
 	if err != nil {
@@ -366,7 +409,8 @@ func (nl *SocketLine) getConnectionInfo() error {
 
 	// add to socket line
 	// convert to bpf time
-	log.Logger.Debug().Msgf("Adding socket line read from user space %v", skInfo)
+	log.Logger.Debug().Ctx(nl.ctx).Msgf("Adding socket line read from user space %v", skInfo)
+	nl.ClearAll() // clear all previous records
 	nl.AddValue(convertUserTimeToKernelTime(uint64(time.Now().UnixNano())), skInfo)
 	return nil
 }

@@ -173,7 +173,7 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{},
 		a.clusterInfo.SignalSocketMapCreation(pid)
 	}
 
-	go a.clearSocketLines(ctx)
+	// go a.clearSocketLines(ctx) // TODO: open here
 	// go a.updateSocketMap(ctx)
 	return a
 }
@@ -262,10 +262,12 @@ func (a *Aggregator) Run() {
 
 	// TODO: determine the number of workers with benchmarking
 	cpuCount := runtime.NumCPU()
-	numWorker := 5 * cpuCount
-	if numWorker < 50 {
-		numWorker = 50 // min number
-	}
+	// numWorker := 5 * cpuCount
+	// if numWorker < 50 {
+	// 	numWorker = 5 // min number
+	// }
+
+	numWorker := cpuCount
 
 	a.ctxForKafka = context.WithValue(a.ctx, log.LOG_CONTEXT, KAFKA)
 
@@ -344,7 +346,8 @@ func (a *Aggregator) processEbpfTcp(ctx context.Context) {
 			switch bpfEvent.Type() {
 			case tcp_state.TCP_CONNECT_EVENT:
 				d := data.(*tcp_state.TcpConnectEvent) // copy data's value
-				a.processTcpConnect(d)
+				ctxPid := context.WithValue(a.ctx, log.LOG_CONTEXT, fmt.Sprint(d.Pid))
+				a.processTcpConnect(ctxPid, d)
 			}
 		}
 	}
@@ -364,7 +367,8 @@ func (a *Aggregator) processEbpf(ctx context.Context) {
 			switch bpfEvent.Type() {
 			case l7_req.L7_EVENT:
 				d := data.(*l7_req.L7Event) // copy data's value
-				a.processL7(ctx, d)
+				ctxPid := context.WithValue(a.ctx, log.LOG_CONTEXT, fmt.Sprint(d.Pid))
+				a.processL7(ctxPid, d)
 			case l7_req.TRACE_EVENT:
 				d := data.(*l7_req.TraceEvent)
 				rateLimiter := a.getRateLimiterForPid(d.Pid)
@@ -438,7 +442,7 @@ func (a *Aggregator) signalTlsAttachment(pid uint32) {
 	a.tlsAttachSignalChan <- pid
 }
 
-func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
+func (a *Aggregator) processTcpConnect(ctx context.Context, d *tcp_state.TcpConnectEvent) {
 	go a.signalTlsAttachment(d.Pid)
 	if d.Type_ == tcp_state.EVENT_TCP_ESTABLISHED {
 
@@ -453,19 +457,26 @@ func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
 		sockMap = a.clusterInfo.SocketMaps[d.Pid]
 		var skLine *SocketLine
 
-		if sockMap.mu == nil {
+		if sockMap.mu == nil || sockMap.M == nil {
+			log.Logger.Warn().Ctx(ctx).
+				Uint32("pid", d.Pid).Str("func", "processTcpConnect").Str("event", "ESTABLISHED").Msg("socket map not initialized")
 			return
 		}
 
-		sockMap.mu.Lock() // lock for reading
-		if sockMap.M == nil {
-			sockMap.M = make(map[uint64]*SocketLine)
-		}
-
+		sockMap.mu.RLock()
 		skLine, ok = sockMap.M[d.Fd]
+		sockMap.mu.RUnlock()
 		if !ok {
-			skLine = NewSocketLine(d.Pid, d.Fd)
-			sockMap.M[d.Fd] = skLine
+			go sockMap.SignalSocketLine(ctx, d.Fd) // signal for creation
+			for {
+				sockMap.mu.RLock()
+				skLine, ok = sockMap.M[d.Fd]
+				sockMap.mu.RUnlock()
+
+				if !ok {
+					time.Sleep(100 * time.Millisecond)
+				}
+			}
 		}
 
 		skLine.AddValue(
@@ -480,8 +491,6 @@ func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
 			},
 		)
 
-		sockMap.mu.Unlock() // unlock for writing
-
 	} else if d.Type_ == tcp_state.EVENT_TCP_CLOSED {
 		var sockMap *SocketMap
 		var ok bool
@@ -495,20 +504,16 @@ func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
 
 		var skLine *SocketLine
 
-		if sockMap.mu == nil {
+		if sockMap.mu == nil || sockMap.M == nil {
+			log.Logger.Warn().Ctx(ctx).
+				Uint32("pid", d.Pid).Str("func", "processTcpConnect").Str("event", "CLOSED").Msg("socket map not initialized")
 			return
 		}
 
-		sockMap.mu.Lock() // lock for reading
-		if sockMap.M == nil {
-			sockMap.M = make(map[uint64]*SocketLine)
-		}
 		skLine, ok = sockMap.M[d.Fd]
 		if !ok {
-			sockMap.mu.Unlock() // unlock for reading
 			return
 		}
-		sockMap.mu.Unlock() // unlock for reading
 
 		// If connection is established before, add the close event
 		skLine.AddValue(
@@ -1083,7 +1088,8 @@ func (a *Aggregator) processAmqpEvent(ctx context.Context, d *l7_req.L7Event) {
 	if skInfo == nil {
 		log.Logger.Debug().Uint32("pid", d.Pid).
 			Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
-			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("socket not found for amqp event")
+			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).
+			Msg("socket not found for amqp event")
 		return
 	}
 
@@ -1127,7 +1133,9 @@ func (a *Aggregator) processRedisEvent(ctx context.Context, d *l7_req.L7Event) {
 
 	skInfo := a.findRelatedSocket(ctx, d)
 	if skInfo == nil {
-		log.Logger.Debug().Uint32("pid", d.Pid).
+		log.Logger.Debug().
+			Ctx(ctx).
+			Uint32("pid", d.Pid).
 			Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
 			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("socket not found for redis event")
 		return
@@ -1164,7 +1172,8 @@ func (a *Aggregator) processRedisEvent(ctx context.Context, d *l7_req.L7Event) {
 
 	err = a.ds.PersistRequest(reqDto)
 	if err != nil {
-		log.Logger.Error().Err(err).Msg("error persisting request")
+		log.Logger.Error().Ctx(ctx).
+			Err(err).Msg("error persisting request")
 	}
 }
 
@@ -1331,7 +1340,7 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 	case l7_req.L7_PROTOCOL_AMQP:
 		a.processAmqpEvent(ctx, d)
 	case l7_req.L7_PROTOCOL_KAFKA:
-		a.processKafkaEvent(a.ctxForKafka, d)
+		a.processKafkaEvent(ctx, d)
 	}
 }
 
@@ -1388,31 +1397,15 @@ func (a *Aggregator) fetchSkInfo(ctx context.Context, skLine *SocketLine, d *l7_
 	return skInfo
 }
 
-func (a *Aggregator) removeFromClusterInfo(pid uint32) {
-	sockMap := a.clusterInfo.SocketMaps[pid]
-	if sockMap.mu == nil {
-		return
-	}
-	sockMap.mu.Lock()
-	sockMap.M = nil
-	sockMap.mu.Unlock()
-}
-
-func (a *Aggregator) fetchSocketMap(pid uint32) *SocketMap {
-	sockMap := a.clusterInfo.SocketMaps[pid]
-
-	if sockMap.mu == nil {
-		return nil
-	}
-
-	sockMap.mu.Lock()
-	if sockMap.M == nil {
-		sockMap.M = make(map[uint64]*SocketLine)
-	}
-	sockMap.mu.Unlock()
-
-	return sockMap
-}
+// func (a *Aggregator) removeFromClusterInfo(pid uint32) {
+// 	sockMap := a.clusterInfo.SocketMaps[pid]
+// 	if sockMap.mu == nil {
+// 		return
+// 	}
+// 	sockMap.mu.Lock()
+// 	sockMap.M = nil
+// 	sockMap.mu.Unlock()
+// }
 
 // This is a mitigation for the case a tcp event is missed
 // func (a *Aggregator) updateSocketMap(ctx context.Context) {
@@ -1483,49 +1476,21 @@ func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) *
 	sockMap := a.clusterInfo.SocketMaps[d.Pid]
 	// acquire sockMap lock
 
-	if sockMap.mu == nil {
-
-		// process exec event did not come for this pid ?
-		// are we sure that it will come eventually, if we are sure of that
-		// we can wait for that event to come and then re-process incoming l7 event later.
-
-		// only one goroutine can create socket maps structure.
-		// we can create a channel for that.
-
-		// TODO
-
+	if sockMap.mu == nil || sockMap.M == nil {
+		log.Logger.Warn().Ctx(ctx).
+			Int("pid", int(d.Pid)).Str("func", "findRelatedSocket").Msg("socket map not initialized")
 		return nil
-	}
-
-	sockMap.mu.Lock()
-
-	if sockMap.M == nil {
-		sockMap.M = make(map[uint64]*SocketLine)
 	}
 
 	skLine, ok := sockMap.M[d.Fd]
 	if !ok {
-		log.Logger.Debug().Ctx(ctx).Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("create skLine...")
 		// start new socket line, find already established connections
-		skLine = NewSocketLine(d.Pid, d.Fd)
-		sockMap.M[d.Fd] = skLine
+		go sockMap.SignalSocketLine(ctx, d.Fd)
+		// log.Logger.Warn().Ctx(ctx).Uint32("pid", d.Pid).Uint64("fd", d.Fd).Str("func", "findRelatedSocket").Msg("signal socket line creation called")
+		return nil // TODO: a retry queue for this event ?
 	}
 
-	// release sockMap lock
-	sockMap.mu.Unlock()
-
-	skInfo := a.fetchSkInfo(ctx, skLine, d)
-
-	if skInfo == nil {
-		// log.Logger.Debug().Ctx(ctx).Uint32("pid", d.Pid).
-		// 	Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
-		// 	Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("socket not found")
-
-		// go check pid-fd for the socket
-		// a.fetchSocketOnNotFound(ctx, d)
-	}
-
-	return skInfo
+	return a.fetchSkInfo(ctx, skLine, d)
 }
 
 func (a *Aggregator) parseSqlCommand(d *l7_req.L7Event) (string, error) {
@@ -1682,7 +1647,7 @@ func (a *Aggregator) clearSocketLines(ctx context.Context) {
 					// send open connections to datastore
 					a.sendOpenConnection(skLine)
 					// clear socket history
-					skLine.DeleteUnused()
+					// skLine.DeleteUnused()
 				}
 			}()
 		}
