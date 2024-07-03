@@ -173,7 +173,7 @@ func NewAggregator(parentCtx context.Context, k8sChan chan interface{},
 		a.clusterInfo.SignalSocketMapCreation(pid)
 	}
 
-	// go a.clearSocketLines(ctx) // TODO: open here
+	go a.clearSocketLines(ctx)
 	// go a.updateSocketMap(ctx)
 	return a
 }
@@ -466,9 +466,6 @@ func (a *Aggregator) processTcpConnect(ctx context.Context, d *tcp_state.TcpConn
 		}
 
 		var skLine *SocketLine
-		// if sockMap.mu == nil || sockMap.M == nil {
-		// 	return
-		// }
 
 		sockMap.mu.RLock()
 		skLine, ok = sockMap.M[d.Fd]
@@ -491,59 +488,60 @@ func (a *Aggregator) processTcpConnect(ctx context.Context, d *tcp_state.TcpConn
 				Dport: d.DPort,
 			},
 		)
+	} else if d.Type_ == tcp_state.EVENT_TCP_CLOSED {
+		var sockMap *SocketMap
+		var ok bool
+
+		// filter out localhost connections
+		if d.SAddr == "127.0.0.1" || d.DAddr == "127.0.0.1" {
+			return
+		}
+
+		sockMap = a.clusterInfo.SocketMaps[d.Pid]
+		if sockMap == nil {
+			// signal socket map creation and requeue event
+			log.Logger.Warn().Ctx(ctx).
+				Uint32("pid", d.Pid).Str("func", "processTcpConnect").Str("event", "ESTABLISHED").Msg("socket map not initialized")
+
+			go a.clusterInfo.SignalSocketMapCreation(d.Pid)
+			a.ebpfTcpChan <- d
+			return
+		}
+
+		var skLine *SocketLine
+		skLine, ok = sockMap.M[d.Fd]
+		if !ok {
+			return
+		}
+
+		// If connection is established before, add the close event
+		skLine.AddValue(
+			d.Timestamp, // get connection close timestamp from ebpf
+			nil,         // closed
+		)
+
+		connKey := a.getConnKey(d.Pid, d.Fd)
+
+		// remove h2Parser if exists
+		a.h2ParserMu.Lock()
+		h2Parser, ok := a.h2Parsers[connKey]
+		if ok {
+			h2Parser.clientHpackDecoder.Close()
+			h2Parser.serverHpackDecoder.Close()
+		}
+		delete(a.h2Parsers, connKey)
+		a.h2ParserMu.Unlock()
+
+		// remove pgStmt if exists
+		a.pgStmtsMu.Lock()
+		for key, _ := range a.pgStmts {
+			if strings.HasPrefix(key, connKey) {
+				delete(a.pgStmts, key)
+			}
+		}
+		a.pgStmtsMu.Unlock()
+
 	}
-	// } else if d.Type_ == tcp_state.EVENT_TCP_CLOSED {
-	// 	var sockMap *SocketMap
-	// 	var ok bool
-
-	// 	// filter out localhost connections
-	// 	if d.SAddr == "127.0.0.1" || d.DAddr == "127.0.0.1" {
-	// 		return
-	// 	}
-
-	// 	sockMap = a.clusterInfo.SocketMaps[d.Pid]
-
-	// 	var skLine *SocketLine
-
-	// 	if sockMap.mu == nil || sockMap.M == nil {
-	// 		log.Logger.Warn().Ctx(ctx).
-	// 			Uint32("pid", d.Pid).Str("func", "processTcpConnect").Str("event", "CLOSED").Msg("socket map not initialized")
-	// 		return
-	// 	}
-
-	// 	skLine, ok = sockMap.M[d.Fd]
-	// 	if !ok {
-	// 		return
-	// 	}
-
-	// 	// If connection is established before, add the close event
-	// 	skLine.AddValue(
-	// 		d.Timestamp, // get connection close timestamp from ebpf
-	// 		nil,         // closed
-	// 	)
-
-	// 	connKey := a.getConnKey(d.Pid, d.Fd)
-
-	// 	// remove h2Parser if exists
-	// 	a.h2ParserMu.Lock()
-	// 	h2Parser, ok := a.h2Parsers[connKey]
-	// 	if ok {
-	// 		h2Parser.clientHpackDecoder.Close()
-	// 		h2Parser.serverHpackDecoder.Close()
-	// 	}
-	// 	delete(a.h2Parsers, connKey)
-	// 	a.h2ParserMu.Unlock()
-
-	// 	// remove pgStmt if exists
-	// 	a.pgStmtsMu.Lock()
-	// 	for key, _ := range a.pgStmts {
-	// 		if strings.HasPrefix(key, connKey) {
-	// 			delete(a.pgStmts, key)
-	// 		}
-	// 	}
-	// 	a.pgStmtsMu.Unlock()
-
-	// }
 }
 
 func parseHttpPayload(request string) (method string, path string, httpVersion string, hostHeader string) {
@@ -1573,7 +1571,7 @@ func (a *Aggregator) clearSocketLines(ctx context.Context) {
 					// send open connections to datastore
 					a.sendOpenConnection(skLine)
 					// clear socket history
-					// skLine.DeleteUnused()
+					skLine.DeleteUnused()
 				}
 			}()
 		}
@@ -1581,8 +1579,7 @@ func (a *Aggregator) clearSocketLines(ctx context.Context) {
 
 	for range ticker.C {
 		for _, sockMap := range a.clusterInfo.SocketMaps {
-			// TODO: check here
-			if sockMap.mu == nil {
+			if sockMap == nil {
 				continue
 			}
 			sockMap.mu.Lock()

@@ -88,6 +88,7 @@ func main() {
 		MetricsExportInterval: 10,
 		ReqBufferSize:         40000, // TODO: get from a conf file
 		ConnBufferSize:        1000,  // TODO: get from a conf file
+		KafkaEventBufferSize:  2000,
 	})
 
 	var ct *cri.CRITool
@@ -103,6 +104,8 @@ func main() {
 
 		a := aggregator.NewAggregator(ctx, kubeEvents, ec.EbpfEvents(), ec.EbpfProcEvents(), ec.EbpfTcpEvents(), ec.TlsAttachQueue(), dsBackend)
 		a.Run()
+
+		a.AdvertiseDebugData()
 
 		ec.Init()
 		go ec.ListenEvents()

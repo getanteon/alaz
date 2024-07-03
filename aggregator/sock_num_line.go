@@ -60,10 +60,10 @@ func (nl *SocketLine) ClearAll() {
 }
 
 func (nl *SocketLine) AddValue(timestamp uint64, sockInfo *SockInfo) {
-	// ignore close events
-	if sockInfo == nil {
-		return
-	}
+	// // ignore close events
+	// if sockInfo == nil {
+	// 	return
+	// }
 
 	nl.mu.Lock()
 	defer nl.mu.Unlock()
@@ -71,7 +71,7 @@ func (nl *SocketLine) AddValue(timestamp uint64, sockInfo *SockInfo) {
 	// if last element is equal to the current element, ignore
 	if len(nl.Values) > 0 {
 		last := nl.Values[len(nl.Values)-1].SockInfo
-		if last != nil && last.Saddr == sockInfo.Saddr && last.Sport == sockInfo.Sport && last.Daddr == sockInfo.Daddr && last.Dport == sockInfo.Dport {
+		if last != nil && sockInfo != nil && last.Saddr == sockInfo.Saddr && last.Sport == sockInfo.Sport && last.Daddr == sockInfo.Daddr && last.Dport == sockInfo.Dport {
 			return
 		}
 	}
