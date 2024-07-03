@@ -1,6 +1,7 @@
 package aggregator
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -9,7 +10,7 @@ import (
 
 func TestSocketLine(t *testing.T) {
 	sockLine := &SocketLine{
-		Values: []TimestampedSocket{},
+		Values: []*TimestampedSocket{},
 	}
 
 	tsList := []uint64{
@@ -349,7 +350,7 @@ func TestSocketLine(t *testing.T) {
 
 func TestXxx(t *testing.T) {
 	assumedInterval := uint64(2 * time.Second)
-	nl := NewSocketLine(1, 0)
+	nl := NewSocketLine(context.Background(), 1, 0, false)
 
 	wg := sync.WaitGroup{}
 	wg.Add(1)
@@ -440,7 +441,7 @@ func TestXxx(t *testing.T) {
 }
 
 func TestXxx2(t *testing.T) {
-	nl := NewSocketLine(1, 0)
+	nl := NewSocketLine(context.Background(), 1, 0, false)
 
 	s1 := &SockInfo{
 		Pid:   0,
@@ -472,7 +473,7 @@ func TestXxx2(t *testing.T) {
 }
 
 func TestAlreadyEstablishCanBeFound(t *testing.T) {
-	nl := NewSocketLine(1, 0)
+	nl := NewSocketLine(context.Background(), 1, 0, false)
 
 	s1 := &SockInfo{
 		Pid:   0,
