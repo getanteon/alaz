@@ -62,46 +62,20 @@ func (nl *SocketLine) ClearAll() {
 func (nl *SocketLine) AddValue(timestamp uint64, sockInfo *SockInfo) {
 	// ignore close events
 	if sockInfo == nil {
-		// log.Logger.Debug().Ctx(nl.ctx).
-		// 	Any("pid", nl.pid).
-		// 	Any("fd", nl.fd).
-		// 	Any("ts", timestamp).
-		// 	Msg("AddValue-1")
 		return
 	}
 
-	// log.Logger.Debug().Ctx(nl.ctx).
-	// 	Any("pid", sockInfo.Pid).
-	// 	Any("fd", sockInfo.Fd).
-	// 	Any("ts", timestamp).
-	// 	Msg("AddValue-start")
 	nl.mu.Lock()
 	defer nl.mu.Unlock()
-
-	// log.Logger.Debug().Ctx(nl.ctx).
-	// 	Any("pid", sockInfo.Pid).
-	// 	Any("fd", sockInfo.Fd).
-	// 	Any("ts", timestamp).
-	// 	Msg("AddValue-start1")
 
 	// if last element is equal to the current element, ignore
 	if len(nl.Values) > 0 {
 		last := nl.Values[len(nl.Values)-1].SockInfo
 		if last != nil && last.Saddr == sockInfo.Saddr && last.Sport == sockInfo.Sport && last.Daddr == sockInfo.Daddr && last.Dport == sockInfo.Dport {
-			// log.Logger.Debug().Ctx(nl.ctx).
-			// 	Any("pid", sockInfo.Pid).
-			// 	Any("fd", sockInfo.Fd).
-			// 	Any("ts", timestamp).
-			// 	Msg("AddValue-2")
 			return
 		}
 	}
 
-	// log.Logger.Debug().Ctx(nl.ctx).
-	// 	Any("pid", sockInfo.Pid).
-	// 	Any("fd", sockInfo.Fd).
-	// 	Any("ts", timestamp).
-	// 	Msg("AddValue-end")
 	nl.Values = insertIntoSortedSlice(nl.Values, &TimestampedSocket{Timestamp: timestamp, SockInfo: sockInfo})
 }
 
@@ -385,6 +359,8 @@ func (nl *SocketLine) getConnectionInfo() error {
 	// nl.mu.Lock()
 	// defer nl.mu.Unlock()
 
+	now := time.Now()
+
 	inode, err := getInodeFromFD(fmt.Sprintf("%d", nl.pid), fmt.Sprintf("%d", nl.fd))
 	if err != nil {
 		return err
@@ -410,6 +386,6 @@ func (nl *SocketLine) getConnectionInfo() error {
 	// convert to bpf time
 	log.Logger.Debug().Ctx(nl.ctx).Msgf("Adding socket line read from user space %v", skInfo)
 	nl.ClearAll() // clear all previous records
-	nl.AddValue(convertUserTimeToKernelTime(uint64(time.Now().UnixNano())), skInfo)
+	nl.AddValue(convertUserTimeToKernelTime(uint64(now.UnixNano())), skInfo)
 	return nil
 }

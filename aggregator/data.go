@@ -1031,6 +1031,13 @@ func (a *Aggregator) processKafkaEvent(ctx context.Context, d *l7_req.L7Event) {
 
 	skInfo := a.findRelatedSocket(ctx, d)
 	if skInfo == nil {
+		// requeue event if this is its first time
+		if !d.PutBack {
+			d.PutBack = true
+			a.ebpfChan <- d
+			return
+		}
+
 		log.Logger.Debug().
 			Ctx(ctx).
 			Uint32("pid", d.Pid).
@@ -1038,7 +1045,7 @@ func (a *Aggregator) processKafkaEvent(ctx context.Context, d *l7_req.L7Event) {
 			Uint64("writeTime", d.WriteTimeNs).
 			Str("protocol", d.Protocol).
 			Any("payload", string(d.Payload[:d.PayloadSize])).
-			Msg("socket not found for kafka event")
+			Msg("discarding kafka event, socket not found")
 
 		return
 	}
@@ -1087,10 +1094,16 @@ func (a *Aggregator) processKafkaEvent(ctx context.Context, d *l7_req.L7Event) {
 func (a *Aggregator) processAmqpEvent(ctx context.Context, d *l7_req.L7Event) {
 	skInfo := a.findRelatedSocket(ctx, d)
 	if skInfo == nil {
+		// requeue event if this is its first time
+		if !d.PutBack {
+			d.PutBack = true
+			a.ebpfChan <- d
+			return
+		}
 		log.Logger.Debug().Uint32("pid", d.Pid).
 			Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
 			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).
-			Msg("socket not found for amqp event")
+			Msg("discarding amqp event, socket not found")
 		return
 	}
 
@@ -1134,11 +1147,17 @@ func (a *Aggregator) processRedisEvent(ctx context.Context, d *l7_req.L7Event) {
 
 	skInfo := a.findRelatedSocket(ctx, d)
 	if skInfo == nil {
+		// requeue event if this is its first time
+		if !d.PutBack {
+			d.PutBack = true
+			a.ebpfChan <- d
+			return
+		}
 		log.Logger.Debug().
 			Ctx(ctx).
 			Uint32("pid", d.Pid).
 			Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
-			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("socket not found for redis event")
+			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("discarding redis event, socket not found")
 		return
 	}
 
@@ -1234,9 +1253,15 @@ func (a *Aggregator) processHttpEvent(ctx context.Context, d *l7_req.L7Event) {
 
 	skInfo := a.findRelatedSocket(ctx, d)
 	if skInfo == nil {
+		// requeue event if this is its first time
+		if !d.PutBack {
+			d.PutBack = true
+			a.ebpfChan <- d
+			return
+		}
 		log.Logger.Debug().Uint32("pid", d.Pid).
 			Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
-			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("socket not found for http event")
+			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("discarding http event, socket not found")
 		return
 	}
 
@@ -1285,9 +1310,16 @@ func (a *Aggregator) processPostgresEvent(ctx context.Context, d *l7_req.L7Event
 
 	skInfo := a.findRelatedSocket(ctx, d)
 	if skInfo == nil {
+		// requeue event if this is its first time
+		if !d.PutBack {
+			d.PutBack = true
+			a.ebpfChan <- d
+			return
+		}
+
 		log.Logger.Debug().Uint32("pid", d.Pid).
 			Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
-			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("socket not found for postgres event")
+			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("discarding postgres event, socket not found")
 
 		return
 	}
@@ -1358,68 +1390,6 @@ func getHostnameFromIP(ipAddr string) (string, error) {
 	}
 }
 
-func (a *Aggregator) fetchSkInfo(ctx context.Context, skLine *SocketLine, d *l7_req.L7Event) *SockInfo {
-	rc := attemptLimit
-	rt := retryInterval
-	var skInfo *SockInfo
-	var err error
-
-	for {
-		skInfo, err = skLine.GetValue(d.WriteTimeNs)
-		if err == nil && skInfo != nil {
-			break
-		}
-		// log.Logger.Debug().Ctx(ctx).Err(err).Uint32("pid", d.Pid).Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).Msg("retry to get skInfo...")
-		rc--
-		if rc == 0 {
-			break
-		}
-		time.Sleep(rt)
-		rt *= 2 // exponential backoff
-
-		select {
-		case <-ctx.Done():
-			log.Logger.Debug().Msg("processL7 exiting, stop retrying...")
-			return nil
-		default:
-			continue
-		}
-	}
-
-	return skInfo
-}
-
-// This is a mitigation for the case a tcp event is missed
-// func (a *Aggregator) updateSocketMap(ctx context.Context) {
-// 	ticker := time.NewTicker(3 * time.Minute)
-
-// 	f := func() {
-// 		a.liveProcessesMu.RLock()
-// 		defer a.liveProcessesMu.RUnlock()
-// 		for pid := range a.liveProcesses {
-// 			sockMap := a.clusterInfo.SocketMaps[pid]
-// 			if sockMap.mu == nil {
-// 				continue
-// 			}
-
-// 			sockMap.mu.Lock()
-// 			for _, skLine := range sockMap.M {
-// 				skLine.getConnectionInfo()
-// 			}
-// 			sockMap.mu.Unlock()
-// 		}
-// 	}
-
-// 	for {
-// 		select {
-// 		case <-ticker.C:
-// 			f()
-// 		case <-ctx.Done():
-// 			return
-// 		}
-// 	}
-// }
-
 func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) *SockInfo {
 	sockMap := a.clusterInfo.SocketMaps[d.Pid]
 	// acquire sockMap lock
@@ -1439,7 +1409,13 @@ func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) *
 		return nil
 	}
 
-	return a.fetchSkInfo(ctx, skLine, d)
+	skInfo, err := skLine.GetValue(d.WriteTimeNs)
+	if err != nil {
+		log.Logger.Warn().Ctx(ctx).
+			Int("pid", int(d.Pid)).Str("func", "findRelatedSocket").Err(err).Msg("could not find remote peer from given timestamp")
+		return nil
+	}
+	return skInfo
 }
 
 func (a *Aggregator) parseSqlCommand(d *l7_req.L7Event) (string, error) {

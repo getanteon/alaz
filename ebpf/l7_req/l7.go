@@ -358,6 +358,10 @@ type L7Event struct {
 	Tid                 uint32
 	Seq                 uint32 // tcp seq num
 	KafkaApiVersion     int16
+
+	// This bool is actually related to aggregator logic. Means this events processing somehow failed and put back into channel for retry.
+	// Maybe we can wrap L7Event and add this field on top.
+	PutBack bool
 }
 
 const L7_EVENT = "l7_event"
@@ -674,21 +678,21 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 				KafkaApiVersion:     l7Event.KafkaApiVersion,
 			}
 
-			if userspacel7Event.Protocol == L7_PROTOCOL_KAFKA {
-				// log all information
-				log.Logger.Warn().
-					Uint32("pid", userspacel7Event.Pid).
-					Uint32("status", userspacel7Event.Status).
-					Uint64("duration", userspacel7Event.Duration).
-					Str("protocol", userspacel7Event.Protocol).
-					Str("method", userspacel7Event.Method).
-					Uint64("write-time-ns", userspacel7Event.WriteTimeNs).
-					Uint32("tid", userspacel7Event.Tid).
-					Uint32("seq", userspacel7Event.Seq).
-					Str("payload", string(userspacel7Event.Payload[:userspacel7Event.PayloadSize])).
-					Msg("kafka event")
-				// return
-			}
+			// if userspacel7Event.Protocol == L7_PROTOCOL_KAFKA {
+			// 	// log all information
+			// 	log.Logger.Warn().
+			// 		Uint32("pid", userspacel7Event.Pid).
+			// 		Uint32("status", userspacel7Event.Status).
+			// 		Uint64("duration", userspacel7Event.Duration).
+			// 		Str("protocol", userspacel7Event.Protocol).
+			// 		Str("method", userspacel7Event.Method).
+			// 		Uint64("write-time-ns", userspacel7Event.WriteTimeNs).
+			// 		Uint32("tid", userspacel7Event.Tid).
+			// 		Uint32("seq", userspacel7Event.Seq).
+			// 		Str("payload", string(userspacel7Event.Payload[:userspacel7Event.PayloadSize])).
+			// 		Msg("kafka event")
+			// 	// return
+			// }
 
 			go func(l7Event *L7Event) {
 				select {
@@ -696,21 +700,12 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 				default:
 					droppedCount++
 					if droppedCount%100 == 0 {
-						if l7Event.Protocol == L7_PROTOCOL_KAFKA {
-							log.Logger.Warn().
-								Str("protocol", l7Event.Protocol).
-								Str("method", l7Event.Method).
-								Uint32("pid", l7Event.Pid).
-								Uint32("status", l7Event.Status).
-								Msg("channel full, dropping kafka event")
-						} else {
-							log.Logger.Debug().
-								Str("protocol", l7Event.Protocol).
-								Str("method", l7Event.Method).
-								Uint32("pid", l7Event.Pid).
-								Uint32("status", l7Event.Status).
-								Msg("channel full, dropping l7 event")
-						}
+						log.Logger.Debug().
+							Str("protocol", l7Event.Protocol).
+							Str("method", l7Event.Method).
+							Uint32("pid", l7Event.Pid).
+							Uint32("status", l7Event.Status).
+							Msg("channel full, dropping l7 event")
 
 					}
 				}
