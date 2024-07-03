@@ -50,7 +50,6 @@ func NewSocketLine(ctx context.Context, pid uint32, fd uint64, fetch bool) *Sock
 			log.Logger.Error().Ctx(ctx).Err(err).Msg("getConnectionInfo failed")
 		}
 	}
-	log.Logger.Debug().Ctx(ctx).Msg("returning from NewSocketLine")
 	return skLine
 }
 
@@ -61,48 +60,48 @@ func (nl *SocketLine) ClearAll() {
 }
 
 func (nl *SocketLine) AddValue(timestamp uint64, sockInfo *SockInfo) {
-	log.Logger.Debug().Ctx(nl.ctx).
-		Any("pid", sockInfo.Pid).
-		Any("fd", sockInfo.Fd).
-		Any("ts", timestamp).
-		Msg("AddValue-start")
+	// ignore close events
+	if sockInfo == nil {
+		// log.Logger.Debug().Ctx(nl.ctx).
+		// 	Any("pid", nl.pid).
+		// 	Any("fd", nl.fd).
+		// 	Any("ts", timestamp).
+		// 	Msg("AddValue-1")
+		return
+	}
+
+	// log.Logger.Debug().Ctx(nl.ctx).
+	// 	Any("pid", sockInfo.Pid).
+	// 	Any("fd", sockInfo.Fd).
+	// 	Any("ts", timestamp).
+	// 	Msg("AddValue-start")
 	nl.mu.Lock()
 	defer nl.mu.Unlock()
 
-	log.Logger.Debug().Ctx(nl.ctx).
-		Any("pid", sockInfo.Pid).
-		Any("fd", sockInfo.Fd).
-		Any("ts", timestamp).
-		Msg("AddValue-start1")
-
-	// ignore close events
-	if sockInfo == nil {
-		log.Logger.Debug().Ctx(nl.ctx).
-			Any("pid", sockInfo.Pid).
-			Any("fd", sockInfo.Fd).
-			Any("ts", timestamp).
-			Msg("AddValue-1")
-		return
-	}
+	// log.Logger.Debug().Ctx(nl.ctx).
+	// 	Any("pid", sockInfo.Pid).
+	// 	Any("fd", sockInfo.Fd).
+	// 	Any("ts", timestamp).
+	// 	Msg("AddValue-start1")
 
 	// if last element is equal to the current element, ignore
 	if len(nl.Values) > 0 {
 		last := nl.Values[len(nl.Values)-1].SockInfo
 		if last != nil && last.Saddr == sockInfo.Saddr && last.Sport == sockInfo.Sport && last.Daddr == sockInfo.Daddr && last.Dport == sockInfo.Dport {
-			log.Logger.Debug().Ctx(nl.ctx).
-				Any("pid", sockInfo.Pid).
-				Any("fd", sockInfo.Fd).
-				Any("ts", timestamp).
-				Msg("AddValue-2")
+			// log.Logger.Debug().Ctx(nl.ctx).
+			// 	Any("pid", sockInfo.Pid).
+			// 	Any("fd", sockInfo.Fd).
+			// 	Any("ts", timestamp).
+			// 	Msg("AddValue-2")
 			return
 		}
 	}
 
-	log.Logger.Debug().Ctx(nl.ctx).
-		Any("pid", sockInfo.Pid).
-		Any("fd", sockInfo.Fd).
-		Any("ts", timestamp).
-		Msg("AddValue-end")
+	// log.Logger.Debug().Ctx(nl.ctx).
+	// 	Any("pid", sockInfo.Pid).
+	// 	Any("fd", sockInfo.Fd).
+	// 	Any("ts", timestamp).
+	// 	Msg("AddValue-end")
 	nl.Values = insertIntoSortedSlice(nl.Values, &TimestampedSocket{Timestamp: timestamp, SockInfo: sockInfo})
 }
 

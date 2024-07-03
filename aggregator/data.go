@@ -62,10 +62,10 @@ type Aggregator struct {
 	ctxForKafka context.Context
 
 	// listen to events from different sources
-	k8sChan             <-chan interface{}
-	ebpfChan            <-chan interface{}
-	ebpfProcChan        <-chan interface{}
-	ebpfTcpChan         <-chan interface{}
+	k8sChan             chan interface{}
+	ebpfChan            chan interface{}
+	ebpfProcChan        chan interface{}
+	ebpfTcpChan         chan interface{}
 	tlsAttachSignalChan chan uint32
 
 	// store the service map
@@ -136,7 +136,7 @@ func init() {
 	}
 }
 
-func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{},
+func NewAggregator(parentCtx context.Context, k8sChan chan interface{},
 	events chan interface{},
 	procEvents chan interface{},
 	tcpEvents chan interface{},
@@ -455,28 +455,29 @@ func (a *Aggregator) processTcpConnect(ctx context.Context, d *tcp_state.TcpConn
 		var ok bool
 
 		sockMap = a.clusterInfo.SocketMaps[d.Pid]
-		var skLine *SocketLine
-
-		if sockMap.mu == nil || sockMap.M == nil {
+		if sockMap == nil {
+			// signal socket map creation and requeue event
 			log.Logger.Warn().Ctx(ctx).
 				Uint32("pid", d.Pid).Str("func", "processTcpConnect").Str("event", "ESTABLISHED").Msg("socket map not initialized")
+
+			go a.clusterInfo.SignalSocketMapCreation(d.Pid)
+			a.ebpfTcpChan <- d
 			return
 		}
+
+		var skLine *SocketLine
+		// if sockMap.mu == nil || sockMap.M == nil {
+		// 	return
+		// }
 
 		sockMap.mu.RLock()
 		skLine, ok = sockMap.M[d.Fd]
 		sockMap.mu.RUnlock()
 		if !ok {
 			go sockMap.SignalSocketLine(ctx, d.Fd) // signal for creation
-			for {
-				sockMap.mu.RLock()
-				skLine, ok = sockMap.M[d.Fd]
-				sockMap.mu.RUnlock()
-
-				if !ok {
-					time.Sleep(100 * time.Millisecond)
-				}
-			}
+			// requeue connect event
+			a.ebpfTcpChan <- d
+			return
 		}
 
 		skLine.AddValue(
@@ -490,59 +491,59 @@ func (a *Aggregator) processTcpConnect(ctx context.Context, d *tcp_state.TcpConn
 				Dport: d.DPort,
 			},
 		)
-
-	} else if d.Type_ == tcp_state.EVENT_TCP_CLOSED {
-		var sockMap *SocketMap
-		var ok bool
-
-		// filter out localhost connections
-		if d.SAddr == "127.0.0.1" || d.DAddr == "127.0.0.1" {
-			return
-		}
-
-		sockMap = a.clusterInfo.SocketMaps[d.Pid]
-
-		var skLine *SocketLine
-
-		if sockMap.mu == nil || sockMap.M == nil {
-			log.Logger.Warn().Ctx(ctx).
-				Uint32("pid", d.Pid).Str("func", "processTcpConnect").Str("event", "CLOSED").Msg("socket map not initialized")
-			return
-		}
-
-		skLine, ok = sockMap.M[d.Fd]
-		if !ok {
-			return
-		}
-
-		// If connection is established before, add the close event
-		skLine.AddValue(
-			d.Timestamp, // get connection close timestamp from ebpf
-			nil,         // closed
-		)
-
-		connKey := a.getConnKey(d.Pid, d.Fd)
-
-		// remove h2Parser if exists
-		a.h2ParserMu.Lock()
-		h2Parser, ok := a.h2Parsers[connKey]
-		if ok {
-			h2Parser.clientHpackDecoder.Close()
-			h2Parser.serverHpackDecoder.Close()
-		}
-		delete(a.h2Parsers, connKey)
-		a.h2ParserMu.Unlock()
-
-		// remove pgStmt if exists
-		a.pgStmtsMu.Lock()
-		for key, _ := range a.pgStmts {
-			if strings.HasPrefix(key, connKey) {
-				delete(a.pgStmts, key)
-			}
-		}
-		a.pgStmtsMu.Unlock()
-
 	}
+	// } else if d.Type_ == tcp_state.EVENT_TCP_CLOSED {
+	// 	var sockMap *SocketMap
+	// 	var ok bool
+
+	// 	// filter out localhost connections
+	// 	if d.SAddr == "127.0.0.1" || d.DAddr == "127.0.0.1" {
+	// 		return
+	// 	}
+
+	// 	sockMap = a.clusterInfo.SocketMaps[d.Pid]
+
+	// 	var skLine *SocketLine
+
+	// 	if sockMap.mu == nil || sockMap.M == nil {
+	// 		log.Logger.Warn().Ctx(ctx).
+	// 			Uint32("pid", d.Pid).Str("func", "processTcpConnect").Str("event", "CLOSED").Msg("socket map not initialized")
+	// 		return
+	// 	}
+
+	// 	skLine, ok = sockMap.M[d.Fd]
+	// 	if !ok {
+	// 		return
+	// 	}
+
+	// 	// If connection is established before, add the close event
+	// 	skLine.AddValue(
+	// 		d.Timestamp, // get connection close timestamp from ebpf
+	// 		nil,         // closed
+	// 	)
+
+	// 	connKey := a.getConnKey(d.Pid, d.Fd)
+
+	// 	// remove h2Parser if exists
+	// 	a.h2ParserMu.Lock()
+	// 	h2Parser, ok := a.h2Parsers[connKey]
+	// 	if ok {
+	// 		h2Parser.clientHpackDecoder.Close()
+	// 		h2Parser.serverHpackDecoder.Close()
+	// 	}
+	// 	delete(a.h2Parsers, connKey)
+	// 	a.h2ParserMu.Unlock()
+
+	// 	// remove pgStmt if exists
+	// 	a.pgStmtsMu.Lock()
+	// 	for key, _ := range a.pgStmts {
+	// 		if strings.HasPrefix(key, connKey) {
+	// 			delete(a.pgStmts, key)
+	// 		}
+	// 	}
+	// 	a.pgStmtsMu.Unlock()
+
+	// }
 }
 
 func parseHttpPayload(request string) (method string, path string, httpVersion string, hostHeader string) {
@@ -1319,15 +1320,6 @@ func (a *Aggregator) processPostgresEvent(ctx context.Context, d *l7_req.L7Event
 }
 
 func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
-	// // other protocols events come as whole, but http2 events come as frames
-	// // we need to aggregate frames to get the whole request
-	// defer func() {
-	// 	if r := recover(); r != nil {
-	// 		// TODO: we need to fix this properly
-	// 		log.Logger.Debug().Msgf("probably a http2 frame sent on a closed chan: %v", r)
-	// 	}
-	// }()
-
 	switch d.Protocol {
 	case l7_req.L7_PROTOCOL_HTTP2:
 		a.processHttp2Event(d)
@@ -1397,16 +1389,6 @@ func (a *Aggregator) fetchSkInfo(ctx context.Context, skLine *SocketLine, d *l7_
 	return skInfo
 }
 
-// func (a *Aggregator) removeFromClusterInfo(pid uint32) {
-// 	sockMap := a.clusterInfo.SocketMaps[pid]
-// 	if sockMap.mu == nil {
-// 		return
-// 	}
-// 	sockMap.mu.Lock()
-// 	sockMap.M = nil
-// 	sockMap.mu.Unlock()
-// }
-
 // This is a mitigation for the case a tcp event is missed
 // func (a *Aggregator) updateSocketMap(ctx context.Context) {
 // 	ticker := time.NewTicker(3 * time.Minute)
@@ -1438,56 +1420,23 @@ func (a *Aggregator) fetchSkInfo(ctx context.Context, skLine *SocketLine, d *l7_
 // 	}
 // }
 
-// func (a *Aggregator) fetchSocketOnNotFound(ctx context.Context, d *l7_req.L7Event) bool {
-// 	a.liveProcessesMu.Lock()
-
-// 	a.liveProcesses[d.Pid] = struct{}{}
-// 	sockMap := a.clusterInfo.SocketMaps[d.Pid]
-// 	// pid does not exists
-// 	// acquire sockMap lock
-
-// 	// in case of reference to mu is nil, pid exec event did not come yet
-// 	// create a new mutex for the pid
-// 	// to avoid race around the mutex, we need to lock the liveProcessesMu
-// 	if sockMap.mu == nil {
-// 		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("fetchSocketOnNotFound: pid not found")
-
-// 		a.muIndex.Add(1)
-// 		a.muArray[(a.muIndex.Load())%uint64(len(a.muArray))] = &sync.RWMutex{}
-// 		a.clusterInfo.SocketMaps[d.Pid].mu = a.muArray[(a.muIndex.Load())%uint64(len(a.muArray))]
-// 	}
-// 	// a.liveProcessesMu.Unlock()
-
-// 	if a.clusterInfo.SocketMaps[pid].mu.
-
-// 	// go try reading from kernel files
-// 	err := sockMap.M[d.Fd].getConnectionInfo()
-// 	if err != nil {
-// 		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Err(err).Msg("fetchSocketOnNotFound: failed to get connection info")
-// 		return false
-// 	} else {
-// 		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("fetchSocketOnNotFound: connection info found")
-// 		return true
-// 	}
-
-// }
-
 func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) *SockInfo {
 	sockMap := a.clusterInfo.SocketMaps[d.Pid]
 	// acquire sockMap lock
-
-	if sockMap.mu == nil || sockMap.M == nil {
+	if sockMap == nil {
+		go a.clusterInfo.SignalSocketMapCreation(d.Pid)
 		log.Logger.Warn().Ctx(ctx).
 			Int("pid", int(d.Pid)).Str("func", "findRelatedSocket").Msg("socket map not initialized")
 		return nil
 	}
 
+	sockMap.mu.RLock()
 	skLine, ok := sockMap.M[d.Fd]
+	sockMap.mu.RUnlock()
 	if !ok {
 		// start new socket line, find already established connections
 		go sockMap.SignalSocketLine(ctx, d.Fd)
-		// log.Logger.Warn().Ctx(ctx).Uint32("pid", d.Pid).Uint64("fd", d.Fd).Str("func", "findRelatedSocket").Msg("signal socket line creation called")
-		return nil // TODO: a retry queue for this event ?
+		return nil
 	}
 
 	return a.fetchSkInfo(ctx, skLine, d)
@@ -1635,6 +1584,7 @@ func (a *Aggregator) sendOpenConnection(sl *SocketLine) {
 	}
 }
 
+// TODO: connection send is made here, sendOpenConnection must be called, refactor this func and its calling place
 func (a *Aggregator) clearSocketLines(ctx context.Context) {
 	ticker := time.NewTicker(120 * time.Second)
 	skLineCh := make(chan *SocketLine, 1000)
@@ -1655,6 +1605,7 @@ func (a *Aggregator) clearSocketLines(ctx context.Context) {
 
 	for range ticker.C {
 		for _, sockMap := range a.clusterInfo.SocketMaps {
+			// TODO: check here
 			if sockMap.mu == nil {
 				continue
 			}

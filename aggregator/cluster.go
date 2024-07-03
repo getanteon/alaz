@@ -17,7 +17,8 @@ type ClusterInfo struct {
 
 	// Pid -> SocketMap
 	// pid -> fd -> {saddr, sport, daddr, dport}
-	SocketMaps []*SocketMap // index symbolizes pid
+	SocketMaps   []*SocketMap // index symbolizes pid
+	socketMapsmu sync.Mutex
 
 	// Below mutexes guard socketMaps, set to mu inside SocketMap struct
 	// Used to find the correct mutex for the process, some pids can share the same mutex
@@ -34,13 +35,6 @@ func newClusterInfo(liveProcCount int) *ClusterInfo {
 	}
 	ci.signalChan = make(chan uint32)
 	sockMaps := make([]*SocketMap, maxPid+1) // index=pid
-	// initialize sockMaps
-	for i := range sockMaps {
-		sockMaps[i] = &SocketMap{
-			mu: nil,
-			M:  nil,
-		}
-	}
 	ci.SocketMaps = sockMaps
 	ci.muIndex = atomic.Uint64{}
 
@@ -75,30 +69,34 @@ func (ci *ClusterInfo) SignalSocketMapCreation(pid uint32) {
 func (ci *ClusterInfo) handleSocketMapCreation() {
 	for pid := range ci.signalChan {
 		ctxPid := context.WithValue(context.Background(), log.LOG_CONTEXT, fmt.Sprint(pid))
-		log.Logger.Debug().
-			Ctx(ctxPid).
-			Str("func", "handleSocketMapCreation").
-			Uint32("pid", pid).
-			Msg("")
-		if ci.SocketMaps[pid].mu == nil {
-			ci.muIndex.Add(1)
-			i := (ci.muIndex.Load()) % uint64(len(ci.muArray))
-			ci.muArray[i] = &sync.RWMutex{}
-			ci.SocketMaps[pid].mu = ci.muArray[i]
-			ci.SocketMaps[pid].pid = pid
-			ci.SocketMaps[pid].M = make(map[uint64]*SocketLine)
-			ci.SocketMaps[pid].waitingFds = make(chan uint64, 1000)
-			ci.SocketMaps[pid].processedFds = make(map[uint64]struct{})
-			ci.SocketMaps[pid].closeCh = make(chan struct{}, 1)
-			ci.SocketMaps[pid].ctx = ctxPid
-			go ci.SocketMaps[pid].ProcessSocketLineCreationRequests()
+
+		if ci.SocketMaps[pid] != nil {
+			continue
 		}
+
+		sockMap := &SocketMap{
+			mu:             nil, // set below
+			pid:            pid,
+			M:              map[uint64]*SocketLine{},
+			waitingFds:     make(chan uint64, 1000),
+			processedFds:   map[uint64]struct{}{},
+			processedFdsmu: sync.RWMutex{},
+			closeCh:        make(chan struct{}, 1),
+			ctx:            ctxPid,
+		}
+
+		ci.muIndex.Add(1)
+		i := (ci.muIndex.Load()) % uint64(len(ci.muArray))
+		ci.muArray[i] = &sync.RWMutex{}
+		sockMap.mu = ci.muArray[i]
+		ci.SocketMaps[pid] = sockMap
+		go sockMap.ProcessSocketLineCreationRequests()
 	}
 }
 
 func (ci *ClusterInfo) clearProc(pid uint32) {
 	sm := ci.SocketMaps[pid]
-	if sm.mu == nil {
+	if sm == nil {
 		return
 	}
 
@@ -107,4 +105,7 @@ func (ci *ClusterInfo) clearProc(pid uint32) {
 	sm.closeCh <- struct{}{}
 	sm.M = nil
 	sm.mu.Unlock()
+
+	// reset
+	ci.SocketMaps[pid] = nil
 }
