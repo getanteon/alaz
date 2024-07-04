@@ -651,6 +651,7 @@ func (b *BackendDS) sendKafkaEventsInBatch(batchSize uint64) {
 			return
 		}
 
+		log.Logger.Debug().Any("batch", batch).Msg("sending batch of kafka events")
 		kEventsPayload := convertKafkaEventsToPayload(batch)
 		go b.sendToBackend(http.MethodPost, kEventsPayload, kafkaEventEndpoint)
 

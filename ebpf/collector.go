@@ -142,6 +142,8 @@ func (e *EbpfCollector) Init() {
 				return
 			}
 
+			log.Logger.Debug().Int("len", len(currentPids)).Msg("len of current container pids")
+
 			// find new pids
 			newPids := make([]uint32, 0)
 			for pid, _ := range currentPids {

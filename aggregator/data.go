@@ -169,9 +169,6 @@ func NewAggregator(parentCtx context.Context, k8sChan chan interface{},
 	a.liveProcessesMu.RUnlock()
 
 	a.clusterInfo = newClusterInfo(liveProcCount)
-	for pid := range a.liveProcesses {
-		a.clusterInfo.SignalSocketMapCreation(pid)
-	}
 
 	go a.clearSocketLines(ctx)
 	// go a.updateSocketMap(ctx)
