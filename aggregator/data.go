@@ -23,13 +23,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 
 	"golang.org/x/time/rate"
 
 	"time"
 
 	"github.com/ddosify/alaz/aggregator/kafka"
+	"github.com/ddosify/alaz/cri"
 	"github.com/ddosify/alaz/datastore"
 	"github.com/ddosify/alaz/ebpf"
 	"github.com/ddosify/alaz/ebpf/l7_req"
@@ -58,8 +58,7 @@ const (
 
 type Aggregator struct {
 	ctx context.Context
-
-	ctxForKafka context.Context
+	ct  *cri.CRITool
 
 	// listen to events from different sources
 	k8sChan             chan interface{}
@@ -136,7 +135,7 @@ func init() {
 	}
 }
 
-func NewAggregator(parentCtx context.Context, k8sChan chan interface{},
+func NewAggregator(parentCtx context.Context, ct *cri.CRITool, k8sChan chan interface{},
 	events chan interface{},
 	procEvents chan interface{},
 	tcpEvents chan interface{},
@@ -147,6 +146,7 @@ func NewAggregator(parentCtx context.Context, k8sChan chan interface{},
 
 	a := &Aggregator{
 		ctx:          ctx,
+		ct:           ct,
 		k8sChan:      k8sChan,
 		ebpfChan:     events,
 		ebpfProcChan: procEvents,
@@ -162,7 +162,11 @@ func NewAggregator(parentCtx context.Context, k8sChan chan interface{},
 		pgStmts:             make(map[string]string),
 	}
 
-	a.getLiveProcesses()
+	var err error
+	a.liveProcesses, err = ct.GetPidsRunningOnContainers()
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("could not get running containers")
+	}
 
 	a.liveProcessesMu.RLock()
 	liveProcCount := len(a.liveProcesses)
@@ -202,59 +206,59 @@ func (a *Aggregator) getLiveProcesses() {
 }
 
 func (a *Aggregator) Run() {
-	go func() {
-		// every 2 minutes, check alive processes, and clear the ones left behind
-		// since we process events concurrently, some short-lived processes exit event can come before exec events
-		// this causes zombie http2 workers
+	// go func() {
+	// 	// every 2 minutes, check alive processes, and clear the ones left behind
+	// 	// since we process events concurrently, some short-lived processes exit event can come before exec events
+	// 	// this causes zombie http2 workers
 
-		t := time.NewTicker(2 * time.Minute)
-		defer t.Stop()
+	// 	t := time.NewTicker(2 * time.Minute)
+	// 	defer t.Stop()
 
-		for range t.C {
-			a.liveProcessesMu.Lock()
+	// 	for range t.C {
+	// 		a.liveProcessesMu.Lock()
 
-			for pid, _ := range a.liveProcesses {
-				// https://man7.org/linux/man-pages/man2/kill.2.html
-				//    If sig is 0, then no signal is sent, but existence and permission
-				//    checks are still performed; this can be used to check for the
-				//    existence of a process ID or process group ID that the caller is
-				//    permitted to signal.
+	// 		for pid, _ := range a.liveProcesses {
+	// 			// https://man7.org/linux/man-pages/man2/kill.2.html
+	// 			//    If sig is 0, then no signal is sent, but existence and permission
+	// 			//    checks are still performed; this can be used to check for the
+	// 			//    existence of a process ID or process group ID that the caller is
+	// 			//    permitted to signal.
 
-				err := syscall.Kill(int(pid), 0)
-				if err != nil {
-					// pid does not exist
-					delete(a.liveProcesses, pid)
-					a.clusterInfo.clearProc(pid)
+	// 			err := syscall.Kill(int(pid), 0)
+	// 			if err != nil {
+	// 				// pid does not exist
+	// 				delete(a.liveProcesses, pid)
+	// 				a.clusterInfo.clearProc(pid)
 
-					a.h2ParserMu.Lock()
-					for key, parser := range a.h2Parsers {
-						// h2Parsers  map[string]*http2Parser // pid-fd -> http2Parser
-						if strings.HasPrefix(key, fmt.Sprint(pid)) {
-							parser.clientHpackDecoder.Close()
-							parser.serverHpackDecoder.Close()
+	// 				a.h2ParserMu.Lock()
+	// 				for key, parser := range a.h2Parsers {
+	// 					// h2Parsers  map[string]*http2Parser // pid-fd -> http2Parser
+	// 					if strings.HasPrefix(key, fmt.Sprint(pid)) {
+	// 						parser.clientHpackDecoder.Close()
+	// 						parser.serverHpackDecoder.Close()
 
-							delete(a.h2Parsers, key)
-						}
-					}
-					a.h2ParserMu.Unlock()
+	// 						delete(a.h2Parsers, key)
+	// 					}
+	// 				}
+	// 				a.h2ParserMu.Unlock()
 
-					a.rateLimitMu.Lock()
-					delete(a.rateLimiters, pid)
-					a.rateLimitMu.Unlock()
+	// 				a.rateLimitMu.Lock()
+	// 				delete(a.rateLimiters, pid)
+	// 				a.rateLimitMu.Unlock()
 
-					a.pgStmtsMu.Lock()
-					for key, _ := range a.pgStmts {
-						if strings.HasPrefix(key, fmt.Sprint(pid)) {
-							delete(a.pgStmts, key)
-						}
-					}
-					a.pgStmtsMu.Unlock()
-				}
-			}
+	// 				a.pgStmtsMu.Lock()
+	// 				for key, _ := range a.pgStmts {
+	// 					if strings.HasPrefix(key, fmt.Sprint(pid)) {
+	// 						delete(a.pgStmts, key)
+	// 					}
+	// 				}
+	// 				a.pgStmtsMu.Unlock()
+	// 			}
+	// 		}
 
-			a.liveProcessesMu.Unlock()
-		}
-	}()
+	// 		a.liveProcessesMu.Unlock()
+	// 	}
+	// }()
 	go a.processk8s()
 
 	// TODO: determine the number of workers with benchmarking
@@ -265,8 +269,6 @@ func (a *Aggregator) Run() {
 	// }
 
 	numWorker := cpuCount
-
-	a.ctxForKafka = context.WithValue(a.ctx, log.LOG_CONTEXT, KAFKA)
 
 	for i := 0; i < numWorker; i++ {
 		go a.processEbpf(a.ctx)
@@ -396,7 +398,6 @@ func (a *Aggregator) getRateLimiterForPid(pid uint32) *rate.Limiter {
 func (a *Aggregator) processExec(d *proc.ProcEvent) {
 	// a.liveProcessesMu.Lock()
 	// defer a.liveProcessesMu.Unlock()
-
 	// a.liveProcesses[d.Pid] = struct{}{}
 
 	a.clusterInfo.SignalSocketMapCreation(d.Pid)
@@ -617,8 +618,8 @@ func (a *Aggregator) processHttp2Frames() {
 			return
 		}
 
-		skInfo := a.findRelatedSocket(a.ctx, d)
-		if skInfo == nil {
+		skInfo, err := a.findRelatedSocket(a.ctx, d)
+		if skInfo == nil || err != nil {
 			return
 		}
 
@@ -642,7 +643,7 @@ func (a *Aggregator) processHttp2Frames() {
 		}
 
 		// toUID is set to :authority header in client frame
-		err := a.setFromTo(skInfo, d, req, req.ToUID)
+		err = a.setFromTo(skInfo, d, req, req.ToUID)
 		if err != nil {
 			return
 		}
@@ -1024,8 +1025,8 @@ func (a *Aggregator) processKafkaEvent(ctx context.Context, d *l7_req.L7Event) {
 		return
 	}
 
-	skInfo := a.findRelatedSocket(ctx, d)
-	if skInfo == nil {
+	skInfo, err := a.findRelatedSocket(ctx, d)
+	if skInfo == nil || err != nil {
 		// requeue event if this is its first time
 		if !d.PutBack {
 			d.PutBack = true
@@ -1035,6 +1036,7 @@ func (a *Aggregator) processKafkaEvent(ctx context.Context, d *l7_req.L7Event) {
 
 		log.Logger.Debug().
 			Ctx(ctx).
+			Err(err).
 			Uint32("pid", d.Pid).
 			Uint64("fd", d.Fd).
 			Uint64("writeTime", d.WriteTimeNs).
@@ -1087,15 +1089,15 @@ func (a *Aggregator) processKafkaEvent(ctx context.Context, d *l7_req.L7Event) {
 }
 
 func (a *Aggregator) processAmqpEvent(ctx context.Context, d *l7_req.L7Event) {
-	skInfo := a.findRelatedSocket(ctx, d)
-	if skInfo == nil {
+	skInfo, err := a.findRelatedSocket(ctx, d)
+	if skInfo == nil || err != nil {
 		// requeue event if this is its first time
 		if !d.PutBack {
 			d.PutBack = true
 			a.ebpfChan <- d
 			return
 		}
-		log.Logger.Debug().Uint32("pid", d.Pid).
+		log.Logger.Debug().Uint32("pid", d.Pid).Err(err).
 			Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
 			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).
 			Msg("discarding amqp event, socket not found")
@@ -1118,7 +1120,7 @@ func (a *Aggregator) processAmqpEvent(ctx context.Context, d *l7_req.L7Event) {
 		Seq:        d.Seq,
 	}
 
-	err := a.setFromTo(skInfo, d, reqDto, "")
+	err = a.setFromTo(skInfo, d, reqDto, "")
 	if err != nil {
 		return
 	}
@@ -1140,8 +1142,8 @@ func (a *Aggregator) processAmqpEvent(ctx context.Context, d *l7_req.L7Event) {
 func (a *Aggregator) processRedisEvent(ctx context.Context, d *l7_req.L7Event) {
 	query := string(d.Payload[0:d.PayloadSize])
 
-	skInfo := a.findRelatedSocket(ctx, d)
-	if skInfo == nil {
+	skInfo, err := a.findRelatedSocket(ctx, d)
+	if skInfo == nil || err != nil {
 		// requeue event if this is its first time
 		if !d.PutBack {
 			d.PutBack = true
@@ -1150,6 +1152,7 @@ func (a *Aggregator) processRedisEvent(ctx context.Context, d *l7_req.L7Event) {
 		}
 		log.Logger.Debug().
 			Ctx(ctx).
+			Err(err).
 			Uint32("pid", d.Pid).
 			Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
 			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("discarding redis event, socket not found")
@@ -1172,7 +1175,7 @@ func (a *Aggregator) processRedisEvent(ctx context.Context, d *l7_req.L7Event) {
 		Seq:        d.Seq,
 	}
 
-	err := a.setFromTo(skInfo, d, reqDto, "")
+	err = a.setFromTo(skInfo, d, reqDto, "")
 	if err != nil {
 		return
 	}
@@ -1246,8 +1249,8 @@ func (a *Aggregator) processHttpEvent(ctx context.Context, d *l7_req.L7Event) {
 		_, path, _, reqHostHeader = parseHttpPayload(string(d.Payload[0:d.PayloadSize]))
 	}
 
-	skInfo := a.findRelatedSocket(ctx, d)
-	if skInfo == nil {
+	skInfo, err := a.findRelatedSocket(ctx, d)
+	if skInfo == nil || err != nil {
 		// requeue event if this is its first time
 		if !d.PutBack {
 			d.PutBack = true
@@ -1255,8 +1258,11 @@ func (a *Aggregator) processHttpEvent(ctx context.Context, d *l7_req.L7Event) {
 			return
 		}
 		log.Logger.Debug().Uint32("pid", d.Pid).
+			Err(err).
 			Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
-			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("discarding http event, socket not found")
+			Str("protocol", d.Protocol).
+			Any("payload", string(d.Payload[:d.PayloadSize])).
+			Msg("discarding http event, socket not found")
 		return
 	}
 
@@ -1276,7 +1282,7 @@ func (a *Aggregator) processHttpEvent(ctx context.Context, d *l7_req.L7Event) {
 		Seq:        d.Seq,
 	}
 
-	err := a.setFromTo(skInfo, d, reqDto, reqHostHeader)
+	err = a.setFromTo(skInfo, d, reqDto, reqHostHeader)
 	if err != nil {
 		return
 	}
@@ -1303,7 +1309,7 @@ func (a *Aggregator) processPostgresEvent(ctx context.Context, d *l7_req.L7Event
 		return
 	}
 
-	skInfo := a.findRelatedSocket(ctx, d)
+	skInfo, err := a.findRelatedSocket(ctx, d)
 	if skInfo == nil {
 		// requeue event if this is its first time
 		if !d.PutBack {
@@ -1313,6 +1319,7 @@ func (a *Aggregator) processPostgresEvent(ctx context.Context, d *l7_req.L7Event
 		}
 
 		log.Logger.Debug().Uint32("pid", d.Pid).
+			Err(err).
 			Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
 			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("discarding postgres event, socket not found")
 
@@ -1385,14 +1392,12 @@ func getHostnameFromIP(ipAddr string) (string, error) {
 	}
 }
 
-func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) *SockInfo {
+func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) (*SockInfo, error) {
 	sockMap := a.clusterInfo.SocketMaps[d.Pid]
 	// acquire sockMap lock
 	if sockMap == nil {
 		go a.clusterInfo.SignalSocketMapCreation(d.Pid)
-		log.Logger.Warn().Ctx(ctx).
-			Int("pid", int(d.Pid)).Str("func", "findRelatedSocket").Msg("socket map not initialized")
-		return nil
+		return nil, fmt.Errorf("socket map not initialized for pid=%d, fd=%d", d.Pid, d.Fd)
 	}
 
 	sockMap.mu.RLock()
@@ -1401,16 +1406,14 @@ func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) *
 	if !ok {
 		// start new socket line, find already established connections
 		go sockMap.SignalSocketLine(ctx, d.Fd)
-		return nil
+		return nil, fmt.Errorf("socket line not initialized for fd=%d, pid=%d", d.Fd, d.Pid)
 	}
 
 	skInfo, err := skLine.GetValue(d.WriteTimeNs)
 	if err != nil {
-		log.Logger.Warn().Ctx(ctx).
-			Int("pid", int(d.Pid)).Str("func", "findRelatedSocket").Err(err).Msg("could not find remote peer from given timestamp")
-		return nil
+		return nil, fmt.Errorf("could not find remote peer from given timestamp, err=%v, fd=%d, pid=%d", err, d.Fd, d.Pid)
 	}
-	return skInfo
+	return skInfo, nil
 }
 
 func (a *Aggregator) parseSqlCommand(d *l7_req.L7Event) (string, error) {

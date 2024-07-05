@@ -68,11 +68,11 @@ func (ci *ClusterInfo) SignalSocketMapCreation(pid uint32) {
 // in order to prevent race.
 func (ci *ClusterInfo) handleSocketMapCreation() {
 	for pid := range ci.signalChan {
-		ctxPid := context.WithValue(context.Background(), log.LOG_CONTEXT, fmt.Sprint(pid))
-
 		if ci.SocketMaps[pid] != nil {
 			continue
 		}
+
+		ctxPid := context.WithValue(context.Background(), log.LOG_CONTEXT, fmt.Sprint(pid))
 
 		sockMap := &SocketMap{
 			mu:             nil, // set below

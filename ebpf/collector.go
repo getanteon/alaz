@@ -76,7 +76,7 @@ func NewEbpfCollector(parentCtx context.Context, ct *cri.CRITool) *EbpfCollector
 	return &EbpfCollector{
 		ctx:                 ctx,
 		done:                make(chan struct{}),
-		ebpfEvents:          make(chan interface{}, 100000), // interface is 16 bytes, 16 * 100000 = 8 Megabytes
+		ebpfEvents:          make(chan interface{}, 200000), // interface is 16 bytes, 16 * 200000 = 32 Megabytes
 		ebpfProcEvents:      make(chan interface{}, 20000),
 		ebpfTcpEvents:       make(chan interface{}, 100000),
 		tlsPidMap:           make(map[uint32]struct{}),
@@ -168,13 +168,26 @@ func (e *EbpfCollector) Init() {
 			}
 
 			// update oldstate
-
 			for k := range oldState {
 				delete(oldState, k)
 			}
 
 			for pid, _ := range currentPids {
 				oldState[pid] = struct{}{}
+			}
+
+			// send events to aggregator
+			for _, pid := range newPids {
+				e.ebpfProcEvents <- &proc.ProcEvent{
+					Pid:   pid,
+					Type_: proc.EVENT_PROC_EXEC,
+				}
+			}
+			for _, pid := range removedPids {
+				e.ebpfProcEvents <- &proc.ProcEvent{
+					Pid:   pid,
+					Type_: proc.EVENT_PROC_EXIT,
+				}
 			}
 
 			err = tcpProg.PopulateContainerPidsMap(newPids, removedPids)
