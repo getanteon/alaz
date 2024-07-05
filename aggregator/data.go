@@ -206,74 +206,18 @@ func (a *Aggregator) getLiveProcesses() {
 }
 
 func (a *Aggregator) Run() {
-	// go func() {
-	// 	// every 2 minutes, check alive processes, and clear the ones left behind
-	// 	// since we process events concurrently, some short-lived processes exit event can come before exec events
-	// 	// this causes zombie http2 workers
-
-	// 	t := time.NewTicker(2 * time.Minute)
-	// 	defer t.Stop()
-
-	// 	for range t.C {
-	// 		a.liveProcessesMu.Lock()
-
-	// 		for pid, _ := range a.liveProcesses {
-	// 			// https://man7.org/linux/man-pages/man2/kill.2.html
-	// 			//    If sig is 0, then no signal is sent, but existence and permission
-	// 			//    checks are still performed; this can be used to check for the
-	// 			//    existence of a process ID or process group ID that the caller is
-	// 			//    permitted to signal.
-
-	// 			err := syscall.Kill(int(pid), 0)
-	// 			if err != nil {
-	// 				// pid does not exist
-	// 				delete(a.liveProcesses, pid)
-	// 				a.clusterInfo.clearProc(pid)
-
-	// 				a.h2ParserMu.Lock()
-	// 				for key, parser := range a.h2Parsers {
-	// 					// h2Parsers  map[string]*http2Parser // pid-fd -> http2Parser
-	// 					if strings.HasPrefix(key, fmt.Sprint(pid)) {
-	// 						parser.clientHpackDecoder.Close()
-	// 						parser.serverHpackDecoder.Close()
-
-	// 						delete(a.h2Parsers, key)
-	// 					}
-	// 				}
-	// 				a.h2ParserMu.Unlock()
-
-	// 				a.rateLimitMu.Lock()
-	// 				delete(a.rateLimiters, pid)
-	// 				a.rateLimitMu.Unlock()
-
-	// 				a.pgStmtsMu.Lock()
-	// 				for key, _ := range a.pgStmts {
-	// 					if strings.HasPrefix(key, fmt.Sprint(pid)) {
-	// 						delete(a.pgStmts, key)
-	// 					}
-	// 				}
-	// 				a.pgStmtsMu.Unlock()
-	// 			}
-	// 		}
-
-	// 		a.liveProcessesMu.Unlock()
-	// 	}
-	// }()
 	go a.processk8s()
 
-	// TODO: determine the number of workers with benchmarking
 	cpuCount := runtime.NumCPU()
-	// numWorker := 5 * cpuCount
-	// if numWorker < 50 {
-	// 	numWorker = 5 // min number
-	// }
-
 	numWorker := cpuCount
 
 	for i := 0; i < numWorker; i++ {
-		go a.processEbpf(a.ctx)
 		go a.processEbpfTcp(a.ctx)
 		go a.processEbpfProc(a.ctx)
+	}
+
+	for i := 0; i < 4*cpuCount; i++ {
+		go a.processEbpf(a.ctx)
 	}
 
 	for i := 0; i < 2*cpuCount; i++ {

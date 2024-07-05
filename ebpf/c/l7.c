@@ -184,9 +184,6 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
         return 0; // not a container process, ignore    
     }
     #endif
-
-    __u32 tid = id & 0xFFFFFFFF;
-    __u32 seq = process_for_dist_trace_write(ctx,fd);
     
     int zero = 0;
     struct l7_request *req = bpf_map_lookup_elem(&l7_request_heap, &zero);
@@ -320,6 +317,9 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
         req->payload_size = count;
         req->payload_read_complete = 1;
     }
+
+    __u32 tid = id & 0xFFFFFFFF;
+    __u32 seq = process_for_dist_trace_write(ctx,fd);
 
     // for distributed tracing
     req->seq = seq;
@@ -1109,10 +1109,7 @@ int process_enter_of_go_conn_write(void *ctx, __u32 pid, __u32 fd, char *buf_ptr
     req->payload_read_complete = 0;
     req->write_time_ns = timestamp;
     req->request_type = 0;
-    req->seq = process_for_dist_trace_write(ctx,fd);
-   
-    __u32 tid = bpf_get_current_pid_tgid() & 0xFFFFFFFF;
-    req->tid = tid;
+    
 
 
     if(buf_ptr){
@@ -1169,6 +1166,10 @@ int process_enter_of_go_conn_write(void *ctx, __u32 pid, __u32 fd, char *buf_ptr
         req->payload_size = count;
         req->payload_read_complete = 1;
     }
+
+    req->seq = process_for_dist_trace_write(ctx,fd);
+    __u32 tid = bpf_get_current_pid_tgid() & 0xFFFFFFFF;
+    req->tid = tid;
 
     long res = bpf_map_update_elem(&go_active_l7_requests, &k, req, BPF_ANY);
     if(res < 0)

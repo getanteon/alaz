@@ -612,6 +612,12 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 	go func() {
 		var record perf.Record
 		droppedCount := 0
+		go func() {
+			t := time.NewTicker(1 * time.Minute)
+			for range t.C {
+				log.Logger.Debug().Int("count", droppedCount).Msg("dropped l7 events")
+			}
+		}()
 		read := func() {
 			err := l7p.l7Events.ReadInto(&record)
 			if err != nil {
@@ -678,36 +684,11 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 				KafkaApiVersion:     l7Event.KafkaApiVersion,
 			}
 
-			// if userspacel7Event.Protocol == L7_PROTOCOL_KAFKA {
-			// 	// log all information
-			// 	log.Logger.Warn().
-			// 		Uint32("pid", userspacel7Event.Pid).
-			// 		Uint32("status", userspacel7Event.Status).
-			// 		Uint64("duration", userspacel7Event.Duration).
-			// 		Str("protocol", userspacel7Event.Protocol).
-			// 		Str("method", userspacel7Event.Method).
-			// 		Uint64("write-time-ns", userspacel7Event.WriteTimeNs).
-			// 		Uint32("tid", userspacel7Event.Tid).
-			// 		Uint32("seq", userspacel7Event.Seq).
-			// 		Str("payload", string(userspacel7Event.Payload[:userspacel7Event.PayloadSize])).
-			// 		Msg("kafka event")
-			// 	// return
-			// }
-
 			go func(l7Event *L7Event) {
 				select {
 				case ch <- l7Event:
 				default:
 					droppedCount++
-					if droppedCount%100 == 0 {
-						log.Logger.Debug().
-							Str("protocol", l7Event.Protocol).
-							Str("method", l7Event.Method).
-							Uint32("pid", l7Event.Pid).
-							Uint32("status", l7Event.Status).
-							Msg("channel full, dropping l7 event")
-
-					}
 				}
 			}(userspacel7Event)
 		}
@@ -723,10 +704,19 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 
 	go func() {
 		var record perf.Record
+		droppedCount := 0
+
+		go func() {
+			t := time.NewTicker(1 * time.Minute)
+			for range t.C {
+				log.Logger.Debug().Int("count", droppedCount).Msg("dropped trace events")
+			}
+		}()
+
 		read := func() {
 			err := l7p.traffic.ReadInto(&record)
 			if err != nil {
-				log.Logger.Warn().Err(err).Msg("error reading from dist trace calls")
+				log.Logger.Warn().Err(err).Msg("error reading from dist-trace calls")
 			}
 
 			if record.LostSamples != 0 {
@@ -740,14 +730,21 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 
 			bpfTraceEvent := (*bpfTraceEvent)(unsafe.Pointer(&record.RawSample[0]))
 
-			traceEvent := TraceEvent{
+			traceEvent := &TraceEvent{
 				Pid:   bpfTraceEvent.Pid,
 				Tid:   bpfTraceEvent.Tid,
 				Tx:    time.Now().UnixMilli(),
 				Type_: bpfTraceEvent.Type_,
 				Seq:   bpfTraceEvent.Seq,
 			}
-			ch <- &traceEvent
+
+			go func(traceEvent *TraceEvent) {
+				select {
+				case ch <- traceEvent:
+				default:
+					droppedCount++
+				}
+			}(traceEvent)
 
 		}
 		for {
