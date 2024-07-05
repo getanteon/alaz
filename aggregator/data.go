@@ -17,12 +17,12 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	"golang.org/x/time/rate"
 
@@ -179,33 +179,35 @@ func NewAggregator(parentCtx context.Context, ct *cri.CRITool, k8sChan chan inte
 	return a
 }
 
-func (a *Aggregator) getLiveProcesses() {
-	// get all alive processes, populate liveProcesses
-	cmd := exec.Command("ps", "-e", "-o", "pid=")
-	output, err := cmd.Output()
-	if err != nil {
-		log.Logger.Fatal().Err(err).Msg("error getting all alive processes")
-	}
-
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			fields := strings.Fields(line)
-			if len(fields) > 0 {
-				pid := fields[0]
-				pidInt, err := strconv.Atoi(pid)
-				if err != nil {
-					log.Logger.Error().Err(err).Msgf("error converting pid to int %s", pid)
-					continue
-				}
-				a.liveProcesses[uint32(pidInt)] = struct{}{}
-			}
-		}
-	}
-}
-
 func (a *Aggregator) Run() {
+	go func() {
+		// every 2 minutes, check alive processes, and clear the ones left behind
+		// since we process events concurrently, some short-lived processes exit event can come before exec events
+		// this causes zombie http2 workers
+
+		t := time.NewTicker(2 * time.Minute)
+		defer t.Stop()
+
+		for range t.C {
+			a.liveProcessesMu.Lock()
+
+			for pid, _ := range a.liveProcesses {
+				// https://man7.org/linux/man-pages/man2/kill.2.html
+				//    If sig is 0, then no signal is sent, but existence and permission
+				//    checks are still performed; this can be used to check for the
+				//    existence of a process ID or process group ID that the caller is
+				//    permitted to signal.
+
+				err := syscall.Kill(int(pid), 0)
+				if err != nil {
+					delete(a.liveProcesses, pid)
+					a.processExit(pid)
+				}
+			}
+
+			a.liveProcessesMu.Unlock()
+		}
+	}()
 	go a.processk8s()
 
 	cpuCount := runtime.NumCPU()
@@ -340,18 +342,14 @@ func (a *Aggregator) getRateLimiterForPid(pid uint32) *rate.Limiter {
 }
 
 func (a *Aggregator) processExec(d *proc.ProcEvent) {
-	// a.liveProcessesMu.Lock()
-	// defer a.liveProcessesMu.Unlock()
-	// a.liveProcesses[d.Pid] = struct{}{}
+	a.liveProcessesMu.Lock()
+	a.liveProcesses[d.Pid] = struct{}{}
+	a.liveProcessesMu.Unlock()
 
 	a.clusterInfo.SignalSocketMapCreation(d.Pid)
 }
 
 func (a *Aggregator) processExit(pid uint32) {
-	// a.liveProcessesMu.Lock()
-	// delete(a.liveProcesses, pid)
-	// a.liveProcessesMu.Unlock()
-
 	a.clusterInfo.clearProc(pid)
 
 	a.h2ParserMu.Lock()
