@@ -102,7 +102,7 @@ func main() {
 	if tracingEnabled {
 		ec = ebpf.NewEbpfCollector(ctx, ct)
 
-		a := aggregator.NewAggregator(ctx, kubeEvents, ec.EbpfEvents(), ec.EbpfProcEvents(), ec.EbpfTcpEvents(), ec.TlsAttachQueue(), dsBackend)
+		a := aggregator.NewAggregator(ctx, ct, kubeEvents, ec.EbpfEvents(), ec.EbpfProcEvents(), ec.EbpfTcpEvents(), ec.TlsAttachQueue(), dsBackend)
 		a.Run()
 
 		a.AdvertiseDebugData()

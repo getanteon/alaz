@@ -94,10 +94,26 @@ func (nl *SocketLine) GetValue(timestamp uint64) (*SockInfo, error) {
 	if index == len(nl.Values) {
 		// The timestamp is after the last entry, so return the last value
 		nl.Values[index-1].LastMatch = uint64(time.Now().UnixNano())
+		if nl.Values[len(nl.Values)-1].SockInfo == nil {
+			if index-2 >= 0 && index-2 < len(nl.Values) && nl.Values[index-2].SockInfo != nil &&
+				(timestamp-nl.Values[index-2].Timestamp) < uint64(1*time.Minute.Nanoseconds()) { // processing latency matters
+				return nl.Values[index-2].SockInfo, nil
+			}
+			return nil, fmt.Errorf("closed socket on last entry")
+		}
 		return nl.Values[len(nl.Values)-1].SockInfo, nil
 	}
 
 	if index == 0 {
+		// In case of tcp established event read from user-space on event of socket not found,
+		// timestamp is set from userspace.
+		// and timestamps belonging to requests waiting to be processed becomes smaller.
+		// on that case, select first socket open, avoiding data loss.
+
+		if nl.Values[0].SockInfo != nil {
+			return nl.Values[0].SockInfo, nil
+		}
+
 		// The timestamp is before or equal to the first entry, so return an error
 		return nil, fmt.Errorf("no smaller value found")
 	}
@@ -105,14 +121,43 @@ func (nl *SocketLine) GetValue(timestamp uint64) (*SockInfo, error) {
 	si := nl.Values[index-1].SockInfo
 
 	if si == nil {
-		// The timestamp is exactly on a socket close
+		// The timestamp is matched on a socket close
+		// Check closest open sockets and if daddr+dport's are same, send one of them.
+
+		prev := index - 2
+		var prevSock *TimestampedSocket
+		if prev >= 0 && prev < len(nl.Values) {
+			prevSock = nl.Values[prev]
+		}
+
+		after := index
+		var afterSock *TimestampedSocket
+		if after >= 0 && after < len(nl.Values) {
+			afterSock = nl.Values[after]
+		}
+
+		if prevSock != nil && prevSock.SockInfo != nil &&
+			afterSock != nil && afterSock.SockInfo != nil {
+			if prevSock.SockInfo.Daddr == afterSock.SockInfo.Daddr &&
+				prevSock.SockInfo.Dport == afterSock.SockInfo.Dport {
+				// pick the closest one.
+				if timestamp-prevSock.Timestamp < afterSock.Timestamp-timestamp {
+					return prevSock.SockInfo, nil
+				} else {
+					return afterSock.SockInfo, nil
+				}
+			}
+		}
+
 		return nil, fmt.Errorf("closed socket")
 	}
 
-	// Return the value associated with the closest previous timestamp
+	// if daddr+dport is consistently same, we can assume remote peer in case of closed socket match.
+	// TODO.
 
+	// Return the value associated with the closest previous timestamp
 	nl.Values[index-1].LastMatch = uint64(time.Now().UnixNano())
-	return nl.Values[index-1].SockInfo, nil
+	return si, nil
 }
 
 func (nl *SocketLine) DeleteUnused() {
@@ -356,9 +401,6 @@ func parseTcpLine(line string) (localIP string, localPort int, remoteIP string, 
 }
 
 func (nl *SocketLine) getConnectionInfo() error {
-	// nl.mu.Lock()
-	// defer nl.mu.Unlock()
-
 	now := time.Now()
 
 	inode, err := getInodeFromFD(fmt.Sprintf("%d", nl.pid), fmt.Sprintf("%d", nl.fd))
