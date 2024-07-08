@@ -152,9 +152,6 @@ func (nl *SocketLine) GetValue(timestamp uint64) (*SockInfo, error) {
 		return nil, fmt.Errorf("closed socket")
 	}
 
-	// if daddr+dport is consistently same, we can assume remote peer in case of closed socket match.
-	// TODO.
-
 	// Return the value associated with the closest previous timestamp
 	nl.Values[index-1].LastMatch = uint64(time.Now().UnixNano())
 	return si, nil

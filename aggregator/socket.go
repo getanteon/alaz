@@ -37,6 +37,7 @@ func (sm *SocketMap) ProcessSocketLineCreationRequests() {
 	for {
 		select {
 		case <-sm.closeCh:
+			sm.M = nil
 			return
 		case fd := <-sm.waitingFds:
 			if _, ok := sm.M[fd]; !ok {

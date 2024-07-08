@@ -103,7 +103,6 @@ func (ci *ClusterInfo) clearProc(pid uint32) {
 	// stop waiting for socketline creation requests
 	sm.mu.Lock()
 	sm.closeCh <- struct{}{}
-	sm.M = nil
 	sm.mu.Unlock()
 
 	// reset

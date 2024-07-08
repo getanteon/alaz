@@ -8,7 +8,7 @@ ENV GOCACHE=/root/.cache/go-build
 RUN go mod tidy -v
 RUN --mount=type=cache,target="/root/.cache/go-build" GOOS=linux go build -ldflags="-X 'github.com/ddosify/alaz/datastore.tag=$VERSION'" -o alaz
 
-FROM debian:12.5-slim
+FROM debian:12.6-slim
 RUN apt-get update && apt-get install -y procps ca-certificates && rm -rf /var/lib/apt/lists/*
 
 COPY --chown=0:0 --from=builder /app/alaz ./bin/

@@ -175,7 +175,18 @@ func NewAggregator(parentCtx context.Context, ct *cri.CRITool, k8sChan chan inte
 	a.clusterInfo = newClusterInfo(liveProcCount)
 
 	go a.clearSocketLines(ctx)
-	// go a.updateSocketMap(ctx)
+
+	go func() {
+		t := time.NewTicker(2 * time.Minute)
+
+		for range t.C {
+			log.Logger.Debug().
+				Int("ebpfChan-lag", len(a.ebpfChan)).
+				Int("ebpfTcpChan-lag", len(a.ebpfTcpChan)).
+				Msg("lag of channels")
+		}
+	}()
+
 	return a
 }
 
