@@ -1375,6 +1375,10 @@ func (a *Aggregator) parseSqlCommand(d *l7_req.L7Event) (string, error) {
 	if d.Method == l7_req.SIMPLE_QUERY {
 		// Q, 4 bytes of length, sql command
 
+		if len(r) < 5 {
+			return "", fmt.Errorf("too short for a sql query")
+		}
+
 		// skip Q, (simple query)
 		r = r[1:]
 
