@@ -50,7 +50,8 @@ type bpfL7Event struct {
 	_                   [1]byte
 	Seq                 uint32
 	Tid                 uint32
-	_                   [4]byte
+	KafkaApiVersion     int16
+	_                   [2]byte
 }
 
 type bpfL7Request struct {
@@ -65,6 +66,9 @@ type bpfL7Request struct {
 	_                   [2]byte
 	Seq                 uint32
 	Tid                 uint32
+	CorrelationId       int32
+	ApiKey              int16
+	ApiVersion          int16
 	_                   [4]byte
 }
 

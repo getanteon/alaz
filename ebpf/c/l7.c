@@ -5,6 +5,8 @@
 #define PROTOCOL_POSTGRES	3
 #define PROTOCOL_HTTP2	    4
 #define PROTOCOL_REDIS	    5
+#define PROTOCOL_KAFKA	    6
+
 
 #define MAX_PAYLOAD_SIZE 1024
 #define PAYLOAD_PREFIX_SIZE 16
@@ -28,6 +30,8 @@ struct l7_event {
     
     __u32 seq; // tcp sequence number
     __u32 tid;
+
+    __s16 kafka_api_version; // used only for kafka
 };
 
 struct l7_request {
@@ -40,6 +44,9 @@ struct l7_request {
     __u8 request_type;
     __u32 seq;
     __u32 tid;
+    __s32 correlation_id; // used only for kafka
+    __s16 api_key; // used only for kafka
+    __s16 api_version; // used only for kafka
 };
 
 struct socket_key {
@@ -177,9 +184,6 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
         return 0; // not a container process, ignore    
     }
     #endif
-
-    __u32 tid = id & 0xFFFFFFFF;
-    __u32 seq = process_for_dist_trace_write(ctx,fd);
     
     int zero = 0;
     struct l7_request *req = bpf_map_lookup_elem(&l7_request_heap, &zero);
@@ -234,6 +238,25 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
             req->method = METHOD_REDIS_PING;
         }else if (!is_redis_pong(buf,count) && is_redis_command(buf,count)){
             req->protocol = PROTOCOL_REDIS;
+            req->method = METHOD_UNKNOWN;
+        }else if (is_kafka_request_header(buf, count, &req->correlation_id, &req->api_key, &req->api_version)){
+            // request pipelining, batch publish
+            // if multiple writes are done subsequently over the same connection
+            // do not change record in active_l7_requests
+            // correlation ids can mismatch
+
+            // order is guaranteed over the same socket on kafka.
+
+            // write(first_part_of_batch_req_corr1
+            // write(second_part_of_batch_req_corr2 ----> do not write to active_l7_requests, wait for the response
+            // read(first_part_of_batch_resp_corr1
+            // read(second_part_of_batch_resp_corr2
+
+            struct l7_request *prev_req = bpf_map_lookup_elem(&active_l7_requests, &k);
+            if (prev_req && prev_req->protocol == PROTOCOL_KAFKA) {
+                return 0;
+            }
+            req->protocol = PROTOCOL_KAFKA;
             req->method = METHOD_UNKNOWN;
         }else if (is_rabbitmq_publish(buf,count)){
             req->protocol = PROTOCOL_AMQP;
@@ -294,6 +317,9 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
         req->payload_size = count;
         req->payload_read_complete = 1;
     }
+
+    __u32 tid = id & 0xFFFFFFFF;
+    __u32 seq = process_for_dist_trace_write(ctx,fd);
 
     // for distributed tracing
     req->seq = seq;
@@ -670,6 +696,23 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
             }else{
                 e->status = parse_redis_response(read_info->buf, ret);
                 e->method = METHOD_REDIS_COMMAND;
+            }
+        }else if (e->protocol == PROTOCOL_KAFKA){
+            e->status = is_kafka_response_header(read_info->buf, active_req->correlation_id);
+            if (active_req->api_key == KAFKA_API_KEY_PRODUCE_API){
+                e->method = METHOD_KAFKA_PRODUCE_REQUEST;
+            }else if (active_req->api_key == KAFKA_API_KEY_FETCH_API){
+                e->method = METHOD_KAFKA_FETCH_RESPONSE;
+                // send the response to userspace
+                // copy req payload
+                e->payload_size = ret;
+                bpf_probe_read(e->payload, MAX_PAYLOAD_SIZE, read_info->buf);
+                if(ret > MAX_PAYLOAD_SIZE){
+                    e->payload_read_complete = 0;
+                }else{
+                    e->payload_read_complete = 1;
+                }
+                e->kafka_api_version = active_req->api_version;
             }
         }
     }else{
@@ -1066,10 +1109,7 @@ int process_enter_of_go_conn_write(void *ctx, __u32 pid, __u32 fd, char *buf_ptr
     req->payload_read_complete = 0;
     req->write_time_ns = timestamp;
     req->request_type = 0;
-    req->seq = process_for_dist_trace_write(ctx,fd);
-   
-    __u32 tid = bpf_get_current_pid_tgid() & 0xFFFFFFFF;
-    req->tid = tid;
+    
 
 
     if(buf_ptr){
@@ -1126,6 +1166,10 @@ int process_enter_of_go_conn_write(void *ctx, __u32 pid, __u32 fd, char *buf_ptr
         req->payload_size = count;
         req->payload_read_complete = 1;
     }
+
+    req->seq = process_for_dist_trace_write(ctx,fd);
+    __u32 tid = bpf_get_current_pid_tgid() & 0xFFFFFFFF;
+    req->tid = tid;
 
     long res = bpf_map_update_elem(&go_active_l7_requests, &k, req, BPF_ANY);
     if(res < 0)

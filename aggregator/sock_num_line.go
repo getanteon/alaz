@@ -3,6 +3,7 @@ package aggregator
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
@@ -29,38 +30,53 @@ type SocketLine struct {
 	mu     sync.RWMutex
 	pid    uint32
 	fd     uint64
-	Values []TimestampedSocket
+	Values []*TimestampedSocket
+
+	ctx context.Context
 }
 
-func NewSocketLine(pid uint32, fd uint64) *SocketLine {
+func NewSocketLine(ctx context.Context, pid uint32, fd uint64, fetch bool) *SocketLine {
 	skLine := &SocketLine{
 		mu:     sync.RWMutex{},
 		pid:    pid,
 		fd:     fd,
-		Values: make([]TimestampedSocket, 0),
+		Values: make([]*TimestampedSocket, 0),
+		ctx:    ctx,
 	}
 
+	if fetch {
+		err := skLine.getConnectionInfo() // populate
+		if err != nil {
+			log.Logger.Error().Ctx(ctx).Err(err).Msg("getConnectionInfo failed")
+		}
+	}
 	return skLine
 }
 
+// clears all socket history
+func (nl *SocketLine) ClearAll() {
+	clear(nl.Values)          // sets all values to zero values (nil in this case), we do this for garbage collection
+	nl.Values = nl.Values[:0] // change len
+}
+
 func (nl *SocketLine) AddValue(timestamp uint64, sockInfo *SockInfo) {
+	// // ignore close events
+	// if sockInfo == nil {
+	// 	return
+	// }
+
 	nl.mu.Lock()
 	defer nl.mu.Unlock()
-
-	// ignore close events
-	if sockInfo == nil {
-		return
-	}
 
 	// if last element is equal to the current element, ignore
 	if len(nl.Values) > 0 {
 		last := nl.Values[len(nl.Values)-1].SockInfo
-		if last != nil && last.Saddr == sockInfo.Saddr && last.Sport == sockInfo.Sport && last.Daddr == sockInfo.Daddr && last.Dport == sockInfo.Dport {
+		if last != nil && sockInfo != nil && last.Saddr == sockInfo.Saddr && last.Sport == sockInfo.Sport && last.Daddr == sockInfo.Daddr && last.Dport == sockInfo.Dport {
 			return
 		}
 	}
 
-	nl.Values = insertIntoSortedSlice(nl.Values, TimestampedSocket{Timestamp: timestamp, SockInfo: sockInfo})
+	nl.Values = insertIntoSortedSlice(nl.Values, &TimestampedSocket{Timestamp: timestamp, SockInfo: sockInfo})
 }
 
 func (nl *SocketLine) GetValue(timestamp uint64) (*SockInfo, error) {
@@ -78,10 +94,26 @@ func (nl *SocketLine) GetValue(timestamp uint64) (*SockInfo, error) {
 	if index == len(nl.Values) {
 		// The timestamp is after the last entry, so return the last value
 		nl.Values[index-1].LastMatch = uint64(time.Now().UnixNano())
+		if nl.Values[len(nl.Values)-1].SockInfo == nil {
+			if index-2 >= 0 && index-2 < len(nl.Values) && nl.Values[index-2].SockInfo != nil &&
+				(timestamp-nl.Values[index-2].Timestamp) < uint64(1*time.Minute.Nanoseconds()) { // processing latency matters
+				return nl.Values[index-2].SockInfo, nil
+			}
+			return nil, fmt.Errorf("closed socket on last entry")
+		}
 		return nl.Values[len(nl.Values)-1].SockInfo, nil
 	}
 
 	if index == 0 {
+		// In case of tcp established event read from user-space on event of socket not found,
+		// timestamp is set from userspace.
+		// and timestamps belonging to requests waiting to be processed becomes smaller.
+		// on that case, select first socket open, avoiding data loss.
+
+		if nl.Values[0].SockInfo != nil {
+			return nl.Values[0].SockInfo, nil
+		}
+
 		// The timestamp is before or equal to the first entry, so return an error
 		return nil, fmt.Errorf("no smaller value found")
 	}
@@ -89,14 +121,40 @@ func (nl *SocketLine) GetValue(timestamp uint64) (*SockInfo, error) {
 	si := nl.Values[index-1].SockInfo
 
 	if si == nil {
-		// The timestamp is exactly on a socket close
+		// The timestamp is matched on a socket close
+		// Check closest open sockets and if daddr+dport's are same, send one of them.
+
+		prev := index - 2
+		var prevSock *TimestampedSocket
+		if prev >= 0 && prev < len(nl.Values) {
+			prevSock = nl.Values[prev]
+		}
+
+		after := index
+		var afterSock *TimestampedSocket
+		if after >= 0 && after < len(nl.Values) {
+			afterSock = nl.Values[after]
+		}
+
+		if prevSock != nil && prevSock.SockInfo != nil &&
+			afterSock != nil && afterSock.SockInfo != nil {
+			if prevSock.SockInfo.Daddr == afterSock.SockInfo.Daddr &&
+				prevSock.SockInfo.Dport == afterSock.SockInfo.Dport {
+				// pick the closest one.
+				if timestamp-prevSock.Timestamp < afterSock.Timestamp-timestamp {
+					return prevSock.SockInfo, nil
+				} else {
+					return afterSock.SockInfo, nil
+				}
+			}
+		}
+
 		return nil, fmt.Errorf("closed socket")
 	}
 
 	// Return the value associated with the closest previous timestamp
-
 	nl.Values[index-1].LastMatch = uint64(time.Now().UnixNano())
-	return nl.Values[index-1].SockInfo, nil
+	return si, nil
 }
 
 func (nl *SocketLine) DeleteUnused() {
@@ -110,7 +168,7 @@ func (nl *SocketLine) DeleteUnused() {
 
 	// if two open sockets are alined, delete the first one
 	// in case first ones close event did not arrive
-	result := make([]TimestampedSocket, 0)
+	result := make([]*TimestampedSocket, 0)
 	i := 0
 	for i < len(nl.Values)-1 {
 		if nl.Values[i].SockInfo != nil && nl.Values[i+1].SockInfo != nil {
@@ -251,13 +309,13 @@ const (
 	stateListen      = "0A"
 )
 
-func insertIntoSortedSlice(sortedSlice []TimestampedSocket, newItem TimestampedSocket) []TimestampedSocket {
+func insertIntoSortedSlice(sortedSlice []*TimestampedSocket, newItem *TimestampedSocket) []*TimestampedSocket {
 	idx := sort.Search(len(sortedSlice), func(i int) bool {
 		return sortedSlice[i].Timestamp >= newItem.Timestamp
 	})
 
 	// Insert the new item at the correct position.
-	sortedSlice = append(sortedSlice, TimestampedSocket{})
+	sortedSlice = append(sortedSlice, &TimestampedSocket{})
 	copy(sortedSlice[idx+1:], sortedSlice[idx:])
 	sortedSlice[idx] = newItem
 
@@ -340,6 +398,8 @@ func parseTcpLine(line string) (localIP string, localPort int, remoteIP string, 
 }
 
 func (nl *SocketLine) getConnectionInfo() error {
+	now := time.Now()
+
 	inode, err := getInodeFromFD(fmt.Sprintf("%d", nl.pid), fmt.Sprintf("%d", nl.fd))
 	if err != nil {
 		return err
@@ -363,7 +423,8 @@ func (nl *SocketLine) getConnectionInfo() error {
 
 	// add to socket line
 	// convert to bpf time
-	log.Logger.Debug().Msgf("Adding socket line read from user space %v", skInfo)
-	nl.AddValue(convertUserTimeToKernelTime(uint64(time.Now().UnixNano())), skInfo)
+	log.Logger.Debug().Ctx(nl.ctx).Msgf("Adding socket line read from user space %v", skInfo)
+	nl.ClearAll() // clear all previous records
+	nl.AddValue(convertUserTimeToKernelTime(uint64(now.UnixNano())), skInfo)
 	return nil
 }

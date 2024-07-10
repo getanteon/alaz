@@ -105,6 +105,74 @@ type AliveConnection struct {
 	ToPort    uint16
 }
 
+type DirectionalEvent interface {
+	SetFromUID(string)
+	SetFromIP(string)
+	SetFromType(string)
+	SetFromPort(uint16)
+
+	SetToUID(string)
+	SetToIP(string)
+	SetToType(string)
+	SetToPort(uint16)
+
+	ReverseDirection()
+}
+
+type KafkaEvent struct {
+	StartTime int64
+	Latency   uint64 // in ns
+	FromIP    string
+	FromType  string
+	FromUID   string
+	FromPort  uint16
+	ToIP      string
+	ToType    string
+	ToUID     string
+	ToPort    uint16
+	Topic     string
+	Partition uint32
+	Key       string
+	Value     string
+	Type      string // PUBLISH or CONSUME
+	Tls       bool
+	Tid       uint32
+	Seq       uint32
+}
+
+func (ke *KafkaEvent) SetFromUID(uid string) {
+	ke.FromUID = uid
+}
+func (ke *KafkaEvent) SetFromIP(ip string) {
+	ke.FromIP = ip
+}
+func (ke *KafkaEvent) SetFromType(typ string) {
+	ke.FromType = typ
+}
+func (ke *KafkaEvent) SetFromPort(port uint16) {
+	ke.FromPort = port
+}
+
+func (ke *KafkaEvent) SetToUID(uid string) {
+	ke.ToUID = uid
+}
+func (ke *KafkaEvent) SetToIP(ip string) {
+	ke.ToIP = ip
+}
+func (ke *KafkaEvent) SetToType(typ string) {
+	ke.ToType = typ
+}
+func (ke *KafkaEvent) SetToPort(port uint16) {
+	ke.ToPort = port
+}
+
+func (req *KafkaEvent) ReverseDirection() {
+	req.FromIP, req.ToIP = req.ToIP, req.FromIP
+	req.FromPort, req.ToPort = req.ToPort, req.FromPort
+	req.FromUID, req.ToUID = req.ToUID, req.FromUID
+	req.FromType, req.ToType = req.ToType, req.FromType
+}
+
 type Request struct {
 	StartTime  int64
 	Latency    uint64 // in ns
@@ -125,6 +193,39 @@ type Request struct {
 	Path       string
 	Tid        uint32
 	Seq        uint32
+}
+
+func (r *Request) SetFromUID(uid string) {
+	r.FromUID = uid
+}
+func (r *Request) SetFromIP(ip string) {
+	r.FromIP = ip
+}
+func (r *Request) SetFromType(typ string) {
+	r.FromType = typ
+}
+func (r *Request) SetFromPort(port uint16) {
+	r.FromPort = port
+}
+
+func (r *Request) SetToUID(uid string) {
+	r.ToUID = uid
+}
+func (r *Request) SetToIP(ip string) {
+	r.ToIP = ip
+}
+func (r *Request) SetToType(typ string) {
+	r.ToType = typ
+}
+func (r *Request) SetToPort(port uint16) {
+	r.ToPort = port
+}
+
+func (req *Request) ReverseDirection() {
+	req.FromIP, req.ToIP = req.ToIP, req.FromIP
+	req.FromPort, req.ToPort = req.ToPort, req.FromPort
+	req.FromUID, req.ToUID = req.ToUID, req.FromUID
+	req.FromType, req.ToType = req.ToType, req.FromType
 }
 
 type BackendResponse struct {
