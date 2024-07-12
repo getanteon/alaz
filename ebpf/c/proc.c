@@ -29,7 +29,7 @@ int sched_process_exec(struct trace_event_raw_sched_process_exec* ctx)
     pid = id >> 32;
     tid = (__u32)id;
 
-    /* ignore thread exits */
+    /* ignore thread exec */
     if (pid != tid)
         return 0;
 

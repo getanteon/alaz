@@ -16,6 +16,8 @@ type DataStore interface {
 
 	PersistRequest(request *Request) error
 
+	PersistKafkaEvent(request *KafkaEvent) error
+
 	PersistTraceEvent(trace *l7_req.TraceEvent) error
 
 	PersistAliveConnection(trace *AliveConnection) error

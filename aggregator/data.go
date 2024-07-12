@@ -11,24 +11,25 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
-	"os/exec"
-	"path"
 	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 
 	"golang.org/x/time/rate"
 
 	"time"
 
+	"github.com/ddosify/alaz/aggregator/kafka"
+	"github.com/ddosify/alaz/cri"
 	"github.com/ddosify/alaz/datastore"
 	"github.com/ddosify/alaz/ebpf"
 	"github.com/ddosify/alaz/ebpf/l7_req"
@@ -44,14 +45,26 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
+const (
+	POD      = "pod"
+	SVC      = "service"
+	OUTBOUND = "outbound"
+)
+
+const (
+	KAFKA = "kafka" // LOG_CONTEXT_KEY should match
+	REDIS = "redis"
+)
+
 type Aggregator struct {
 	ctx context.Context
+	ct  *cri.CRITool
 
 	// listen to events from different sources
-	k8sChan             <-chan interface{}
-	ebpfChan            <-chan interface{}
-	ebpfProcChan        <-chan interface{}
-	ebpfTcpChan         <-chan interface{}
+	k8sChan             chan interface{}
+	ebpfChan            chan interface{}
+	ebpfProcChan        chan interface{}
+	ebpfTcpChan         chan interface{}
 	tlsAttachSignalChan chan uint32
 
 	// store the service map
@@ -65,12 +78,12 @@ type Aggregator struct {
 	h2Ch     chan *l7_req.L7Event
 	h2Frames map[string]*FrameArrival // pid-fd-streamId -> frame
 
+	h2ParserMu sync.RWMutex
+	h2Parsers  map[string]*http2Parser // pid-fd -> http2Parser
+
 	// postgres prepared stmt
 	pgStmtsMu sync.RWMutex
 	pgStmts   map[string]string // pid-fd-stmtname -> query
-
-	h2ParserMu sync.RWMutex
-	h2Parsers  map[string]*http2Parser // pid-fd -> http2Parser
 
 	liveProcessesMu sync.RWMutex
 	liveProcesses   map[uint32]struct{} // pid -> struct{}
@@ -78,23 +91,6 @@ type Aggregator struct {
 	// Used to rate limit and drop trace events based on pid
 	rateLimiters map[uint32]*rate.Limiter // pid -> rateLimiter
 	rateLimitMu  sync.RWMutex
-
-	// Used to find the correct mutex for the pid, some pids can share the same mutex
-	muIndex atomic.Uint64
-	muArray []*sync.RWMutex
-}
-
-// We need to keep track of the following
-// in order to build find relationships between
-// connections and pods/services
-
-type SockInfo struct {
-	Pid   uint32 `json:"pid"`
-	Fd    uint64 `json:"fd"`
-	Saddr string `json:"saddr"`
-	Sport uint16 `json:"sport"`
-	Daddr string `json:"daddr"`
-	Dport uint16 `json:"dport"`
 }
 
 type http2Parser struct {
@@ -109,33 +105,6 @@ type http2Parser struct {
 	serverHpackDecoder *hpack.Decoder
 }
 
-// type SocketMap
-type SocketMap struct {
-	mu *sync.RWMutex
-	M  map[uint64]*SocketLine `json:"fdToSockLine"` // fd -> SockLine
-}
-
-type ClusterInfo struct {
-	k8smu                 sync.RWMutex
-	PodIPToPodUid         map[string]types.UID `json:"podIPToPodUid"`
-	ServiceIPToServiceUid map[string]types.UID `json:"serviceIPToServiceUid"`
-
-	// Pid -> SocketMap
-	// pid -> fd -> {saddr, sport, daddr, dport}
-	SocketMaps []*SocketMap // index symbolizes pid
-}
-
-// If we have information from the container runtimes
-// we would have pid's of the containers within the pod
-// and we can use that to find the podUid directly
-
-// If we don't have the pid's of the containers
-// we can use the following to find the podUid
-// {saddr+sport} -> search in podIPToPodUid -> podUid
-// {daddr+dport} -> search in serviceIPToServiceUid -> serviceUid
-// or
-// {daddr+dport} -> search in podIPToPodUid -> podUid
-
 var (
 	// default exponential backoff (*2)
 	// when attemptLimit is increased, we are blocking the events that we wait it to be processed more
@@ -149,6 +118,7 @@ var (
 
 var reverseDnsCache *cache.Cache
 var re *regexp.Regexp
+var maxPid int
 
 func init() {
 	reverseDnsCache = cache.New(defaultExpiration, purgeTime)
@@ -157,27 +127,31 @@ func init() {
 
 	// Case-insensitive matching
 	re = regexp.MustCompile(strings.Join(keywords, "|"))
+
+	var err error
+	maxPid, err = getPidMax()
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("error getting max pid")
+	}
 }
 
-func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{},
+func NewAggregator(parentCtx context.Context, ct *cri.CRITool, k8sChan chan interface{},
 	events chan interface{},
 	procEvents chan interface{},
 	tcpEvents chan interface{},
 	tlsAttachSignalChan chan uint32,
 	ds datastore.DataStore) *Aggregator {
+
 	ctx, _ := context.WithCancel(parentCtx)
-	clusterInfo := &ClusterInfo{
-		PodIPToPodUid:         map[string]types.UID{},
-		ServiceIPToServiceUid: map[string]types.UID{},
-	}
 
 	a := &Aggregator{
-		ctx:                 ctx,
-		k8sChan:             k8sChan,
-		ebpfChan:            events,
-		ebpfProcChan:        procEvents,
-		ebpfTcpChan:         tcpEvents,
-		clusterInfo:         clusterInfo,
+		ctx:          ctx,
+		ct:           ct,
+		k8sChan:      k8sChan,
+		ebpfChan:     events,
+		ebpfProcChan: procEvents,
+		ebpfTcpChan:  tcpEvents,
+		// clusterInfo:         clusterInfo,
 		ds:                  ds,
 		tlsAttachSignalChan: tlsAttachSignalChan,
 		h2Ch:                make(chan *l7_req.L7Event, 1000000),
@@ -186,84 +160,34 @@ func NewAggregator(parentCtx context.Context, k8sChan <-chan interface{},
 		liveProcesses:       make(map[uint32]struct{}),
 		rateLimiters:        make(map[uint32]*rate.Limiter),
 		pgStmts:             make(map[string]string),
-		muIndex:             atomic.Uint64{},
-		muArray:             nil,
 	}
 
-	maxPid, err := getPidMax()
+	var err error
+	a.liveProcesses, err = ct.GetPidsRunningOnContainers()
 	if err != nil {
-		log.Logger.Fatal().Err(err).Msg("error getting max pid")
+		log.Logger.Fatal().Err(err).Msg("could not get running containers")
 	}
-	sockMaps := make([]*SocketMap, maxPid+1) // index=pid
-	// initialize sockMaps
-	for i := range sockMaps {
-		sockMaps[i] = &SocketMap{
-			M:  nil, // initialized on demand later
-			mu: nil,
-		}
-	}
-	clusterInfo.SocketMaps = sockMaps
-
-	a.getLiveProcesses()
 
 	a.liveProcessesMu.RLock()
-	countLiveProcesses := len(a.liveProcesses)
+	liveProcCount := len(a.liveProcesses)
 	a.liveProcessesMu.RUnlock()
 
-	// normally, mutex per pid is straightforward solution
-	// on regular systems, maxPid is around 32768
-	// so, we allocate 32768 mutexes, which is 32768 * 24 bytes = 786KB
-	// but on 64-bit systems, maxPid can be 4194304
-	// and we don't want to allocate 4194304 mutexes, it adds up to 4194304 * 24 bytes = 100MB
-	// So, some process will have to share the mutex
-
-	// assume liveprocesses can increase up to 100 times of current count
-	// if processes exceeds the count of mutex, they will share the mutex
-	countMuArray := countLiveProcesses * 100
-	if countMuArray > maxPid {
-		countMuArray = maxPid
-	}
-	// for 2k processes, 200k mutex => 200k * 24 bytes = 4.80MB
-	// in case of maxPid is 32678, 32678 * 24 bytes = 784KB, pick the smaller one
-	a.muArray = make([]*sync.RWMutex, countMuArray)
-
-	// set distinct mutex for every live process
-	for pid := range a.liveProcesses {
-		a.muIndex.Add(1)
-		a.muArray[a.muIndex.Load()] = &sync.RWMutex{}
-		sockMaps[pid].mu = a.muArray[a.muIndex.Load()]
-		a.getAlreadyExistingSockets(pid)
-	}
+	a.clusterInfo = newClusterInfo(liveProcCount)
 
 	go a.clearSocketLines(ctx)
-	go a.updateSocketMap(ctx)
-	return a
-}
 
-func (a *Aggregator) getLiveProcesses() {
-	// get all alive processes, populate liveProcesses
-	cmd := exec.Command("ps", "-e", "-o", "pid=")
-	output, err := cmd.Output()
-	if err != nil {
-		log.Logger.Fatal().Err(err).Msg("error getting all alive processes")
-	}
+	go func() {
+		t := time.NewTicker(2 * time.Minute)
 
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			fields := strings.Fields(line)
-			if len(fields) > 0 {
-				pid := fields[0]
-				pidInt, err := strconv.Atoi(pid)
-				if err != nil {
-					log.Logger.Error().Err(err).Msgf("error converting pid to int %s", pid)
-					continue
-				}
-				a.liveProcesses[uint32(pidInt)] = struct{}{}
-			}
+		for range t.C {
+			log.Logger.Debug().
+				Int("ebpfChan-lag", len(a.ebpfChan)).
+				Int("ebpfTcpChan-lag", len(a.ebpfTcpChan)).
+				Msg("lag of channels")
 		}
-	}
+	}()
+
+	return a
 }
 
 func (a *Aggregator) Run() {
@@ -287,33 +211,8 @@ func (a *Aggregator) Run() {
 
 				err := syscall.Kill(int(pid), 0)
 				if err != nil {
-					// pid does not exist
 					delete(a.liveProcesses, pid)
-					a.removeFromClusterInfo(pid)
-
-					a.h2ParserMu.Lock()
-					for key, parser := range a.h2Parsers {
-						// h2Parsers  map[string]*http2Parser // pid-fd -> http2Parser
-						if strings.HasPrefix(key, fmt.Sprint(pid)) {
-							parser.clientHpackDecoder.Close()
-							parser.serverHpackDecoder.Close()
-
-							delete(a.h2Parsers, key)
-						}
-					}
-					a.h2ParserMu.Unlock()
-
-					a.rateLimitMu.Lock()
-					delete(a.rateLimiters, pid)
-					a.rateLimitMu.Unlock()
-
-					a.pgStmtsMu.Lock()
-					for key, _ := range a.pgStmts {
-						if strings.HasPrefix(key, fmt.Sprint(pid)) {
-							delete(a.pgStmts, key)
-						}
-					}
-					a.pgStmtsMu.Unlock()
+					a.processExit(pid)
 				}
 			}
 
@@ -322,17 +221,16 @@ func (a *Aggregator) Run() {
 	}()
 	go a.processk8s()
 
-	// TODO: determine the number of workers with benchmarking
 	cpuCount := runtime.NumCPU()
-	numWorker := 5 * cpuCount
-	if numWorker < 50 {
-		numWorker = 50 // min number
-	}
+	numWorker := cpuCount
 
 	for i := 0; i < numWorker; i++ {
-		go a.processEbpf(a.ctx)
 		go a.processEbpfTcp(a.ctx)
 		go a.processEbpfProc(a.ctx)
+	}
+
+	for i := 0; i < 4*cpuCount; i++ {
+		go a.processEbpf(a.ctx)
 	}
 
 	for i := 0; i < 2*cpuCount; i++ {
@@ -404,7 +302,8 @@ func (a *Aggregator) processEbpfTcp(ctx context.Context) {
 			switch bpfEvent.Type() {
 			case tcp_state.TCP_CONNECT_EVENT:
 				d := data.(*tcp_state.TcpConnectEvent) // copy data's value
-				a.processTcpConnect(d)
+				ctxPid := context.WithValue(a.ctx, log.LOG_CONTEXT, fmt.Sprint(d.Pid))
+				a.processTcpConnect(ctxPid, d)
 			}
 		}
 	}
@@ -424,7 +323,8 @@ func (a *Aggregator) processEbpf(ctx context.Context) {
 			switch bpfEvent.Type() {
 			case l7_req.L7_EVENT:
 				d := data.(*l7_req.L7Event) // copy data's value
-				a.processL7(ctx, d)
+				ctxPid := context.WithValue(a.ctx, log.LOG_CONTEXT, fmt.Sprint(d.Pid))
+				a.processL7(ctxPid, d)
 			case l7_req.TRACE_EVENT:
 				d := data.(*l7_req.TraceEvent)
 				rateLimiter := a.getRateLimiterForPid(d.Pid)
@@ -454,27 +354,14 @@ func (a *Aggregator) getRateLimiterForPid(pid uint32) *rate.Limiter {
 
 func (a *Aggregator) processExec(d *proc.ProcEvent) {
 	a.liveProcessesMu.Lock()
-	defer a.liveProcessesMu.Unlock()
-
 	a.liveProcesses[d.Pid] = struct{}{}
+	a.liveProcessesMu.Unlock()
 
-	// if duplicate exec event comes, underlying mutex will be changed
-	// if first assigned mutex is locked and another exec event comes, mutex will be changed
-	// and unlock of unlocked mutex now is a possibility
-	// to avoid this case, if a socket map already has a mutex, don't change it
-	if a.clusterInfo.SocketMaps[d.Pid].mu == nil {
-		// create lock on demand
-		a.muIndex.Add(1)
-		a.muArray[(a.muIndex.Load())%uint64(len(a.muArray))] = &sync.RWMutex{}
-		a.clusterInfo.SocketMaps[d.Pid].mu = a.muArray[(a.muIndex.Load())%uint64(len(a.muArray))]
-	}
+	a.clusterInfo.SignalSocketMapCreation(d.Pid)
 }
 
 func (a *Aggregator) processExit(pid uint32) {
-	a.liveProcessesMu.Lock()
-	delete(a.liveProcesses, pid)
-	a.removeFromClusterInfo(pid)
-	a.liveProcessesMu.Unlock()
+	a.clusterInfo.clearProc(pid)
 
 	a.h2ParserMu.Lock()
 	pid_s := fmt.Sprint(pid)
@@ -506,7 +393,7 @@ func (a *Aggregator) signalTlsAttachment(pid uint32) {
 	a.tlsAttachSignalChan <- pid
 }
 
-func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
+func (a *Aggregator) processTcpConnect(ctx context.Context, d *tcp_state.TcpConnectEvent) {
 	go a.signalTlsAttachment(d.Pid)
 	if d.Type_ == tcp_state.EVENT_TCP_ESTABLISHED {
 
@@ -519,21 +406,26 @@ func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
 		var ok bool
 
 		sockMap = a.clusterInfo.SocketMaps[d.Pid]
-		var skLine *SocketLine
+		if sockMap == nil {
+			// signal socket map creation and requeue event
+			log.Logger.Warn().Ctx(ctx).
+				Uint32("pid", d.Pid).Str("func", "processTcpConnect").Str("event", "ESTABLISHED").Msg("socket map not initialized")
 
-		if sockMap.mu == nil {
+			go a.clusterInfo.SignalSocketMapCreation(d.Pid)
+			a.ebpfTcpChan <- d
 			return
 		}
 
-		sockMap.mu.Lock() // lock for reading
-		if sockMap.M == nil {
-			sockMap.M = make(map[uint64]*SocketLine)
-		}
+		var skLine *SocketLine
 
+		sockMap.mu.RLock()
 		skLine, ok = sockMap.M[d.Fd]
+		sockMap.mu.RUnlock()
 		if !ok {
-			skLine = NewSocketLine(d.Pid, d.Fd)
-			sockMap.M[d.Fd] = skLine
+			go sockMap.SignalSocketLine(ctx, d.Fd) // signal for creation
+			// requeue connect event
+			a.ebpfTcpChan <- d
+			return
 		}
 
 		skLine.AddValue(
@@ -547,9 +439,6 @@ func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
 				Dport: d.DPort,
 			},
 		)
-
-		sockMap.mu.Unlock() // unlock for writing
-
 	} else if d.Type_ == tcp_state.EVENT_TCP_CLOSED {
 		var sockMap *SocketMap
 		var ok bool
@@ -560,23 +449,21 @@ func (a *Aggregator) processTcpConnect(d *tcp_state.TcpConnectEvent) {
 		}
 
 		sockMap = a.clusterInfo.SocketMaps[d.Pid]
+		if sockMap == nil {
+			// signal socket map creation and requeue event
+			log.Logger.Warn().Ctx(ctx).
+				Uint32("pid", d.Pid).Str("func", "processTcpConnect").Str("event", "ESTABLISHED").Msg("socket map not initialized")
+
+			go a.clusterInfo.SignalSocketMapCreation(d.Pid)
+			a.ebpfTcpChan <- d
+			return
+		}
 
 		var skLine *SocketLine
-
-		if sockMap.mu == nil {
-			return
-		}
-
-		sockMap.mu.Lock() // lock for reading
-		if sockMap.M == nil {
-			sockMap.M = make(map[uint64]*SocketLine)
-		}
 		skLine, ok = sockMap.M[d.Fd]
 		if !ok {
-			sockMap.mu.Unlock() // unlock for reading
 			return
 		}
-		sockMap.mu.Unlock() // unlock for reading
 
 		// If connection is established before, add the close event
 		skLine.AddValue(
@@ -684,8 +571,8 @@ func (a *Aggregator) processHttp2Frames() {
 			return
 		}
 
-		skInfo := a.findRelatedSocket(a.ctx, d)
-		if skInfo == nil {
+		skInfo, err := a.findRelatedSocket(a.ctx, d)
+		if skInfo == nil || err != nil {
 			return
 		}
 
@@ -709,7 +596,7 @@ func (a *Aggregator) processHttp2Frames() {
 		}
 
 		// toUID is set to :authority header in client frame
-		err := a.setFromTo(skInfo, d, req, req.ToUID)
+		err = a.setFromTo(skInfo, d, req, req.ToUID)
 		if err != nil {
 			return
 		}
@@ -929,43 +816,43 @@ func (a *Aggregator) getSvcWithIP(addr string) (types.UID, bool) {
 	return svcUid, ok
 }
 
-func (a *Aggregator) setFromTo(skInfo *SockInfo, d *l7_req.L7Event, reqDto *datastore.Request, hostHeader string) error {
+func (a *Aggregator) setFromTo(skInfo *SockInfo, d *l7_req.L7Event, event datastore.DirectionalEvent, hostHeader string) error {
 	// find pod info
 	podUid, ok := a.getPodWithIP(skInfo.Saddr)
 	if !ok {
 		return fmt.Errorf("error finding pod with sockets saddr")
 	}
 
-	reqDto.FromUID = string(podUid)
-	reqDto.FromType = "pod"
-	reqDto.FromPort = skInfo.Sport
-	reqDto.ToPort = skInfo.Dport
+	event.SetFromUID(string(podUid))
+	event.SetFromType(POD)
+	event.SetFromPort(skInfo.Sport)
+	event.SetToPort(skInfo.Dport)
 
 	// find service info
 	svcUid, ok := a.getSvcWithIP(skInfo.Daddr)
 	if ok {
-		reqDto.ToUID = string(svcUid)
-		reqDto.ToType = "service"
+		event.SetToUID(string(svcUid))
+		event.SetToType(SVC)
 	} else {
 		podUid, ok := a.getPodWithIP(skInfo.Daddr)
 
 		if ok {
-			reqDto.ToUID = string(podUid)
-			reqDto.ToType = "pod"
+			event.SetToUID(string(podUid))
+			event.SetToType(POD)
 		} else {
 			// 3rd party url
 			if hostHeader != "" {
-				reqDto.ToUID = hostHeader
-				reqDto.ToType = "outbound"
+				event.SetToUID(hostHeader)
+				event.SetToType(OUTBOUND)
 			} else {
 				remoteDnsHost, err := getHostnameFromIP(skInfo.Daddr)
 				if err == nil {
 					// dns lookup successful
-					reqDto.ToUID = remoteDnsHost
-					reqDto.ToType = "outbound"
+					event.SetToUID(remoteDnsHost)
+					event.SetToType(OUTBOUND)
 				} else {
-					reqDto.ToUID = skInfo.Daddr
-					reqDto.ToType = "outbound"
+					event.SetToUID(skInfo.Daddr)
+					event.SetToType(OUTBOUND)
 				}
 			}
 		}
@@ -978,54 +865,199 @@ func (a *Aggregator) getConnKey(pid uint32, fd uint64) string {
 	return fmt.Sprintf("%d-%d", pid, fd)
 }
 
-func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
-	// other protocols events come as whole, but http2 events come as frames
+type KafkaMessage struct {
+	TopicName string
+	Partition int32
+	Key       string
+	Value     string
+	Type      string // PUBLISH or CONSUME
+}
+
+func (a *Aggregator) decodeKafkaPayload(d *l7_req.L7Event) ([]*KafkaMessage, error) {
+	// apiVersion is written in request header
+	// response header only has correlation_id
+	// so while returning a response message from kafka, we need to send the api version to userspace
+	// in order to parse the response message.
+	// d.KafkaApiVersion is set in kafka request event
+
+	// r := bytes.NewReader(d.Payload[:d.PayloadSize])
+
+	// var apiVersion int16    // only in request
+	// var clientID string     // only in request
+	// var correlationID int32 // both in request and response
+	// var message protocol.Message
+	// var err error
+
+	result := make([]*KafkaMessage, 0)
+
+	if d.Method == l7_req.KAFKA_PRODUCE_REQUEST {
+		saramaReq, _, err := kafka.DecodeRequest(bytes.NewReader(d.Payload[:d.PayloadSize]))
+		if err != nil {
+			// non-kafka messages sometimes classifed as kafka messages on kernel side
+			return nil, fmt.Errorf("kafka decode request failure: %w", err)
+		} else {
+			rs := saramaReq.Body.(*kafka.ProduceRequest).Records
+			for topicName, r := range rs {
+				for partition, record := range r {
+					records := record.RecordBatch.Records
+					for _, msg := range records {
+						result = append(result, &KafkaMessage{
+							TopicName: topicName,
+							Partition: partition,
+							Key:       string(msg.Key),
+							Value:     string(msg.Value),
+							Type:      "PUBLISH",
+						})
+					}
+				}
+			}
+		}
+	} else if d.Method == l7_req.KAFKA_FETCH_RESPONSE {
+		payload := d.Payload[:d.PayloadSize]
+		// decode response header first
+		decodedHeader := &kafka.ResponseHeader{}
+		off, err := kafka.VersionedDecode(payload, decodedHeader, kafka.ResponseHeaderVersion(1, d.KafkaApiVersion))
+		if err != nil {
+			return nil, fmt.Errorf("kafka decode response header failure: %w", err)
+		}
+
+		// skip header
+		payload = payload[off:]
+		fetchApiVersion := d.KafkaApiVersion
+
+		res := &kafka.FetchResponse{}
+		_, err = kafka.VersionedDecode(payload, res, fetchApiVersion)
+		if err != nil {
+			return nil, fmt.Errorf("kafka decode fetch response failure: %w", err)
+		} else {
+			for topic, mapfrb := range res.Blocks {
+				for partition, frb := range mapfrb {
+					log.Logger.Warn().Int32("partition", partition).Msg("sarama kafka fetch data- partition")
+					recordSet := frb.RecordsSet
+					for _, record := range recordSet {
+						// record.MsgSet --> legacy records
+						// record.RecordBatch --> default records
+						for _, r := range record.RecordBatch.Records {
+							result = append(result, &KafkaMessage{
+								TopicName: topic,
+								Partition: partition,
+								Key:       string(r.Key),
+								Value:     string(r.Value),
+								Type:      "CONSUME",
+							})
+						}
+					}
+				}
+			}
+		}
+
+	}
+
+	return result, nil
+}
+
+func (a *Aggregator) processHttp2Event(d *l7_req.L7Event) {
+	// http2 events come as frames
 	// we need to aggregate frames to get the whole request
-	defer func() {
-		if r := recover(); r != nil {
-			// TODO: we need to fix this properly
-			log.Logger.Debug().Msgf("probably a http2 frame sent on a closed chan: %v", r)
-		}
-	}()
+	var ok bool
 
-	if d.Protocol == l7_req.L7_PROTOCOL_HTTP2 {
-		var ok bool
+	a.liveProcessesMu.RLock()
+	_, ok = a.liveProcesses[d.Pid]
+	a.liveProcessesMu.RUnlock()
+	if !ok {
+		return // if a late event comes, do not create parsers and new worker to avoid memory leak
+	}
 
-		a.liveProcessesMu.RLock()
-		_, ok = a.liveProcesses[d.Pid]
-		a.liveProcessesMu.RUnlock()
-		if !ok {
-			return // if a late event comes, do not create parsers and new worker to avoid memory leak
-		}
+	a.h2Ch <- d
+	return
+}
 
-		a.h2Ch <- d
+func (a *Aggregator) processKafkaEvent(ctx context.Context, d *l7_req.L7Event) {
+	kafkaMessages, err := a.decodeKafkaPayload(d)
+	if err != nil || len(kafkaMessages) == 0 {
 		return
 	}
 
-	var path string
-	if d.Protocol == l7_req.L7_PROTOCOL_POSTGRES {
-		// parse sql command from payload
-		// path = sql command
-		// method = sql message type
-		var err error
-		path, err = a.parseSqlCommand(d)
-		if err != nil {
-			log.Logger.Error().AnErr("err", err)
+	skInfo, err := a.findRelatedSocket(ctx, d)
+	if skInfo == nil || err != nil {
+		// requeue event if this is its first time
+		if !d.PutBack {
+			d.PutBack = true
+			a.ebpfChan <- d
 			return
 		}
-	}
 
-	skInfo := a.findRelatedSocket(ctx, d)
-	if skInfo == nil {
-		log.Logger.Debug().Uint32("pid", d.Pid).
+		log.Logger.Debug().
+			Ctx(ctx).
+			Err(err).
+			Uint32("pid", d.Pid).
+			Uint64("fd", d.Fd).
+			Uint64("writeTime", d.WriteTimeNs).
+			Str("protocol", d.Protocol).
+			Any("payload", string(d.Payload[:d.PayloadSize])).
+			Msg("discarding kafka event, socket not found")
+
+		return
+	}
+	for _, msg := range kafkaMessages {
+		event := &datastore.KafkaEvent{
+			StartTime: int64(convertKernelTimeToUserspaceTime(d.WriteTimeNs) / 1e6),
+			Latency:   d.Duration,
+			FromIP:    skInfo.Saddr,
+			FromType:  "",
+			FromUID:   "",
+			FromPort:  0,
+			ToIP:      skInfo.Daddr,
+			ToType:    "",
+			ToUID:     "",
+			ToPort:    0,
+			Tls:       d.Tls,
+			Topic:     msg.TopicName,
+			Partition: uint32(msg.Partition),
+			Key:       msg.Key,
+			Value:     msg.Value,
+			Type:      msg.Type,
+			Tid:       d.Tid,
+			Seq:       d.Seq,
+		}
+
+		err := a.setFromTo(skInfo, d, event, "")
+		if err != nil {
+			return
+		}
+
+		if event.Type == "CONSUME" {
+			// TODO: reverse the from and to
+			// do we show arrows originating from outbound services ?
+		}
+
+		log.Logger.Warn().Ctx(ctx).Any("kafkaEvent", event).Msg("persist kafka event")
+		err = a.ds.PersistKafkaEvent(event)
+		if err != nil {
+			log.Logger.Error().Err(err).Msg("error persisting kafka event")
+		}
+	}
+	return
+
+}
+
+func (a *Aggregator) processAmqpEvent(ctx context.Context, d *l7_req.L7Event) {
+	skInfo, err := a.findRelatedSocket(ctx, d)
+	if skInfo == nil || err != nil {
+		// requeue event if this is its first time
+		if !d.PutBack {
+			d.PutBack = true
+			a.ebpfChan <- d
+			return
+		}
+		log.Logger.Debug().Uint32("pid", d.Pid).Err(err).
 			Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
-			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("socket not found")
-
-		// go check pid-fd for the socket
-		a.fetchSocketOnNotFound(ctx, d)
+			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).
+			Msg("discarding amqp event, socket not found")
+		return
 	}
 
-	reqDto := datastore.Request{
+	reqDto := &datastore.Request{
 		StartTime:  int64(convertKernelTimeToUserspaceTime(d.WriteTimeNs) / 1e6),
 		Latency:    d.Duration,
 		FromIP:     skInfo.Saddr,
@@ -1036,52 +1068,259 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 		StatusCode: d.Status,
 		FailReason: "",
 		Method:     d.Method,
+		Path:       "",
 		Tid:        d.Tid,
 		Seq:        d.Seq,
 	}
 
-	// Since we process events concurrently
-	// TCP events and L7 events can be processed out of order
-
-	var reqHostHeader string
-	// parse http payload, extract path, query params, headers
-	if d.Protocol == l7_req.L7_PROTOCOL_HTTP {
-		_, path, _, reqHostHeader = parseHttpPayload(string(d.Payload[0:d.PayloadSize]))
-	}
-
-	if d.Protocol == l7_req.L7_PROTOCOL_REDIS {
-		path = string(d.Payload[0:d.PayloadSize])
-	}
-
-	err := a.setFromTo(skInfo, d, &reqDto, reqHostHeader)
+	err = a.setFromTo(skInfo, d, reqDto, "")
 	if err != nil {
 		return
 	}
-
-	reqDto.Path = path
-	reqDto.Completed = !d.Failed
 
 	// In AMQP-DELIVER or REDIS-PUSHED_EVENT event, we are capturing from read syscall,
 	// exchange sockets
 	// In Alaz context, From is always the one that makes the write
 	// and To is the one that makes the read
-	if (d.Protocol == l7_req.L7_PROTOCOL_AMQP && d.Method == l7_req.DELIVER) ||
-		(d.Protocol == l7_req.L7_PROTOCOL_REDIS && d.Method == l7_req.REDIS_PUSHED_EVENT) {
-		reqDto.FromIP, reqDto.ToIP = reqDto.ToIP, reqDto.FromIP
-		reqDto.FromPort, reqDto.ToPort = reqDto.ToPort, reqDto.FromPort
-		reqDto.FromUID, reqDto.ToUID = reqDto.ToUID, reqDto.FromUID
-		reqDto.FromType, reqDto.ToType = reqDto.ToType, reqDto.FromType
+	if d.Method == l7_req.DELIVER {
+		reqDto.ReverseDirection()
+	}
+
+	err = a.ds.PersistRequest(reqDto)
+	if err != nil {
+		log.Logger.Error().Err(err).Msg("error persisting request")
+	}
+}
+
+func (a *Aggregator) processRedisEvent(ctx context.Context, d *l7_req.L7Event) {
+	query := string(d.Payload[0:d.PayloadSize])
+
+	skInfo, err := a.findRelatedSocket(ctx, d)
+	if skInfo == nil || err != nil {
+		// requeue event if this is its first time
+		if !d.PutBack {
+			d.PutBack = true
+			a.ebpfChan <- d
+			return
+		}
+		log.Logger.Debug().
+			Ctx(ctx).
+			Err(err).
+			Uint32("pid", d.Pid).
+			Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
+			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("discarding redis event, socket not found")
+		return
+	}
+
+	reqDto := &datastore.Request{
+		StartTime:  int64(convertKernelTimeToUserspaceTime(d.WriteTimeNs) / 1e6),
+		Latency:    d.Duration,
+		FromIP:     skInfo.Saddr,
+		ToIP:       skInfo.Daddr,
+		Protocol:   d.Protocol,
+		Tls:        d.Tls,
+		Completed:  true,
+		StatusCode: d.Status,
+		FailReason: "",
+		Method:     d.Method,
+		Path:       query,
+		Tid:        d.Tid,
+		Seq:        d.Seq,
+	}
+
+	err = a.setFromTo(skInfo, d, reqDto, "")
+	if err != nil {
+		return
+	}
+
+	// REDIS-PUSHED_EVENT event, we are capturing from read syscall,
+	// exchange sockets
+	// In Alaz context, From is always the one that makes the write
+	// and To is the one that makes the read
+	if d.Method == l7_req.REDIS_PUSHED_EVENT {
+		reqDto.ReverseDirection()
+	}
+
+	err = a.ds.PersistRequest(reqDto)
+	if err != nil {
+		log.Logger.Error().Ctx(ctx).
+			Err(err).Msg("error persisting request")
+	}
+}
+
+func (a *Aggregator) AdvertiseDebugData() {
+	http.HandleFunc("/pid-sock-map",
+		func(w http.ResponseWriter, r *http.Request) {
+			queryParam := r.URL.Query().Get("number")
+			if queryParam == "" {
+				http.Error(w, "Missing query parameter 'number'", http.StatusBadRequest)
+				return
+			}
+			number, err := strconv.ParseUint(queryParam, 10, 32)
+			if err != nil {
+				http.Error(w, "Invalid query parameter 'number'", http.StatusBadRequest)
+				return
+			}
+			pid := uint32(number)
+
+			sockMap := a.clusterInfo.SocketMaps[pid]
+			if sockMap == nil {
+				http.Error(w, "Pid not found", http.StatusNotFound)
+				return
+			} else {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_ = json.NewEncoder(w).Encode(sockMap)
+				return
+			}
+		},
+	)
+
+	// http.HandleFunc("/process-latency",
+	// 	func(w http.ResponseWriter, r *http.Request) {
+	// 		latency := a.totalLatency.Load()
+	// 		count := a.latencyCount.Load()
+	// 		if count == 0 {
+	// 			http.Error(w, "No data available", http.StatusNotFound)
+	// 			return
+	// 		}
+	// 		avgLatency := float64(latency) / float64(count)
+	// 		w.Header().Set("Content-Type", "application/json")
+	// 		w.WriteHeader(http.StatusOK)
+	// 		_ = json.NewEncoder(w).Encode(map[string]float64{
+	// 			"average_latency_in_ns": avgLatency,
+	// 		})
+	// 		return
+	// 	})
+}
+
+func (a *Aggregator) processHttpEvent(ctx context.Context, d *l7_req.L7Event) {
+	var reqHostHeader string
+	var path string
+	// parse http payload, extract path, query params, headers
+	if d.Protocol == l7_req.L7_PROTOCOL_HTTP {
+		_, path, _, reqHostHeader = parseHttpPayload(string(d.Payload[0:d.PayloadSize]))
+	}
+
+	skInfo, err := a.findRelatedSocket(ctx, d)
+	if skInfo == nil || err != nil {
+		// requeue event if this is its first time
+		if !d.PutBack {
+			d.PutBack = true
+			a.ebpfChan <- d
+			return
+		}
+		log.Logger.Debug().Uint32("pid", d.Pid).
+			Err(err).
+			Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
+			Str("protocol", d.Protocol).
+			Any("payload", string(d.Payload[:d.PayloadSize])).
+			Msg("discarding http event, socket not found")
+		return
+	}
+
+	reqDto := &datastore.Request{
+		StartTime:  int64(convertKernelTimeToUserspaceTime(d.WriteTimeNs) / 1e6),
+		Latency:    d.Duration,
+		FromIP:     skInfo.Saddr,
+		ToIP:       skInfo.Daddr,
+		Protocol:   d.Protocol,
+		Tls:        d.Tls,
+		Completed:  true,
+		StatusCode: d.Status,
+		FailReason: "",
+		Method:     d.Method,
+		Path:       path,
+		Tid:        d.Tid,
+		Seq:        d.Seq,
+	}
+
+	err = a.setFromTo(skInfo, d, reqDto, reqHostHeader)
+	if err != nil {
+		return
 	}
 
 	if d.Protocol == l7_req.L7_PROTOCOL_HTTP && d.Tls {
 		reqDto.Protocol = "HTTPS"
 	}
 
-	err = a.ds.PersistRequest(&reqDto)
+	err = a.ds.PersistRequest(reqDto)
 	if err != nil {
 		log.Logger.Error().Err(err).Msg("error persisting request")
 	}
 
+}
+
+func (a *Aggregator) processPostgresEvent(ctx context.Context, d *l7_req.L7Event) {
+	// parse sql command from payload
+	// path = sql command
+	// method = sql message type
+
+	query, err := a.parseSqlCommand(d)
+	if err != nil {
+		log.Logger.Error().AnErr("err", err)
+		return
+	}
+
+	skInfo, err := a.findRelatedSocket(ctx, d)
+	if skInfo == nil {
+		// requeue event if this is its first time
+		if !d.PutBack {
+			d.PutBack = true
+			a.ebpfChan <- d
+			return
+		}
+
+		log.Logger.Debug().Uint32("pid", d.Pid).
+			Err(err).
+			Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
+			Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("discarding postgres event, socket not found")
+
+		return
+	}
+
+	reqDto := &datastore.Request{
+		StartTime:  int64(convertKernelTimeToUserspaceTime(d.WriteTimeNs) / 1e6),
+		Latency:    d.Duration,
+		FromIP:     skInfo.Saddr,
+		ToIP:       skInfo.Daddr,
+		Protocol:   d.Protocol,
+		Tls:        d.Tls,
+		Completed:  true,
+		StatusCode: d.Status,
+		FailReason: "",
+		Method:     d.Method,
+		Path:       query,
+		Tid:        d.Tid,
+		Seq:        d.Seq,
+	}
+
+	err = a.setFromTo(skInfo, d, reqDto, "")
+	if err != nil {
+		return
+	}
+
+	err = a.ds.PersistRequest(reqDto)
+	if err != nil {
+		log.Logger.Error().Err(err).Msg("error persisting request")
+	}
+}
+
+func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
+	switch d.Protocol {
+	case l7_req.L7_PROTOCOL_HTTP2:
+		a.processHttp2Event(d)
+	case l7_req.L7_PROTOCOL_POSTGRES:
+		a.processPostgresEvent(ctx, d)
+	case l7_req.L7_PROTOCOL_HTTP:
+		a.processHttpEvent(ctx, d)
+	case l7_req.L7_PROTOCOL_REDIS:
+		a.processRedisEvent(ctx, d)
+	case l7_req.L7_PROTOCOL_AMQP:
+		a.processAmqpEvent(ctx, d)
+	case l7_req.L7_PROTOCOL_KAFKA:
+		a.processKafkaEvent(ctx, d)
+	}
 }
 
 // reverse dns lookup
@@ -1106,246 +1345,28 @@ func getHostnameFromIP(ipAddr string) (string, error) {
 	}
 }
 
-// get all tcp sockets for the pid
-// iterate through all sockets
-// create a new socket line for each socket
-// add it to the socket map
-func (a *Aggregator) getAlreadyExistingSockets(pid uint32) {
-	// no need for locking because this is called firstmost and no other goroutine is running
-
-	socks := map[string]sock{}
-	sockMap := a.fetchSocketMap(pid)
-
-	// Get the sockets for the process.
-	var err error
-	for _, f := range []string{"tcp", "tcp6"} {
-		sockPath := strings.Join([]string{"/proc", fmt.Sprint(pid), "net", f}, "/")
-
-		ss, err := readSockets(sockPath)
-		if err != nil {
-			continue
-		}
-
-		for _, s := range ss {
-			socks[s.Inode] = sock{TcpSocket: s}
-		}
-	}
-
-	// Get the file descriptors for the process.
-	fdDir := strings.Join([]string{"/proc", fmt.Sprint(pid), "fd"}, "/")
-	fdEntries, err := os.ReadDir(fdDir)
-	if err != nil {
-		return
-	}
-
-	fds := make([]Fd, 0, len(fdEntries))
-	for _, entry := range fdEntries {
-		fd, err := strconv.ParseUint(entry.Name(), 10, 64)
-		if err != nil {
-			continue
-		}
-		dest, err := os.Readlink(path.Join(fdDir, entry.Name()))
-		if err != nil {
-			continue
-		}
-		var socketInode string
-		if strings.HasPrefix(dest, "socket:[") && strings.HasSuffix(dest, "]") {
-			socketInode = dest[len("socket:[") : len(dest)-1]
-		}
-		fds = append(fds, Fd{Fd: fd, Dest: dest, SocketInode: socketInode})
-	}
-
-	// Match the sockets to the file descriptors.
-	for _, fd := range fds {
-		if fd.SocketInode != "" {
-			// add to values
-			s := socks[fd.SocketInode].TcpSocket
-			sockInfo := &SockInfo{
-				Pid:   pid,
-				Fd:    fd.Fd,
-				Saddr: s.SAddr.IP().String(),
-				Sport: s.SAddr.Port(),
-				Daddr: s.DAddr.IP().String(),
-				Dport: s.DAddr.Port(),
-			}
-
-			if sockInfo.Saddr == "zero IP" || sockInfo.Daddr == "zero IP" || sockInfo.Sport == 0 || sockInfo.Dport == 0 {
-				continue
-			}
-
-			skLine := NewSocketLine(pid, fd.Fd)
-			skLine.AddValue(0, sockInfo)
-
-			if sockMap.mu == nil {
-				return
-			}
-
-			sockMap.mu.Lock()
-			if sockMap.M == nil {
-				sockMap.M = make(map[uint64]*SocketLine)
-			}
-			sockMap.M[fd.Fd] = skLine
-			sockMap.mu.Unlock()
-		}
-	}
-
-}
-
-func (a *Aggregator) fetchSkInfo(ctx context.Context, skLine *SocketLine, d *l7_req.L7Event) *SockInfo {
-	rc := attemptLimit
-	rt := retryInterval
-	var skInfo *SockInfo
-	var err error
-
-	for {
-		skInfo, err = skLine.GetValue(d.WriteTimeNs)
-		if err == nil && skInfo != nil {
-			break
-		}
-		// log.Logger.Debug().Err(err).Uint32("pid", d.Pid).Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).Msg("retry to get skInfo...")
-		rc--
-		if rc == 0 {
-			break
-		}
-		time.Sleep(rt)
-		rt *= 2 // exponential backoff
-
-		select {
-		case <-ctx.Done():
-			log.Logger.Debug().Msg("processL7 exiting, stop retrying...")
-			return nil
-		default:
-			continue
-		}
-	}
-
-	return skInfo
-}
-
-func (a *Aggregator) removeFromClusterInfo(pid uint32) {
-	sockMap := a.clusterInfo.SocketMaps[pid]
-	if sockMap.mu == nil {
-		return
-	}
-	sockMap.mu.Lock()
-	sockMap.M = nil
-	sockMap.mu.Unlock()
-}
-
-func (a *Aggregator) fetchSocketMap(pid uint32) *SocketMap {
-	sockMap := a.clusterInfo.SocketMaps[pid]
-
-	if sockMap.mu == nil {
-		return nil
-	}
-
-	sockMap.mu.Lock()
-	if sockMap.M == nil {
-		sockMap.M = make(map[uint64]*SocketLine)
-	}
-	sockMap.mu.Unlock()
-
-	return sockMap
-}
-
-// This is a mitigation for the case a tcp event is missed
-func (a *Aggregator) updateSocketMap(ctx context.Context) {
-	ticker := time.NewTicker(3 * time.Minute)
-
-	f := func() {
-		a.liveProcessesMu.RLock()
-		defer a.liveProcessesMu.RUnlock()
-		for pid := range a.liveProcesses {
-			sockMap := a.clusterInfo.SocketMaps[pid]
-			if sockMap.mu == nil {
-				continue
-			}
-
-			sockMap.mu.Lock()
-			for _, skLine := range sockMap.M {
-				skLine.getConnectionInfo()
-			}
-			sockMap.mu.Unlock()
-		}
-	}
-
-	for {
-		select {
-		case <-ticker.C:
-			f()
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-
-func (a *Aggregator) fetchSocketOnNotFound(ctx context.Context, d *l7_req.L7Event) bool {
-	a.liveProcessesMu.Lock()
-
-	a.liveProcesses[d.Pid] = struct{}{}
-	sockMap := a.clusterInfo.SocketMaps[d.Pid]
-	// pid does not exists
-	// acquire sockMap lock
-
-	// in case of reference to mu is nil, pid exec event did not come yet
-	// create a new mutex for the pid
-	// to avoid race around the mutex, we need to lock the liveProcessesMu
-	if sockMap.mu == nil {
-		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("fetchSocketOnNotFound: pid not found")
-
-		a.muIndex.Add(1)
-		a.muArray[(a.muIndex.Load())%uint64(len(a.muArray))] = &sync.RWMutex{}
-		a.clusterInfo.SocketMaps[d.Pid].mu = a.muArray[(a.muIndex.Load())%uint64(len(a.muArray))]
-	}
-	a.liveProcessesMu.Unlock()
-
-	// creates sockMap.M
-	skInfo := a.findRelatedSocket(ctx, d)
-	if skInfo == nil {
-		// go try reading from kernel files
-		err := sockMap.M[d.Fd].getConnectionInfo()
-		if err != nil {
-			log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Err(err).Msg("fetchSocketOnNotFound: failed to get connection info")
-			return false
-		} else {
-			log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("fetchSocketOnNotFound: connection info found")
-			return true
-		}
-	}
-	return true
-}
-
-func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) *SockInfo {
+func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) (*SockInfo, error) {
 	sockMap := a.clusterInfo.SocketMaps[d.Pid]
 	// acquire sockMap lock
-
-	if sockMap.mu == nil {
-		return nil
+	if sockMap == nil {
+		go a.clusterInfo.SignalSocketMapCreation(d.Pid)
+		return nil, fmt.Errorf("socket map not initialized for pid=%d, fd=%d", d.Pid, d.Fd)
 	}
 
-	sockMap.mu.Lock()
-
-	if sockMap.M == nil {
-		sockMap.M = make(map[uint64]*SocketLine)
-	}
-
+	sockMap.mu.RLock()
 	skLine, ok := sockMap.M[d.Fd]
+	sockMap.mu.RUnlock()
 	if !ok {
-		log.Logger.Debug().Uint32("pid", d.Pid).Uint64("fd", d.Fd).Msg("create skLine...")
 		// start new socket line, find already established connections
-		skLine = NewSocketLine(d.Pid, d.Fd)
-		sockMap.M[d.Fd] = skLine
+		go sockMap.SignalSocketLine(ctx, d.Fd)
+		return nil, fmt.Errorf("socket line not initialized for fd=%d, pid=%d", d.Fd, d.Pid)
 	}
 
-	// release sockMap lock
-	sockMap.mu.Unlock()
-
-	skInfo := a.fetchSkInfo(ctx, skLine, d)
-	if skInfo == nil {
-		return nil
+	skInfo, err := skLine.GetValue(d.WriteTimeNs)
+	if err != nil {
+		return nil, fmt.Errorf("could not find remote peer from given timestamp, err=%v, fd=%d, pid=%d", err, d.Fd, d.Pid)
 	}
-
-	return skInfo
+	return skInfo, nil
 }
 
 func (a *Aggregator) parseSqlCommand(d *l7_req.L7Event) (string, error) {
@@ -1353,6 +1374,10 @@ func (a *Aggregator) parseSqlCommand(d *l7_req.L7Event) (string, error) {
 	var sqlCommand string
 	if d.Method == l7_req.SIMPLE_QUERY {
 		// Q, 4 bytes of length, sql command
+
+		if len(r) < 5 {
+			return "", fmt.Errorf("too short for a sql query")
+		}
 
 		// skip Q, (simple query)
 		r = r[1:]
@@ -1490,6 +1515,7 @@ func (a *Aggregator) sendOpenConnection(sl *SocketLine) {
 	}
 }
 
+// TODO: connection send is made here, sendOpenConnection must be called, refactor this func and its calling place
 func (a *Aggregator) clearSocketLines(ctx context.Context) {
 	ticker := time.NewTicker(120 * time.Second)
 	skLineCh := make(chan *SocketLine, 1000)
@@ -1510,7 +1536,7 @@ func (a *Aggregator) clearSocketLines(ctx context.Context) {
 
 	for range ticker.C {
 		for _, sockMap := range a.clusterInfo.SocketMaps {
-			if sockMap.mu == nil {
+			if sockMap == nil {
 				continue
 			}
 			sockMap.mu.Lock()

@@ -23,6 +23,7 @@ const (
 	BPF_L7_PROTOCOL_POSTGRES
 	BPF_L7_PROTOCOL_HTTP2
 	BPF_L7_PROTOCOL_REDIS
+	BPF_L7_PROTOCOL_KAFKA
 )
 
 // for user space
@@ -32,6 +33,7 @@ const (
 	L7_PROTOCOL_AMQP     = "AMQP"
 	L7_PROTOCOL_POSTGRES = "POSTGRES"
 	L7_PROTOCOL_REDIS    = "REDIS"
+	L7_PROTOCOL_KAFKA    = "KAFKA"
 	L7_PROTOCOL_UNKNOWN  = "UNKNOWN"
 )
 
@@ -51,6 +53,8 @@ func (e L7ProtocolConversion) String() string {
 		return L7_PROTOCOL_HTTP2
 	case BPF_L7_PROTOCOL_REDIS:
 		return L7_PROTOCOL_REDIS
+	case BPF_L7_PROTOCOL_KAFKA:
+		return L7_PROTOCOL_KAFKA
 	case BPF_L7_PROTOCOL_UNKNOWN:
 		return L7_PROTOCOL_UNKNOWN
 	default:
@@ -116,6 +120,13 @@ const (
 	METHOD_REDIS_PING
 )
 
+// match with values in l7.c, order is important
+const (
+	BPF_KAFKA_METHOD_UNKNOWN = iota
+	METHOD_KAFKA_PRODUCE_REQUEST
+	METHOD_KAFKA_FETCH_RESPONSE
+)
+
 // for http, user space
 const (
 	GET     = "GET"
@@ -153,6 +164,12 @@ const (
 	REDIS_COMMAND      = "COMMAND"
 	REDIS_PUSHED_EVENT = "PUSHED_EVENT"
 	REDIS_PING         = "PING"
+)
+
+// for kafka, user space
+const (
+	KAFKA_PRODUCE_REQUEST = "PRODUCE_REQUEST"
+	KAFKA_FETCH_RESPONSE  = "FETCH_RESPONSE"
 )
 
 // Custom type for the enumeration
@@ -248,6 +265,21 @@ func (e RedisMethodConversion) String() string {
 	}
 }
 
+// Custom type for the enumeration
+type KafkaMethodConversion uint32
+
+// String representation of the enumeration values
+func (e KafkaMethodConversion) String() string {
+	switch e {
+	case METHOD_KAFKA_PRODUCE_REQUEST:
+		return KAFKA_PRODUCE_REQUEST
+	case METHOD_KAFKA_FETCH_RESPONSE:
+		return KAFKA_FETCH_RESPONSE
+	default:
+		return "Unknown"
+	}
+}
+
 var FirstKernelTime uint64 = 0 // nanoseconds since boot
 var FirstUserspaceTime uint64 = 0
 
@@ -282,7 +314,8 @@ type bpfL7Event struct {
 	_                   [1]byte
 	Seq                 uint32
 	Tid                 uint32
-	_                   [4]byte
+	KafkaApiVersion     int16
+	_                   [2]byte
 }
 
 type bpfTraceEvent struct {
@@ -324,6 +357,11 @@ type L7Event struct {
 	WriteTimeNs         uint64 // start time of write syscall
 	Tid                 uint32
 	Seq                 uint32 // tcp seq num
+	KafkaApiVersion     int16
+
+	// This bool is actually related to aggregator logic. Means this events processing somehow failed and put back into channel for retry.
+	// Maybe we can wrap L7Event and add this field on top.
+	PutBack bool
 }
 
 const L7_EVENT = "l7_event"
@@ -574,6 +612,12 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 	go func() {
 		var record perf.Record
 		droppedCount := 0
+		go func() {
+			t := time.NewTicker(1 * time.Minute)
+			for range t.C {
+				log.Logger.Debug().Int("count", droppedCount).Msg("dropped l7 events")
+			}
+		}()
 		read := func() {
 			err := l7p.l7Events.ReadInto(&record)
 			if err != nil {
@@ -611,6 +655,9 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 				method = Http2MethodConversion(l7Event.Method).String()
 			case L7_PROTOCOL_REDIS:
 				method = RedisMethodConversion(l7Event.Method).String()
+			case L7_PROTOCOL_KAFKA:
+				method = KafkaMethodConversion(l7Event.Method).String()
+			// no method set for kafka on kernel side
 			default:
 				method = "Unknown"
 			}
@@ -634,6 +681,7 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 				WriteTimeNs:         l7Event.WriteTimeNs,
 				Tid:                 l7Event.Tid,
 				Seq:                 l7Event.Seq,
+				KafkaApiVersion:     l7Event.KafkaApiVersion,
 			}
 
 			go func(l7Event *L7Event) {
@@ -641,14 +689,6 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 				case ch <- l7Event:
 				default:
 					droppedCount++
-					if droppedCount%100 == 0 {
-						log.Logger.Warn().
-							Str("protocol", l7Event.Protocol).
-							Str("method", l7Event.Method).
-							Uint32("pid", l7Event.Pid).
-							Uint32("status", l7Event.Status).
-							Msg("channel full, dropping l7 event")
-					}
 				}
 			}(userspacel7Event)
 		}
@@ -664,10 +704,19 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 
 	go func() {
 		var record perf.Record
+		droppedCount := 0
+
+		go func() {
+			t := time.NewTicker(1 * time.Minute)
+			for range t.C {
+				log.Logger.Debug().Int("count", droppedCount).Msg("dropped trace events")
+			}
+		}()
+
 		read := func() {
 			err := l7p.traffic.ReadInto(&record)
 			if err != nil {
-				log.Logger.Warn().Err(err).Msg("error reading from dist trace calls")
+				log.Logger.Warn().Err(err).Msg("error reading from dist-trace calls")
 			}
 
 			if record.LostSamples != 0 {
@@ -681,14 +730,21 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 
 			bpfTraceEvent := (*bpfTraceEvent)(unsafe.Pointer(&record.RawSample[0]))
 
-			traceEvent := TraceEvent{
+			traceEvent := &TraceEvent{
 				Pid:   bpfTraceEvent.Pid,
 				Tid:   bpfTraceEvent.Tid,
 				Tx:    time.Now().UnixMilli(),
 				Type_: bpfTraceEvent.Type_,
 				Seq:   bpfTraceEvent.Seq,
 			}
-			ch <- &traceEvent
+
+			go func(traceEvent *TraceEvent) {
+				select {
+				case ch <- traceEvent:
+				default:
+					droppedCount++
+				}
+			}(traceEvent)
 
 		}
 		for {
