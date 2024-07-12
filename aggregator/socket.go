@@ -19,6 +19,13 @@ type SockInfo struct {
 	Dport uint16 `json:"dport"`
 }
 
+type AddressPair struct {
+	Saddr string `json:"saddr"`
+	Sport uint16 `json:"sport"`
+	Daddr string `json:"daddr"`
+	Dport uint16 `json:"dport"`
+}
+
 // type SocketMap
 type SocketMap struct {
 	mu         *sync.RWMutex

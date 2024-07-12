@@ -216,7 +216,7 @@ func (e *EbpfCollector) Init() {
 }
 
 func (e *EbpfCollector) ListenEvents() {
-	go e.bpfPrograms["tcp_state_prog"].Consume(e.ctx, e.ebpfTcpEvents)
+	// go e.bpfPrograms["tcp_state_prog"].Consume(e.ctx, e.ebpfTcpEvents)
 	go e.bpfPrograms["l7_prog"].Consume(e.ctx, e.ebpfEvents)
 	go e.bpfPrograms["proc_prog"].Consume(e.ctx, e.ebpfProcEvents)
 

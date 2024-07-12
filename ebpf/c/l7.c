@@ -32,6 +32,11 @@ struct l7_event {
     __u32 tid;
 
     __s16 kafka_api_version; // used only for kafka
+
+    __u32 saddr;
+    __u16 sport;
+    __u32 daddr;
+    __u16 dport;
 };
 
 struct l7_request {
@@ -47,6 +52,11 @@ struct l7_request {
     __s32 correlation_id; // used only for kafka
     __s16 api_key; // used only for kafka
     __s16 api_version; // used only for kafka
+    
+    __u32 saddr;
+    __u16 sport;
+    __u32 daddr;
+    __u16 dport;
 };
 
 struct socket_key {
@@ -199,6 +209,12 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
     req->request_type = 0;
     req->write_time_ns = timestamp;
 
+    req->saddr = 0;
+    req->sport = 0;
+    req->daddr = 0;
+    req->dport = 0;
+    
+
     // TODO: If socket is not tcp (SOCK_STREAM), we are not interested in it
 
     struct socket_key k = {};
@@ -289,7 +305,20 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
                 e->payload_size = count;
                 e->payload_read_complete = 1;
             }
-            
+
+
+            struct sock* sk = get_sock(fd);
+            if (sk != NULL) {
+                __u32 saddr = BPF_CORE_READ(sk,sk_rcv_saddr);
+                __u16 sport = BPF_CORE_READ(sk,sk_num);
+                __u32 daddr = BPF_CORE_READ(sk,sk_daddr);
+                __u16 dport = BPF_CORE_READ(sk,sk_dport);
+
+                e->saddr = bpf_htonl(saddr);
+                e->sport = sport;
+                e->daddr = bpf_htonl(daddr);
+                e->dport = bpf_htons(dport);
+            }            
 
             long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
             if (r < 0) {
@@ -324,6 +353,21 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
     // for distributed tracing
     req->seq = seq;
     req->tid = tid;
+
+
+    struct sock* sk = get_sock(fd);
+    if (sk != NULL) {
+        __u32 saddr = BPF_CORE_READ(sk,sk_rcv_saddr);
+        __u16 sport = BPF_CORE_READ(sk,sk_num);
+        __u32 daddr = BPF_CORE_READ(sk,sk_daddr);
+        __u16 dport = BPF_CORE_READ(sk,sk_dport);
+
+        req->saddr = bpf_htonl(saddr);
+        req->sport = sport;
+        req->daddr = bpf_htonl(daddr);
+        req->dport = bpf_htons(dport);
+    }
+
 
     long res = bpf_map_update_elem(&active_l7_requests, &k, req, BPF_ANY);
     if(res < 0)
@@ -458,6 +502,12 @@ int process_exit_of_syscalls_write_sendto(void* ctx, __s64 ret){
         e->seq = active_req->seq;
         e->tid = active_req->tid;
 
+
+        e->saddr = active_req->saddr;
+        e->sport = active_req->sport;
+        e->daddr = active_req->daddr;
+        e->dport = active_req->dport;
+
         bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
     }else{
         // write failed
@@ -560,6 +610,20 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
         
         bpf_map_delete_elem(&active_reads, &id);
 
+
+        struct sock* sk = get_sock(read_info->fd);
+        if (sk != NULL) {
+            __u32 saddr = BPF_CORE_READ(sk,sk_rcv_saddr);
+            __u16 sport = BPF_CORE_READ(sk,sk_num);
+            __u32 daddr = BPF_CORE_READ(sk,sk_daddr);
+            __u16 dport = BPF_CORE_READ(sk,sk_dport);
+
+            e->saddr = bpf_htonl(saddr);
+            e->sport = sport;
+            e->daddr = bpf_htonl(daddr);
+            e->dport = bpf_htons(dport);
+        } 
+
         bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
         return 0;
     }
@@ -586,6 +650,20 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
                 e->payload_size = ret;
                 e->payload_read_complete = 1;
             }
+
+
+            struct sock* sk = get_sock(read_info->fd);
+            if (sk != NULL) {
+                __u32 saddr = BPF_CORE_READ(sk,sk_rcv_saddr);
+                __u16 sport = BPF_CORE_READ(sk,sk_num);
+                __u32 daddr = BPF_CORE_READ(sk,sk_daddr);
+                __u16 dport = BPF_CORE_READ(sk,sk_dport);
+
+                e->saddr = bpf_htonl(saddr);
+                e->sport = sport;
+                e->daddr = bpf_htonl(daddr);
+                e->dport = bpf_htons(dport);
+            } 
 
             long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
             if (r < 0) {
@@ -621,6 +699,19 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
             e->seq = 0; // default value
             e->tid = bpf_get_current_pid_tgid() & 0xFFFFFFFF;
             
+
+            struct sock* sk = get_sock(read_info->fd);
+            if (sk != NULL) {
+                __u32 saddr = BPF_CORE_READ(sk,sk_rcv_saddr);
+                __u16 sport = BPF_CORE_READ(sk,sk_num);
+                __u32 daddr = BPF_CORE_READ(sk,sk_daddr);
+                __u16 dport = BPF_CORE_READ(sk,sk_dport);
+
+                e->saddr = bpf_htonl(saddr);
+                e->sport = sport;
+                e->daddr = bpf_htonl(daddr);
+                e->dport = bpf_htons(dport);
+            }             
             bpf_map_delete_elem(&active_reads, &id);
 
             bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
@@ -653,6 +744,12 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
     // for distributed tracing
     e->seq = active_req->seq;
     e->tid = active_req->tid;
+
+
+    e->saddr = active_req->saddr;
+    e->sport = active_req->sport;
+    e->daddr = active_req->daddr;
+    e->dport = active_req->dport;
 
     e->status = 0;
     if(read_info->buf){
@@ -722,8 +819,6 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
        
     bpf_map_delete_elem(&active_reads, &id);
     bpf_map_delete_elem(&active_l7_requests, &k);
-
-    
     long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
     if (r < 0) {
         unsigned char log_msg[] = "failed write to l7_events -- res|fd|psize";
@@ -1111,6 +1206,10 @@ int process_enter_of_go_conn_write(void *ctx, __u32 pid, __u32 fd, char *buf_ptr
     req->request_type = 0;
     
 
+    req->saddr = 0;
+    req->sport = 0;
+    req->daddr = 0;
+    req->dport = 0;
 
     if(buf_ptr){
         // try to parse only http1.1 for gotls reqs for now.
@@ -1142,12 +1241,29 @@ int process_enter_of_go_conn_write(void *ctx, __u32 pid, __u32 fd, char *buf_ptr
                 e->payload_size = count;
                 e->payload_read_complete = 1;
             }
-            
+
+
+            struct sock* sk = get_sock(fd);
+            if (sk != NULL) {
+                __u32 saddr = BPF_CORE_READ(sk,sk_rcv_saddr);
+                __u16 sport = BPF_CORE_READ(sk,sk_num);
+                __u32 daddr = BPF_CORE_READ(sk,sk_daddr);
+                __u16 dport = BPF_CORE_READ(sk,sk_dport);
+
+                e->saddr = bpf_htonl(saddr);
+                e->sport = sport;
+                e->daddr = bpf_htonl(daddr);
+                e->dport = bpf_htons(dport);
+            }
+
             long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
             if (r < 0) {
                 unsigned char log_msg[] = "failed write to l7_events -- res|fd|psize";
                 log_to_userspace(ctx, WARN, func_name, log_msg, r, e->fd, e->payload_size);        
             }
+
+            // TODO: we will add tracing for http2 requests
+            process_for_dist_trace_write(ctx,fd);
             return 0;
         }else{
             req->protocol = PROTOCOL_UNKNOWN;
@@ -1167,9 +1283,24 @@ int process_enter_of_go_conn_write(void *ctx, __u32 pid, __u32 fd, char *buf_ptr
         req->payload_read_complete = 1;
     }
 
+   
     req->seq = process_for_dist_trace_write(ctx,fd);
     __u32 tid = bpf_get_current_pid_tgid() & 0xFFFFFFFF;
     req->tid = tid;
+
+
+    struct sock* sk = get_sock(fd);
+    if (sk != NULL) {
+        __u32 saddr = BPF_CORE_READ(sk,sk_rcv_saddr);
+        __u16 sport = BPF_CORE_READ(sk,sk_num);
+        __u32 daddr = BPF_CORE_READ(sk,sk_daddr);
+        __u16 dport = BPF_CORE_READ(sk,sk_dport);
+
+        req->saddr = bpf_htonl(saddr);
+        req->sport = sport;
+        req->daddr = bpf_htonl(daddr);
+        req->dport = bpf_htons(dport);
+    }  
 
     long res = bpf_map_update_elem(&go_active_l7_requests, &k, req, BPF_ANY);
     if(res < 0)
@@ -1326,6 +1457,20 @@ int BPF_UPROBE(go_tls_conn_read_exit) {
             e->payload_read_complete = 1;
         }
 
+
+        struct sock* sk = get_sock(read_args->fd);
+        if (sk != NULL) {
+            __u32 saddr = BPF_CORE_READ(sk,sk_rcv_saddr);
+            __u16 sport = BPF_CORE_READ(sk,sk_num);
+            __u32 daddr = BPF_CORE_READ(sk,sk_daddr);
+            __u16 dport = BPF_CORE_READ(sk,sk_dport);
+
+            e->saddr = bpf_htonl(saddr);
+            e->sport = sport;
+            e->daddr = bpf_htonl(daddr);
+            e->dport = bpf_htons(dport);
+        }
+
         long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
         if (r < 0) {
             unsigned char log_msg[] = "failed write to l7_events -- res|fd|psize";
@@ -1373,6 +1518,13 @@ int BPF_UPROBE(go_tls_conn_read_exit) {
     
     e->failed = 0; // success
     e->status = 0;
+
+
+    e->saddr = req->saddr;
+    e->sport = req->sport;
+    e->daddr = req->daddr;
+    e->dport = req->dport;
+
     // parse response payload
     if(read_args->buf && ret >= PAYLOAD_PREFIX_SIZE){
         if(e->protocol == PROTOCOL_HTTP){ // if http, try to parse status code

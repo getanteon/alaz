@@ -297,6 +297,7 @@ type bpfLogMessage struct {
 	Arg3     uint64
 }
 
+// have to copy from bpf_bpfel.go
 type bpfL7Event struct {
 	Fd                  uint64
 	WriteTimeNs         uint64
@@ -315,6 +316,12 @@ type bpfL7Event struct {
 	Seq                 uint32
 	Tid                 uint32
 	KafkaApiVersion     int16
+	_                   [2]byte
+	Saddr               uint32
+	Sport               uint16
+	_                   [2]byte
+	Daddr               uint32
+	Dport               uint16
 	_                   [2]byte
 }
 
@@ -358,6 +365,10 @@ type L7Event struct {
 	Tid                 uint32
 	Seq                 uint32 // tcp seq num
 	KafkaApiVersion     int16
+	Saddr               uint32
+	Sport               uint16
+	Daddr               uint32
+	Dport               uint16
 
 	// This bool is actually related to aggregator logic. Means this events processing somehow failed and put back into channel for retry.
 	// Maybe we can wrap L7Event and add this field on top.
@@ -480,7 +491,11 @@ func (l7p *L7Prog) Attach() {
 func (l7p *L7Prog) InitMaps() {
 	// initialize perf event readers
 	var err error
-	l7p.l7Events, err = perf.NewReader(c.BpfObjs.L7Events, int(l7p.l7EventsMapSize)*os.Getpagesize())
+	l7p.l7Events, err = perf.NewReaderWithOptions(c.BpfObjs.L7Events, int(l7p.l7EventsMapSize)*os.Getpagesize(),
+		perf.ReaderOptions{
+			Watermark:    4 * os.Getpagesize(),
+			Overwritable: false,
+		})
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
 	}
@@ -491,7 +506,11 @@ func (l7p *L7Prog) InitMaps() {
 		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
 	}
 
-	l7p.traffic, err = perf.NewReader(c.BpfObjs.IngressEgressCalls, int(l7p.trafficMapSize)*os.Getpagesize())
+	l7p.traffic, err = perf.NewReaderWithOptions(c.BpfObjs.IngressEgressCalls, int(l7p.trafficMapSize)*os.Getpagesize(),
+		perf.ReaderOptions{
+			Watermark:    4 * os.Getpagesize(),
+			Overwritable: false,
+		})
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("error creating perf reader")
 	}
@@ -682,6 +701,10 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 				Tid:                 l7Event.Tid,
 				Seq:                 l7Event.Seq,
 				KafkaApiVersion:     l7Event.KafkaApiVersion,
+				Saddr:               l7Event.Saddr,
+				Sport:               l7Event.Sport,
+				Daddr:               l7Event.Daddr,
+				Dport:               l7Event.Dport,
 			}
 
 			go func(l7Event *L7Event) {
