@@ -547,9 +547,9 @@ func (b *BackendDS) sendToBackend(method string, payload interface{}, endpoint s
 		return
 	}
 
-	// if endpoint == reqEndpoint {
-	// 	log.Logger.Debug().Str("endpoint", endpoint).Any("payload", payload).Msg("sending batch to backend")
-	// }
+	if endpoint == reqEndpoint {
+		log.Logger.Debug().Str("endpoint", endpoint).Any("payload", payload).Msg("sending batch to backend")
+	}
 	err = b.DoRequest(httpReq)
 	if err != nil {
 		log.Logger.Error().Msgf("backend persist error at ep %s : %v", endpoint, err)
@@ -610,6 +610,7 @@ func (b *BackendDS) sendReqsInBatch(batchSize uint64) {
 		}
 
 		reqsPayload := convertReqsToPayload(batch)
+		log.Logger.Debug().Int("len", len(batch)).Msg("reqs batch len")
 		go b.sendToBackend(http.MethodPost, reqsPayload, reqEndpoint)
 
 		// return reqInfoss to the pool

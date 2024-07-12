@@ -59,6 +59,81 @@ struct tcp_sock {
     __u32 copied_seq;
 };
 
+typedef __u32 __bitwise __portpair;
+typedef __u64 __bitwise __addrpair;
+
+struct sock_common {
+    union {
+		__addrpair	skc_addrpair;
+		struct {
+			__be32	skc_daddr;
+			__be32	skc_rcv_saddr;
+		};
+	};
+	union  {
+		unsigned int	skc_hash;
+		__u16		skc_u16hashes[2];
+	};
+	/* skc_dport && skc_num must be grouped as well */
+	union {
+		__portpair	skc_portpair;
+		struct {
+			__be16	skc_dport;
+			__u16	skc_num;
+		};
+	};
+
+};
+
+struct sock {
+	struct sock_common	__sk_common;
+    // __be32	sk_rcv_saddr; // not inet_saddr
+    // __be16  sk_num; // local port, not inet_sport
+    // __be32	sk_daddr;
+    // __be16	sk_dport;
+#define sk_rcv_saddr		__sk_common.skc_rcv_saddr
+#define sk_daddr		__sk_common.skc_daddr
+#define sk_num			__sk_common.skc_num
+#define sk_dport		__sk_common.skc_dport
+
+};
+
+static __always_inline
+struct sock * get_sock(__u32 fd_num) {
+    struct task_struct *task = (struct task_struct *)bpf_get_current_task();
+    struct file **fdarray = NULL;
+    fdarray = BPF_CORE_READ(task, files, fdt, fd);
+
+    if(fdarray == NULL){
+        return NULL;
+    }else{
+        struct file *file = NULL;
+        long r = bpf_probe_read_kernel(&file, sizeof(file), fdarray + fd_num);
+        if(r <0){
+            return NULL;
+        }
+
+        void * private_data = NULL;
+        private_data = BPF_CORE_READ(file, private_data);
+        if(private_data){
+            struct socket *socket = private_data;
+            short int socket_type = BPF_CORE_READ(socket,type);
+
+            void * __file = BPF_CORE_READ(socket,file);
+
+            if(socket_type == SOCK_STREAM && file == __file){
+                struct sock *sk = NULL;
+                sk = BPF_CORE_READ(socket,sk);
+            
+                return sk;
+            }
+            return NULL;
+        }
+        return NULL;
+    }
+    return NULL;
+}
+
 static __always_inline
 struct tcp_sock * get_tcp_sock(__u32 fd_num){
     struct task_struct *task = (struct task_struct *)bpf_get_current_task();
@@ -105,15 +180,14 @@ struct tcp_sock * get_tcp_sock(__u32 fd_num){
 
 static __always_inline
 __u32 get_tcp_write_seq_from_fd(__u32 fd_num){
-  struct tcp_sock * __tcp_sock =  (struct tcp_sock *) get_tcp_sock(fd_num);
-  if(__tcp_sock == NULL){
-    return 0;
-  }
+    struct tcp_sock * __tcp_sock =  (struct tcp_sock *) get_tcp_sock(fd_num);
+    if(__tcp_sock == NULL){
+        return 0;
+    }
 
-  __u32 tcp_seq = 0;
-  tcp_seq = BPF_CORE_READ(__tcp_sock,write_seq);
-
-  return tcp_seq;
+    __u32 tcp_seq = 0;
+    tcp_seq = BPF_CORE_READ(__tcp_sock,write_seq);
+    return tcp_seq;
 }
 
 

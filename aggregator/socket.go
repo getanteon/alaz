@@ -7,6 +7,13 @@ import (
 	"github.com/ddosify/alaz/log"
 )
 
+type AddressPair struct {
+	Saddr string `json:"saddr"`
+	Sport uint16 `json:"sport"`
+	Daddr string `json:"daddr"`
+	Dport uint16 `json:"dport"`
+}
+
 // We need to keep track of the following
 // in order to build find relationships between
 // connections and pods/services
