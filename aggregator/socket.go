@@ -7,19 +7,19 @@ import (
 	"github.com/ddosify/alaz/log"
 )
 
-// We need to keep track of the following
-// in order to build find relationships between
-// connections and pods/services
-type SockInfo struct {
-	Pid   uint32 `json:"pid"`
-	Fd    uint64 `json:"fd"`
+type AddressPair struct {
 	Saddr string `json:"saddr"`
 	Sport uint16 `json:"sport"`
 	Daddr string `json:"daddr"`
 	Dport uint16 `json:"dport"`
 }
 
-type AddressPair struct {
+// We need to keep track of the following
+// in order to build find relationships between
+// connections and pods/services
+type SockInfo struct {
+	Pid   uint32 `json:"pid"`
+	Fd    uint64 `json:"fd"`
 	Saddr string `json:"saddr"`
 	Sport uint16 `json:"sport"`
 	Daddr string `json:"daddr"`

@@ -1,12 +1,5 @@
 package aggregator
 
-// aggregate data from different sources
-// 1. k8s
-// 2. containerd (TODO)
-// 3. ebpf
-// 4. cgroup (TODO)
-// 5. docker (TODO)
-
 import (
 	"bytes"
 	"context"
@@ -280,7 +273,6 @@ func (a *Aggregator) processEbpfProc(ctx context.Context) {
 				d := data.(*proc.ProcEvent) // copy data's value
 				if d.Type_ == proc.EVENT_PROC_EXEC {
 					a.processExec(d)
-					go a.signalTlsAttachment(d.Pid)
 				} else if d.Type_ == proc.EVENT_PROC_EXIT {
 					a.processExit(d.Pid)
 				}
@@ -325,6 +317,7 @@ func (a *Aggregator) processEbpf(ctx context.Context) {
 			case l7_req.L7_EVENT:
 				d := data.(*l7_req.L7Event) // copy data's value
 				ctxPid := context.WithValue(a.ctx, log.LOG_CONTEXT, fmt.Sprint(d.Pid))
+				go a.signalTlsAttachment(d.Pid)
 				a.processL7(ctxPid, d)
 			case l7_req.TRACE_EVENT:
 				d := data.(*l7_req.TraceEvent)
@@ -573,11 +566,6 @@ func (a *Aggregator) processHttp2Frames() {
 			// when adjustment is made on ebpf side, we can remove this check
 			return
 		}
-
-		// skInfo, err := a.findRelatedSocket(a.ctx, d)
-		// if skInfo == nil || err != nil {
-		// 	return
-		// }
 
 		addrPair := extractAddressPair(d)
 
@@ -1029,28 +1017,6 @@ func (a *Aggregator) processKafkaEvent(ctx context.Context, d *l7_req.L7Event) {
 		return
 	}
 
-	// skInfo, err := a.findRelatedSocket(ctx, d)
-	// if skInfo == nil || err != nil {
-	// 	// requeue event if this is its first time
-	// 	if !d.PutBack {
-	// 		d.PutBack = true
-	// 		a.ebpfChan <- d
-	// 		return
-	// 	}
-
-	// 	log.Logger.Debug().
-	// 		Ctx(ctx).
-	// 		Err(err).
-	// 		Uint32("pid", d.Pid).
-	// 		Uint64("fd", d.Fd).
-	// 		Uint64("writeTime", d.WriteTimeNs).
-	// 		Str("protocol", d.Protocol).
-	// 		Any("payload", string(d.Payload[:d.PayloadSize])).
-	// 		Msg("discarding kafka event, socket not found")
-
-	// 	return
-	// }
-
 	addrPair := extractAddressPair(d)
 
 	for _, msg := range kafkaMessages {
@@ -1096,21 +1062,6 @@ func (a *Aggregator) processKafkaEvent(ctx context.Context, d *l7_req.L7Event) {
 }
 
 func (a *Aggregator) processAmqpEvent(ctx context.Context, d *l7_req.L7Event) {
-	// skInfo, err := a.findRelatedSocket(ctx, d)
-	// if skInfo == nil || err != nil {
-	// 	// requeue event if this is its first time
-	// 	if !d.PutBack {
-	// 		d.PutBack = true
-	// 		a.ebpfChan <- d
-	// 		return
-	// 	}
-	// 	log.Logger.Debug().Uint32("pid", d.Pid).Err(err).
-	// 		Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
-	// 		Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).
-	// 		Msg("discarding amqp event, socket not found")
-	// 	return
-	// }
-
 	addrPair := extractAddressPair(d)
 
 	reqDto := &datastore.Request{
@@ -1150,23 +1101,6 @@ func (a *Aggregator) processAmqpEvent(ctx context.Context, d *l7_req.L7Event) {
 
 func (a *Aggregator) processRedisEvent(ctx context.Context, d *l7_req.L7Event) {
 	query := string(d.Payload[0:d.PayloadSize])
-
-	// skInfo, err := a.findRelatedSocket(ctx, d)
-	// if skInfo == nil || err != nil {
-	// 	// requeue event if this is its first time
-	// 	if !d.PutBack {
-	// 		d.PutBack = true
-	// 		a.ebpfChan <- d
-	// 		return
-	// 	}
-	// 	log.Logger.Debug().
-	// 		Ctx(ctx).
-	// 		Err(err).
-	// 		Uint32("pid", d.Pid).
-	// 		Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
-	// 		Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("discarding redis event, socket not found")
-	// 	return
-	// }
 
 	addrPair := extractAddressPair(d)
 
@@ -1260,23 +1194,6 @@ func (a *Aggregator) processHttpEvent(ctx context.Context, d *l7_req.L7Event) {
 		_, path, _, reqHostHeader = parseHttpPayload(string(d.Payload[0:d.PayloadSize]))
 	}
 
-	// skInfo, err := a.findRelatedSocket(ctx, d)
-	// if skInfo == nil || err != nil {
-	// 	// requeue event if this is its first time
-	// 	if !d.PutBack {
-	// 		d.PutBack = true
-	// 		a.ebpfChan <- d
-	// 		return
-	// 	}
-	// 	log.Logger.Debug().Uint32("pid", d.Pid).
-	// 		Err(err).
-	// 		Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
-	// 		Str("protocol", d.Protocol).
-	// 		Any("payload", string(d.Payload[:d.PayloadSize])).
-	// 		Msg("discarding http event, socket not found")
-	// 	return
-	// }
-
 	addrPair := extractAddressPair(d)
 
 	reqDto := &datastore.Request{
@@ -1321,23 +1238,6 @@ func (a *Aggregator) processPostgresEvent(ctx context.Context, d *l7_req.L7Event
 		log.Logger.Error().AnErr("err", err)
 		return
 	}
-
-	// skInfo, err := a.findRelatedSocket(ctx, d)
-	// if skInfo == nil {
-	// 	// requeue event if this is its first time
-	// 	if !d.PutBack {
-	// 		d.PutBack = true
-	// 		a.ebpfChan <- d
-	// 		return
-	// 	}
-
-	// 	log.Logger.Debug().Uint32("pid", d.Pid).
-	// 		Err(err).
-	// 		Uint64("fd", d.Fd).Uint64("writeTime", d.WriteTimeNs).
-	// 		Str("protocol", d.Protocol).Any("payload", string(d.Payload[:d.PayloadSize])).Msg("discarding postgres event, socket not found")
-
-	// 	return
-	// }
 
 	addrPair := extractAddressPair(d)
 

@@ -216,7 +216,7 @@ func (e *EbpfCollector) Init() {
 }
 
 func (e *EbpfCollector) ListenEvents() {
-	// go e.bpfPrograms["tcp_state_prog"].Consume(e.ctx, e.ebpfTcpEvents)
+	go e.bpfPrograms["tcp_state_prog"].Consume(e.ctx, e.ebpfTcpEvents)
 	go e.bpfPrograms["l7_prog"].Consume(e.ctx, e.ebpfEvents)
 	go e.bpfPrograms["proc_prog"].Consume(e.ctx, e.ebpfProcEvents)
 
@@ -271,14 +271,11 @@ func (e *EbpfCollector) close() {
 func (e *EbpfCollector) AttachUprobesForEncrypted() {
 	for pid := range e.tlsAttachQueue {
 		// check duplicate
-		e.mu.Lock()
 		if _, ok := e.tlsPidMap[pid]; ok {
-			e.mu.Unlock()
 			continue
+		} else {
+			e.tlsPidMap[pid] = struct{}{}
 		}
-		e.tlsPidMap[pid] = struct{}{}
-		e.mu.Unlock()
-
 		go func(pid uint32) {
 			log.Logger.Debug().Str("ctx", "tls-uprobes").Uint32("pid", pid).Msg("attaching uprobes for encrypted connections")
 			// attach to libssl uprobes if process is using libssl
