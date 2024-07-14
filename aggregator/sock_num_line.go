@@ -205,7 +205,6 @@ func (nl *SocketLine) DeleteUnused() {
 			i-- // we deleted two values, so we need to decrement i by 2
 		}
 	}
-
 }
 
 type sock struct {

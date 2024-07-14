@@ -52,6 +52,12 @@ type bpfL7Event struct {
 	Tid                 uint32
 	KafkaApiVersion     int16
 	_                   [2]byte
+	Saddr               uint32
+	Sport               uint16
+	_                   [2]byte
+	Daddr               uint32
+	Dport               uint16
+	_                   [2]byte
 }
 
 type bpfL7Request struct {
@@ -69,7 +75,12 @@ type bpfL7Request struct {
 	CorrelationId       int32
 	ApiKey              int16
 	ApiVersion          int16
-	_                   [4]byte
+	Saddr               uint32
+	Sport               uint16
+	_                   [2]byte
+	Daddr               uint32
+	Dport               uint16
+	_                   [6]byte
 }
 
 type bpfLogMessage struct {
