@@ -78,6 +78,10 @@ type Aggregator struct {
 	pgStmtsMu sync.RWMutex
 	pgStmts   map[string]string // pid-fd-stmtname -> query
 
+	// postgres prepared stmt
+	mySqlStmtsMu sync.RWMutex
+	mySqlStmts   map[string]string // pid-fd-stmtId -> query
+
 	liveProcessesMu sync.RWMutex
 	liveProcesses   map[uint32]struct{} // pid -> struct{}
 
@@ -153,6 +157,7 @@ func NewAggregator(parentCtx context.Context, ct *cri.CRITool, k8sChan chan inte
 		liveProcesses:       make(map[uint32]struct{}),
 		rateLimiters:        make(map[uint32]*rate.Limiter),
 		pgStmts:             make(map[string]string),
+		mySqlStmts:          make(map[string]string),
 	}
 
 	var err error
@@ -381,6 +386,14 @@ func (a *Aggregator) processExit(pid uint32) {
 		}
 	}
 	a.pgStmtsMu.Unlock()
+
+	a.mySqlStmtsMu.Lock()
+	for key, _ := range a.pgStmts {
+		if strings.HasPrefix(key, fmt.Sprint(pid)) {
+			delete(a.mySqlStmts, key)
+		}
+	}
+	a.mySqlStmtsMu.Unlock()
 }
 
 func (a *Aggregator) signalTlsAttachment(pid uint32) {
@@ -1373,17 +1386,29 @@ func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) (
 func (a *Aggregator) parseMySQLCommand(d *l7_req.L7Event) (string, error) {
 	r := d.Payload[:d.PayloadSize]
 	var sqlCommand string
+	// 3 bytes len, 1 byte package number, 1 byte command type
+	if len(r) < 5 {
+		return "", fmt.Errorf("too short for a sql query")
+	}
+	r = r[5:]
+	sqlCommand = string(r)
 	if d.Method == l7_req.MYSQL_TEXT_QUERY {
-		// 3 bytes len, 1 byte package number, 1 byte command type
-		if len(r) < 5 {
-			return "", fmt.Errorf("too short for a sql query")
-		}
-		r = r[5:]
-		sqlCommand = string(r)
-
 		if !containsSQLKeywords(sqlCommand) {
 			return "", fmt.Errorf("no sql command found")
 		}
+	} else if d.Method == l7_req.MYSQL_PREPARE_STMT {
+		a.mySqlStmtsMu.Lock()
+		a.mySqlStmts[fmt.Sprintf("%d-%d-%d", d.Pid, d.Fd, d.MySqlPrepStmtId)] = string(r)
+		a.mySqlStmtsMu.Unlock()
+	} else if d.Method == l7_req.MYSQL_EXEC_STMT {
+		a.mySqlStmtsMu.RLock()
+		query, ok := a.mySqlStmts[fmt.Sprintf("%d-%d-%d", d.Pid, d.Fd, d.MySqlPrepStmtId)]
+		a.mySqlStmtsMu.RUnlock()
+		if !ok || query == "" { // we don't have the query for the prepared statement
+			// Execute (name of prepared statement) [(parameter)]
+			return fmt.Sprintf("EXECUTE %d *values*", d.MySqlPrepStmtId), nil
+		}
+		sqlCommand = query
 	}
 	return sqlCommand, nil
 }

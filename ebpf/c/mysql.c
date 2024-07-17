@@ -25,8 +25,8 @@
 #define METHOD_MYSQL_PREPARE_STMT 2
 #define METHOD_MYSQL_EXEC_STMT 3
 
-#define MYSQL_STATUS_FAILED 0
 #define MYSQL_STATUS_OK 1
+#define MYSQL_STATUS_FAILED 2
 
 static __always_inline
 int is_mysql_query(char *buf, __u64 buf_size, __u8 *request_type) {
@@ -63,8 +63,8 @@ int is_mysql_query(char *buf, __u64 buf_size, __u8 *request_type) {
 
 // __u32 *statement_id
 static __always_inline
-int is_mysql_response(char *buf, __u64 buf_size) {
-    __u8 b[5]; // first 5 bytes, first 3 represents length, 4th is packet number, 5th is command type
+int is_mysql_response(char *buf, __u64 buf_size, __u8 request_type, __u32 *statement_id) {
+    __u8 b[5]; // first 5 bytes, first 3 represents length, 4th is packet number, 5th is response code
     if (bpf_probe_read(&b, sizeof(b), (void *)((char *)buf)) < 0) {
         return 0;
     }
@@ -77,6 +77,12 @@ int is_mysql_response(char *buf, __u64 buf_size) {
         return MYSQL_STATUS_OK;
     }
     if (b[4] == MYSQL_RESPONSE_OK) {
+        if (request_type == MYSQL_COM_STMT_PREPARE) {
+            // 6-9th bytes returns statement id
+            if (bpf_probe_read(statement_id, sizeof(*statement_id), (void *)((char *)buf+5)) < 0) {
+                return 0;
+            }
+        }
         return MYSQL_STATUS_OK;
     }
     if (b[4] == MYSQL_RESPONSE_ERROR) {

@@ -353,12 +353,13 @@ type bpfL7Event struct {
 	Tid                 uint32
 	KafkaApiVersion     int16
 	_                   [2]byte
+	PrepStatementId     uint32 // for mysql
 	Saddr               uint32
 	Sport               uint16
 	_                   [2]byte
 	Daddr               uint32
 	Dport               uint16
-	_                   [2]byte
+	_                   [6]byte
 }
 
 type bpfTraceEvent struct {
@@ -401,6 +402,7 @@ type L7Event struct {
 	Tid                 uint32
 	Seq                 uint32 // tcp seq num
 	KafkaApiVersion     int16
+	MySqlPrepStmtId     uint32
 	Saddr               uint32
 	Sport               uint16
 	Daddr               uint32
@@ -739,6 +741,7 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 				Tid:                 l7Event.Tid,
 				Seq:                 l7Event.Seq,
 				KafkaApiVersion:     l7Event.KafkaApiVersion,
+				MySqlPrepStmtId:     l7Event.PrepStatementId,
 				Saddr:               l7Event.Saddr,
 				Sport:               l7Event.Sport,
 				Daddr:               l7Event.Daddr,
@@ -750,6 +753,8 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 					Str("payload", string(userspacel7Event.Payload[:userspacel7Event.PayloadSize])).
 					Uint32("pid", userspacel7Event.Pid).
 					Str("method", userspacel7Event.Method).
+					Uint32("stmtId", userspacel7Event.MySqlPrepStmtId).
+					Uint64("fd", userspacel7Event.Fd).
 					Msg("mysql-event")
 			}
 

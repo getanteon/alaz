@@ -31,10 +31,12 @@ struct l7_event {
     __u8 is_tls;
     
     __u32 seq; // tcp sequence number
-    __u32 tid;
+    __u32 tid; // thread id
 
     __s16 kafka_api_version; // used only for kafka
+    __u32 prep_statement_id; // used only for mysql
 
+    // socket pair
     __u32 saddr;
     __u16 sport;
     __u32 daddr;
@@ -816,7 +818,7 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
                 e->kafka_api_version = active_req->api_version;
             }
         }else if (e->protocol == PROTOCOL_MYSQL) {
-            e->status = is_mysql_response(read_info->buf, ret);
+            e->status = is_mysql_response(read_info->buf, ret, active_req->request_type, &(e->prep_statement_id));
             e->method = METHOD_UNKNOWN;
             if (active_req->request_type == MYSQL_COM_STMT_PREPARE) {
                 e->method = METHOD_MYSQL_PREPARE_STMT;
