@@ -286,6 +286,42 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
             args.write_start_ns = timestamp;
             bpf_map_update_elem(&active_writes, &id, &args, BPF_ANY);
         }else if (is_mysql_query(buf,count,&req->request_type)){
+            if (req->request_type == MYSQL_COM_STMT_CLOSE) { // stmtID will be extracted on userspace
+                struct l7_event *e = bpf_map_lookup_elem(&l7_event_heap, &zero);
+                if (!e) {
+                    return 0;
+                }
+                e->protocol = PROTOCOL_MYSQL;
+                e->method = METHOD_MYSQL_STMT_CLOSE;
+                bpf_probe_read(e->payload, MAX_PAYLOAD_SIZE, buf);
+                if(count > MAX_PAYLOAD_SIZE){
+                    // will not be able to copy all of it
+                    e->payload_size = MAX_PAYLOAD_SIZE;
+                    e->payload_read_complete = 0;
+                }else{
+                    e->payload_size = count;
+                    e->payload_read_complete = 1;
+                }
+
+                struct sock* sk = get_sock(fd);
+                if (sk != NULL) {
+                    __u32 saddr = BPF_CORE_READ(sk,sk_rcv_saddr);
+                    __u16 sport = BPF_CORE_READ(sk,sk_num);
+                    __u32 daddr = BPF_CORE_READ(sk,sk_daddr);
+                    __u16 dport = BPF_CORE_READ(sk,sk_dport);
+
+                    e->saddr = bpf_htonl(saddr);
+                    e->sport = sport;
+                    e->daddr = bpf_htonl(daddr);
+                    e->dport = bpf_htons(dport);
+                }           
+                long r = bpf_perf_event_output(ctx, &l7_events, BPF_F_CURRENT_CPU, e, sizeof(*e));
+                if (r < 0) {
+                    unsigned char log_msg[] = "failed write to l7_events -- res|fd|psize";
+                    log_to_userspace(ctx, WARN, func_name, log_msg, r, e->fd, e->payload_size);        
+                } 
+                return 0;
+            }
             req->protocol = PROTOCOL_MYSQL;
         }else if (is_http2_frame(buf, count)){
             struct l7_event *e = bpf_map_lookup_elem(&l7_event_heap, &zero);

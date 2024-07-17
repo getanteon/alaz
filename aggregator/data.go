@@ -1411,6 +1411,17 @@ func (a *Aggregator) parseMySQLCommand(d *l7_req.L7Event) (string, error) {
 			return fmt.Sprintf("EXECUTE %d *values*", d.MySqlPrepStmtId), nil
 		}
 		sqlCommand = query
+	} else if d.Method == l7_req.MYSQL_STMT_CLOSE { // deallocated stmt
+		a.mySqlStmtsMu.Lock()
+		// extract statementId from payload
+		stmtId := binary.LittleEndian.Uint32(r)
+		stmtKey := fmt.Sprintf("%d-%d-%d", d.Pid, d.Fd, stmtId)
+		_, ok := a.mySqlStmts[stmtKey]
+		if ok {
+			delete(a.mySqlStmts, stmtKey)
+		}
+		a.mySqlStmtsMu.Unlock()
+		return fmt.Sprintf("CLOSE STMT %d ", stmtId), nil
 	}
 	return sqlCommand, nil
 }

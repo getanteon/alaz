@@ -137,6 +137,7 @@ const (
 	METHOD_MYSQL_TEXT_QUERY
 	METHOD_MYSQL_PREPARE_STMT
 	METHOD_MYSQL_EXEC_STMT
+	METHOD_MYSQL_STMT_CLOSE
 )
 
 // for http, user space
@@ -189,6 +190,7 @@ const (
 	MYSQL_TEXT_QUERY   = "TEXT_QUERY"
 	MYSQL_PREPARE_STMT = "PREPARE_STMT"
 	MYSQL_EXEC_STMT    = "EXEC_STMT"
+	MYSQL_STMT_CLOSE   = "STMT_CLOSE"
 )
 
 // Custom type for the enumeration
@@ -311,6 +313,8 @@ func (e MySQLMethodConversion) String() string {
 		return MYSQL_PREPARE_STMT
 	case METHOD_MYSQL_EXEC_STMT:
 		return MYSQL_EXEC_STMT
+	case METHOD_MYSQL_STMT_CLOSE:
+		return MYSQL_STMT_CLOSE
 	default:
 		return "Unknown"
 	}

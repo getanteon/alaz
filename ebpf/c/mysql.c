@@ -16,6 +16,11 @@
 #define MYSQL_COM_STMT_EXECUTE 0x17 // COM_STMT_EXECUTE asks the server to execute a prepared statement as identified by statement_id.
 
 
+// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_stmt_close.html
+#define MYSQL_COM_STMT_CLOSE    0x19 // COM_STMT_CLOSE deallocates a prepared statement.
+// No response packet is sent back to the client.
+
+
 #define MYSQL_RESPONSE_OK    0x00
 #define MYSQL_RESPONSE_EOF   0xfe
 #define MYSQL_RESPONSE_ERROR 0xff
@@ -24,6 +29,8 @@
 #define METHOD_MYSQL_TEXT_QUERY 1
 #define METHOD_MYSQL_PREPARE_STMT 2
 #define METHOD_MYSQL_EXEC_STMT 3
+#define METHOD_MYSQL_STMT_CLOSE 4
+
 
 #define MYSQL_STATUS_OK 1
 #define MYSQL_STATUS_FAILED 2
@@ -48,11 +55,10 @@ int is_mysql_query(char *buf, __u64 buf_size, __u8 *request_type) {
         return 1;
     }
 
-    // COM_STMT_CLOSE deallocates a prepared statement.
-    // if (b[4] == MYSQL_COM_STMT_CLOSE) {
-    //     *request_type = MYSQL_COM_STMT_CLOSE;
-    //     return 1;
-    // }
+    if (b[4] == MYSQL_COM_STMT_CLOSE) {
+        *request_type = MYSQL_COM_STMT_CLOSE;
+        return 1;
+    }
 
     if (b[4] == MYSQL_COM_STMT_PREPARE) {
         *request_type = MYSQL_COM_STMT_PREPARE;
