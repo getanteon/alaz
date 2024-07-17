@@ -24,6 +24,7 @@ const (
 	BPF_L7_PROTOCOL_HTTP2
 	BPF_L7_PROTOCOL_REDIS
 	BPF_L7_PROTOCOL_KAFKA
+	BPF_L7_PROTOCOL_MYSQL
 )
 
 // for user space
@@ -34,6 +35,7 @@ const (
 	L7_PROTOCOL_POSTGRES = "POSTGRES"
 	L7_PROTOCOL_REDIS    = "REDIS"
 	L7_PROTOCOL_KAFKA    = "KAFKA"
+	L7_PROTOCOL_MYSQL    = "MYSQL"
 	L7_PROTOCOL_UNKNOWN  = "UNKNOWN"
 )
 
@@ -55,6 +57,8 @@ func (e L7ProtocolConversion) String() string {
 		return L7_PROTOCOL_REDIS
 	case BPF_L7_PROTOCOL_KAFKA:
 		return L7_PROTOCOL_KAFKA
+	case BPF_L7_PROTOCOL_MYSQL:
+		return L7_PROTOCOL_MYSQL
 	case BPF_L7_PROTOCOL_UNKNOWN:
 		return L7_PROTOCOL_UNKNOWN
 	default:
@@ -127,6 +131,14 @@ const (
 	METHOD_KAFKA_FETCH_RESPONSE
 )
 
+// match with values in l7.c, order is important
+const (
+	BPF_MYSQL_METHOD_UNKNOWN = iota
+	METHOD_MYSQL_TEXT_QUERY
+	METHOD_MYSQL_PREPARE_STMT
+	METHOD_MYSQL_EXEC_STMT
+)
+
 // for http, user space
 const (
 	GET     = "GET"
@@ -170,6 +182,13 @@ const (
 const (
 	KAFKA_PRODUCE_REQUEST = "PRODUCE_REQUEST"
 	KAFKA_FETCH_RESPONSE  = "FETCH_RESPONSE"
+)
+
+// for mysql, user space
+const (
+	MYSQL_TEXT_QUERY   = "TEXT_QUERY"
+	MYSQL_PREPARE_STMT = "PREPARE_STMT"
+	MYSQL_EXEC_STMT    = "EXEC_STMT"
 )
 
 // Custom type for the enumeration
@@ -275,6 +294,23 @@ func (e KafkaMethodConversion) String() string {
 		return KAFKA_PRODUCE_REQUEST
 	case METHOD_KAFKA_FETCH_RESPONSE:
 		return KAFKA_FETCH_RESPONSE
+	default:
+		return "Unknown"
+	}
+}
+
+// Custom type for the enumeration
+type MySQLMethodConversion uint32
+
+// String representation of the enumeration values
+func (e MySQLMethodConversion) String() string {
+	switch e {
+	case METHOD_MYSQL_TEXT_QUERY:
+		return MYSQL_TEXT_QUERY
+	case METHOD_MYSQL_PREPARE_STMT:
+		return MYSQL_PREPARE_STMT
+	case METHOD_MYSQL_EXEC_STMT:
+		return MYSQL_EXEC_STMT
 	default:
 		return "Unknown"
 	}
@@ -676,6 +712,8 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 				method = RedisMethodConversion(l7Event.Method).String()
 			case L7_PROTOCOL_KAFKA:
 				method = KafkaMethodConversion(l7Event.Method).String()
+			case L7_PROTOCOL_MYSQL:
+				method = MySQLMethodConversion(l7Event.Method).String()
 			// no method set for kafka on kernel side
 			default:
 				method = "Unknown"
@@ -705,6 +743,14 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 				Sport:               l7Event.Sport,
 				Daddr:               l7Event.Daddr,
 				Dport:               l7Event.Dport,
+			}
+
+			if protocol == L7_PROTOCOL_MYSQL {
+				log.Logger.Debug().
+					Str("payload", string(userspacel7Event.Payload[:userspacel7Event.PayloadSize])).
+					Uint32("pid", userspacel7Event.Pid).
+					Str("method", userspacel7Event.Method).
+					Msg("mysql-event")
 			}
 
 			go func(l7Event *L7Event) {

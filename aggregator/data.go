@@ -1228,12 +1228,49 @@ func (a *Aggregator) processHttpEvent(ctx context.Context, d *l7_req.L7Event) {
 
 }
 
+func (a *Aggregator) processMySQLEvent(ctx context.Context, d *l7_req.L7Event) {
+	query, err := a.parseMySQLCommand(d)
+	if err != nil {
+		log.Logger.Error().AnErr("err", err)
+		return
+	}
+	addrPair := extractAddressPair(d)
+
+	reqDto := &datastore.Request{
+		StartTime:  int64(convertKernelTimeToUserspaceTime(d.WriteTimeNs) / 1e6),
+		Latency:    d.Duration,
+		FromIP:     addrPair.Saddr,
+		ToIP:       addrPair.Daddr,
+		Protocol:   d.Protocol,
+		Tls:        d.Tls,
+		Completed:  true,
+		StatusCode: d.Status,
+		FailReason: "",
+		Method:     d.Method,
+		Path:       query,
+		Tid:        d.Tid,
+		Seq:        d.Seq,
+	}
+
+	err = a.setFromToV2(addrPair, d, reqDto, "")
+	if err != nil {
+		return
+	}
+
+	log.Logger.Info().Any("event", reqDto).Msg("persisting mysql-event")
+
+	err = a.ds.PersistRequest(reqDto)
+	if err != nil {
+		log.Logger.Error().Err(err).Msg("error persisting request")
+	}
+}
+
 func (a *Aggregator) processPostgresEvent(ctx context.Context, d *l7_req.L7Event) {
 	// parse sql command from payload
 	// path = sql command
 	// method = sql message type
 
-	query, err := a.parseSqlCommand(d)
+	query, err := a.parsePostgresCommand(d)
 	if err != nil {
 		log.Logger.Error().AnErr("err", err)
 		return
@@ -1282,6 +1319,8 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 		a.processAmqpEvent(ctx, d)
 	case l7_req.L7_PROTOCOL_KAFKA:
 		a.processKafkaEvent(ctx, d)
+	case l7_req.L7_PROTOCOL_MYSQL:
+		a.processMySQLEvent(ctx, d)
 	}
 }
 
@@ -1331,7 +1370,25 @@ func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) (
 	return skInfo, nil
 }
 
-func (a *Aggregator) parseSqlCommand(d *l7_req.L7Event) (string, error) {
+func (a *Aggregator) parseMySQLCommand(d *l7_req.L7Event) (string, error) {
+	r := d.Payload[:d.PayloadSize]
+	var sqlCommand string
+	if d.Method == l7_req.MYSQL_TEXT_QUERY {
+		// 3 bytes len, 1 byte package number, 1 byte command type
+		if len(r) < 5 {
+			return "", fmt.Errorf("too short for a sql query")
+		}
+		r = r[5:]
+		sqlCommand = string(r)
+
+		if !containsSQLKeywords(sqlCommand) {
+			return "", fmt.Errorf("no sql command found")
+		}
+	}
+	return sqlCommand, nil
+}
+
+func (a *Aggregator) parsePostgresCommand(d *l7_req.L7Event) (string, error) {
 	r := d.Payload[:d.PayloadSize]
 	var sqlCommand string
 	if d.Method == l7_req.SIMPLE_QUERY {

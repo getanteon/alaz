@@ -6,6 +6,8 @@
 #define PROTOCOL_HTTP2	    4
 #define PROTOCOL_REDIS	    5
 #define PROTOCOL_KAFKA	    6
+#define PROTOCOL_MYSQL	    7
+
 
 
 #define MAX_PAYLOAD_SIZE 1024
@@ -281,6 +283,8 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
             args.fd = fd;
             args.write_start_ns = timestamp;
             bpf_map_update_elem(&active_writes, &id, &args, BPF_ANY);
+        }else if (is_mysql_query(buf,count,&req->request_type)){
+            req->protocol = PROTOCOL_MYSQL;
         }else if (is_http2_frame(buf, count)){
             struct l7_event *e = bpf_map_lookup_elem(&l7_event_heap, &zero);
             if (!e) {
@@ -810,6 +814,16 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
                     e->payload_read_complete = 1;
                 }
                 e->kafka_api_version = active_req->api_version;
+            }
+        }else if (e->protocol == PROTOCOL_MYSQL) {
+            e->status = is_mysql_response(read_info->buf, ret);
+            e->method = METHOD_UNKNOWN;
+            if (active_req->request_type == MYSQL_COM_STMT_PREPARE) {
+                e->method = METHOD_MYSQL_PREPARE_STMT;
+            }else if(active_req->request_type == MYSQL_COM_STMT_EXECUTE){
+                e->method = METHOD_MYSQL_EXEC_STMT;
+            }else if(active_req->request_type == MYSQL_COM_QUERY){
+                e->method = METHOD_MYSQL_TEXT_QUERY;
             }
         }
     }else{
