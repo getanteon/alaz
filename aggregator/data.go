@@ -1402,7 +1402,9 @@ func (a *Aggregator) parseMySQLCommand(d *l7_req.L7Event) (string, error) {
 		a.mySqlStmtsMu.Unlock()
 	} else if d.Method == l7_req.MYSQL_EXEC_STMT {
 		a.mySqlStmtsMu.RLock()
-		query, ok := a.mySqlStmts[fmt.Sprintf("%d-%d-%d", d.Pid, d.Fd, d.MySqlPrepStmtId)]
+		// extract statementId from payload
+		stmtId := binary.LittleEndian.Uint32(r)
+		query, ok := a.mySqlStmts[fmt.Sprintf("%d-%d-%d", d.Pid, d.Fd, stmtId)]
 		a.mySqlStmtsMu.RUnlock()
 		if !ok || query == "" { // we don't have the query for the prepared statement
 			// Execute (name of prepared statement) [(parameter)]

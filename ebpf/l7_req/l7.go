@@ -748,16 +748,6 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 				Dport:               l7Event.Dport,
 			}
 
-			if protocol == L7_PROTOCOL_MYSQL {
-				log.Logger.Debug().
-					Str("payload", string(userspacel7Event.Payload[:userspacel7Event.PayloadSize])).
-					Uint32("pid", userspacel7Event.Pid).
-					Str("method", userspacel7Event.Method).
-					Uint32("stmtId", userspacel7Event.MySqlPrepStmtId).
-					Uint64("fd", userspacel7Event.Fd).
-					Msg("mysql-event")
-			}
-
 			go func(l7Event *L7Event) {
 				select {
 				case ch <- l7Event:
