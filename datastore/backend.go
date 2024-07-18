@@ -165,6 +165,7 @@ type BackendDS struct {
 	containerEventChan chan interface{} // *ContainerEvent
 	dsEventChan        chan interface{} // *DaemonSetEvent
 	ssEventChan        chan interface{} // *StatefulSetEvent
+	conf               config.BackendDSConfig
 
 	// TODO add:
 	// job
@@ -214,7 +215,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 	retryClient.Logger = LeveledLogger{l: log.Logger.With().Str("component", "retryablehttp").Logger()}
 	retryClient.Backoff = retryablehttp.DefaultBackoff
 	retryClient.RetryWaitMin = 1 * time.Second
-	retryClient.RetryWaitMax = 5 * time.Second
+	retryClient.RetryWaitMax = 2 * time.Second
 	retryClient.RetryMax = 2
 
 	retryClient.CheckRetry = func(ctx context.Context, resp *http.Response, err error) (bool, error) {
@@ -311,6 +312,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 		metricsExport:         conf.MetricsExport,
 		gpuMetricsExport:      conf.GpuMetricsExport,
 		metricsExportInterval: conf.MetricsExportInterval,
+		conf:                  conf,
 	}
 
 	return ds
@@ -432,7 +434,7 @@ func (b *BackendDS) DoRequest(req *retryablehttp.Request) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	ctx, cancel := context.WithTimeout(b.ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(b.ctx, 10*time.Second)
 	defer cancel()
 
 	resp, err := b.c.Do(req.WithContext(ctx))
@@ -539,16 +541,15 @@ func (b *BackendDS) sendToBackend(method string, payload interface{}, endpoint s
 		log.Logger.Error().Msgf("error marshalling batch: %v", err)
 		return
 	}
-
-	httpReq, err := http.NewRequest(method, b.host+endpoint, bytes.NewBuffer(payloadBytes))
+	httpReq, err := retryablehttp.NewRequest(method, b.host+endpoint, bytes.NewBuffer(payloadBytes))
 	if err != nil {
 		log.Logger.Error().Msgf("error creating http request: %v", err)
 		return
 	}
 
-	if endpoint == reqEndpoint {
-		log.Logger.Debug().Str("endpoint", endpoint).Any("payload", payload).Msg("sending batch to backend")
-	}
+	// if endpoint == reqEndpoint {
+	// 	log.Logger.Debug().Str("endpoint", endpoint).Any("payload", payload).Msg("sending batch to backend")
+	// }
 	err = b.DoRequest(httpReq)
 	if err != nil {
 		log.Logger.Error().Msgf("backend persist error at ep %s : %v", endpoint, err)

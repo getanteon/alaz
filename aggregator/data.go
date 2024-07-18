@@ -170,7 +170,7 @@ func NewAggregator(parentCtx context.Context, ct *cri.CRITool, k8sChan chan inte
 	go a.clearSocketLines(ctx)
 
 	go func() {
-		t := time.NewTicker(2 * time.Minute)
+		t := time.NewTicker(1 * time.Minute)
 
 		for range t.C {
 			log.Logger.Debug().
