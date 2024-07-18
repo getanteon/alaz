@@ -487,11 +487,12 @@ func (ls *LogStreamer) StreamLogs() error {
 		fsNotifyWorker := func(restartCh chan struct{}) {
 			timeWindow := initialTimeWindow
 			var lastChanFullTime time.Time
+			workerExitCh := make(chan struct{}, 1)
 			go func() {
 				t := time.NewTicker(10 * time.Second)
 				for {
 					select {
-					case <-ls.ctx.Done():
+					case <-workerExitCh:
 						return
 					case <-t.C:
 						if time.Since(lastChanFullTime) > 1*time.Minute && timeWindow > initialTimeWindow {
@@ -507,6 +508,7 @@ func (ls *LogStreamer) StreamLogs() error {
 					return
 				case event, ok := <-ls.watcher.Events:
 					if !ok {
+						workerExitCh <- struct{}{} // signal goroutine above to exit
 						log.Logger.Info().Msg("fsnotify events channel closed")
 						return
 					}
@@ -588,6 +590,7 @@ func (ls *LogStreamer) StreamLogs() error {
 				case err, ok := <-ls.watcher.Errors:
 					if !ok {
 						log.Logger.Info().Msg("fsnotify errors channel closed")
+						workerExitCh <- struct{}{} // signal goroutine above to exit
 						return
 					}
 					log.Logger.Error().Err(err).Msgf("fsnotify error")
