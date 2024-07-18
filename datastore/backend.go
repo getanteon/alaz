@@ -610,7 +610,19 @@ func (b *BackendDS) sendReqsInBatch(batchSize uint64) {
 		}
 
 		reqsPayload := convertReqsToPayload(batch)
-		log.Logger.Debug().Int("len", len(batch)).Msg("reqs batch len")
+
+		// dynamically configure batchSize to avoid blocking on reqChanBuffer
+		lenBatch := uint64(len(batch))
+		if batchSize == lenBatch {
+			// increase batchSize
+			batchSize *= 2
+			if batchSize > b.conf.ReqBufferSize {
+				batchSize = b.conf.ReqBufferSize // max value
+			}
+		} else if lenBatch < batchSize/10 {
+			batchSize /= 2 // decrease batchSize
+		}
+
 		go b.sendToBackend(http.MethodPost, reqsPayload, reqEndpoint)
 
 		// return reqInfoss to the pool
