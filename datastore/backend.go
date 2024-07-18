@@ -588,7 +588,7 @@ func (b *BackendDS) sendTraceEventsInBatch(batchSize uint64) {
 }
 
 func (b *BackendDS) sendReqsInBatch(batchSize uint64) {
-	t := time.NewTicker(5 * time.Second)
+	t := time.NewTicker(1 * time.Second)
 	defer t.Stop()
 
 	send := func() {
