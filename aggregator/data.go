@@ -1059,12 +1059,7 @@ func (a *Aggregator) processKafkaEvent(ctx context.Context, d *l7_req.L7Event) {
 			return
 		}
 
-		if event.Type == "CONSUME" {
-			// TODO: reverse the from and to
-			// do we show arrows originating from outbound services ?
-		}
-
-		log.Logger.Warn().Ctx(ctx).Any("kafkaEvent", event).Msg("persist kafka event")
+		log.Logger.Debug().Ctx(ctx).Any("kafkaEvent", event).Msg("persist kafka event")
 		err = a.ds.PersistKafkaEvent(event)
 		if err != nil {
 			log.Logger.Error().Err(err).Msg("error persisting kafka event")
@@ -1270,8 +1265,7 @@ func (a *Aggregator) processMySQLEvent(ctx context.Context, d *l7_req.L7Event) {
 		return
 	}
 
-	log.Logger.Info().Any("event", reqDto).Msg("persisting mysql-event")
-
+	log.Logger.Debug().Any("event", reqDto).Msg("persisting mysql-event")
 	err = a.ds.PersistRequest(reqDto)
 	if err != nil {
 		log.Logger.Error().Err(err).Msg("error persisting request")
