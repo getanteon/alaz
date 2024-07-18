@@ -137,7 +137,7 @@ type BackendDS struct {
 	ctx       context.Context
 	host      string
 	port      string
-	c         *http.Client
+	c         *retryablehttp.Client
 	batchSize uint64
 
 	reqChanBuffer   chan *ReqInfo
@@ -278,7 +278,6 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 		MaxConnsPerHost:   500, // 500 connection per host
 	}
 	retryClient.HTTPClient.Timeout = 10 * time.Second // Set a timeout for the request
-	client := retryClient.StandardClient()
 
 	var defaultBatchSize uint64 = 1000
 
@@ -291,7 +290,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 	ds := &BackendDS{
 		ctx:                   ctx,
 		host:                  conf.Host,
-		c:                     client,
+		c:                     retryClient,
 		batchSize:             bs,
 		reqInfoPool:           newReqInfoPool(func() *ReqInfo { return &ReqInfo{} }, func(r *ReqInfo) {}),
 		aliveConnPool:         newAliveConnPool(func() *ConnInfo { return &ConnInfo{} }, func(r *ConnInfo) {}),
@@ -429,7 +428,7 @@ func (b *BackendDS) dequeueTraceEvents(batchSize uint64) []*TraceInfo {
 	return batch
 }
 
-func (b *BackendDS) DoRequest(req *http.Request) error {
+func (b *BackendDS) DoRequest(req *retryablehttp.Request) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
@@ -502,7 +501,7 @@ func convertTraceEventsToPayload(batch []*TraceInfo) TracePayload {
 }
 
 func (b *BackendDS) sendMetricsToBackend(r io.Reader) {
-	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/metrics/scrape/?instance=%s&monitoring_id=%s", b.host, NodeID, MonitoringID), r)
+	req, err := retryablehttp.NewRequest(http.MethodPost, fmt.Sprintf("%s/metrics/scrape/?instance=%s&monitoring_id=%s", b.host, NodeID, MonitoringID), r)
 	if err != nil {
 		log.Logger.Error().Msgf("error creating metrics request: %v", err)
 		return
@@ -1007,7 +1006,7 @@ func (b *BackendDS) SendHealthCheck(tracing bool, metrics bool, logs bool, nsFil
 			return
 		}
 
-		req, err := http.NewRequest(http.MethodPut, b.host+healthCheckEndpoint, bytes.NewBuffer(payloadBytes))
+		req, err := retryablehttp.NewRequest(http.MethodPut, b.host+healthCheckEndpoint, bytes.NewBuffer(payloadBytes))
 		if err != nil {
 			log.Logger.Error().Msgf("error creating http request: %v", err)
 			return
