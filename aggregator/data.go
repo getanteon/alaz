@@ -1402,7 +1402,7 @@ func (a *Aggregator) parseMySQLCommand(d *l7_req.L7Event) (string, error) {
 		a.mySqlStmtsMu.RUnlock()
 		if !ok || query == "" { // we don't have the query for the prepared statement
 			// Execute (name of prepared statement) [(parameter)]
-			return fmt.Sprintf("EXECUTE %d *values*", d.MySqlPrepStmtId), nil
+			return fmt.Sprintf("EXECUTE %d *values*", stmtId), nil
 		}
 		sqlCommand = query
 	} else if d.Method == l7_req.MYSQL_STMT_CLOSE { // deallocated stmt
