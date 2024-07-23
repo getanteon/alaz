@@ -78,6 +78,10 @@ type Aggregator struct {
 	pgStmtsMu sync.RWMutex
 	pgStmts   map[string]string // pid-fd-stmtname -> query
 
+	// postgres prepared stmt
+	mySqlStmtsMu sync.RWMutex
+	mySqlStmts   map[string]string // pid-fd-stmtId -> query
+
 	liveProcessesMu sync.RWMutex
 	liveProcesses   map[uint32]struct{} // pid -> struct{}
 
@@ -153,6 +157,7 @@ func NewAggregator(parentCtx context.Context, ct *cri.CRITool, k8sChan chan inte
 		liveProcesses:       make(map[uint32]struct{}),
 		rateLimiters:        make(map[uint32]*rate.Limiter),
 		pgStmts:             make(map[string]string),
+		mySqlStmts:          make(map[string]string),
 	}
 
 	var err error
@@ -381,6 +386,14 @@ func (a *Aggregator) processExit(pid uint32) {
 		}
 	}
 	a.pgStmtsMu.Unlock()
+
+	a.mySqlStmtsMu.Lock()
+	for key, _ := range a.pgStmts {
+		if strings.HasPrefix(key, fmt.Sprint(pid)) {
+			delete(a.mySqlStmts, key)
+		}
+	}
+	a.mySqlStmtsMu.Unlock()
 }
 
 func (a *Aggregator) signalTlsAttachment(pid uint32) {
@@ -1046,12 +1059,7 @@ func (a *Aggregator) processKafkaEvent(ctx context.Context, d *l7_req.L7Event) {
 			return
 		}
 
-		if event.Type == "CONSUME" {
-			// TODO: reverse the from and to
-			// do we show arrows originating from outbound services ?
-		}
-
-		log.Logger.Warn().Ctx(ctx).Any("kafkaEvent", event).Msg("persist kafka event")
+		log.Logger.Debug().Ctx(ctx).Any("kafkaEvent", event).Msg("persist kafka event")
 		err = a.ds.PersistKafkaEvent(event)
 		if err != nil {
 			log.Logger.Error().Err(err).Msg("error persisting kafka event")
@@ -1228,12 +1236,48 @@ func (a *Aggregator) processHttpEvent(ctx context.Context, d *l7_req.L7Event) {
 
 }
 
+func (a *Aggregator) processMySQLEvent(ctx context.Context, d *l7_req.L7Event) {
+	query, err := a.parseMySQLCommand(d)
+	if err != nil {
+		log.Logger.Error().AnErr("err", err)
+		return
+	}
+	addrPair := extractAddressPair(d)
+
+	reqDto := &datastore.Request{
+		StartTime:  int64(convertKernelTimeToUserspaceTime(d.WriteTimeNs) / 1e6),
+		Latency:    d.Duration,
+		FromIP:     addrPair.Saddr,
+		ToIP:       addrPair.Daddr,
+		Protocol:   d.Protocol,
+		Tls:        d.Tls,
+		Completed:  true,
+		StatusCode: d.Status,
+		FailReason: "",
+		Method:     d.Method,
+		Path:       query,
+		Tid:        d.Tid,
+		Seq:        d.Seq,
+	}
+
+	err = a.setFromToV2(addrPair, d, reqDto, "")
+	if err != nil {
+		return
+	}
+
+	log.Logger.Debug().Any("event", reqDto).Msg("persisting mysql-event")
+	err = a.ds.PersistRequest(reqDto)
+	if err != nil {
+		log.Logger.Error().Err(err).Msg("error persisting request")
+	}
+}
+
 func (a *Aggregator) processPostgresEvent(ctx context.Context, d *l7_req.L7Event) {
 	// parse sql command from payload
 	// path = sql command
 	// method = sql message type
 
-	query, err := a.parseSqlCommand(d)
+	query, err := a.parsePostgresCommand(d)
 	if err != nil {
 		log.Logger.Error().AnErr("err", err)
 		return
@@ -1282,6 +1326,8 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 		a.processAmqpEvent(ctx, d)
 	case l7_req.L7_PROTOCOL_KAFKA:
 		a.processKafkaEvent(ctx, d)
+	case l7_req.L7_PROTOCOL_MYSQL:
+		a.processMySQLEvent(ctx, d)
 	}
 }
 
@@ -1331,7 +1377,50 @@ func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) (
 	return skInfo, nil
 }
 
-func (a *Aggregator) parseSqlCommand(d *l7_req.L7Event) (string, error) {
+func (a *Aggregator) parseMySQLCommand(d *l7_req.L7Event) (string, error) {
+	r := d.Payload[:d.PayloadSize]
+	var sqlCommand string
+	// 3 bytes len, 1 byte package number, 1 byte command type
+	if len(r) < 5 {
+		return "", fmt.Errorf("too short for a sql query")
+	}
+	r = r[5:]
+	sqlCommand = string(r)
+	if d.Method == l7_req.MYSQL_TEXT_QUERY {
+		if !containsSQLKeywords(sqlCommand) {
+			return "", fmt.Errorf("no sql command found")
+		}
+	} else if d.Method == l7_req.MYSQL_PREPARE_STMT {
+		a.mySqlStmtsMu.Lock()
+		a.mySqlStmts[fmt.Sprintf("%d-%d-%d", d.Pid, d.Fd, d.MySqlPrepStmtId)] = string(r)
+		a.mySqlStmtsMu.Unlock()
+	} else if d.Method == l7_req.MYSQL_EXEC_STMT {
+		a.mySqlStmtsMu.RLock()
+		// extract statementId from payload
+		stmtId := binary.LittleEndian.Uint32(r)
+		query, ok := a.mySqlStmts[fmt.Sprintf("%d-%d-%d", d.Pid, d.Fd, stmtId)]
+		a.mySqlStmtsMu.RUnlock()
+		if !ok || query == "" { // we don't have the query for the prepared statement
+			// Execute (name of prepared statement) [(parameter)]
+			return fmt.Sprintf("EXECUTE %d *values*", stmtId), nil
+		}
+		sqlCommand = query
+	} else if d.Method == l7_req.MYSQL_STMT_CLOSE { // deallocated stmt
+		a.mySqlStmtsMu.Lock()
+		// extract statementId from payload
+		stmtId := binary.LittleEndian.Uint32(r)
+		stmtKey := fmt.Sprintf("%d-%d-%d", d.Pid, d.Fd, stmtId)
+		_, ok := a.mySqlStmts[stmtKey]
+		if ok {
+			delete(a.mySqlStmts, stmtKey)
+		}
+		a.mySqlStmtsMu.Unlock()
+		return fmt.Sprintf("CLOSE STMT %d ", stmtId), nil
+	}
+	return sqlCommand, nil
+}
+
+func (a *Aggregator) parsePostgresCommand(d *l7_req.L7Event) (string, error) {
 	r := d.Payload[:d.PayloadSize]
 	var sqlCommand string
 	if d.Method == l7_req.SIMPLE_QUERY {
