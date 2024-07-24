@@ -81,7 +81,7 @@ spec:
         - --no-collector.hwmon
         - --collector.filesystem.ignored-mount-points=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/pods/.+)($|/)
         - --collector.netclass.ignored-devices=^(veth.*)$
-        image: ddosify/alaz:v0.10.0
+        image: ddosify/alaz:v0.11.0
         imagePullPolicy: IfNotPresent
         name: alaz-pod
         ports:
@@ -92,7 +92,6 @@ spec:
             cpu: "1"
             memory: 1Gi
           requests:
-            cpu: 500m
             memory: 400Mi
         securityContext:
           privileged: true 
