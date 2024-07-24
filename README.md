@@ -167,6 +167,9 @@ Alaz supports the following protocols:
 - Postgres
 - RabbitMQ
 - gRPC
+- Redis (RESP)
+- Kafka
+- MySQL
 
 Other protocols will be supported soon.
 

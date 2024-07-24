@@ -52,12 +52,13 @@ type bpfL7Event struct {
 	Tid                 uint32
 	KafkaApiVersion     int16
 	_                   [2]byte
+	PrepStatementId     uint32
 	Saddr               uint32
 	Sport               uint16
 	_                   [2]byte
 	Daddr               uint32
 	Dport               uint16
-	_                   [2]byte
+	_                   [6]byte
 }
 
 type bpfL7Request struct {

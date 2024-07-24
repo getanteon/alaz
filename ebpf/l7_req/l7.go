@@ -24,6 +24,7 @@ const (
 	BPF_L7_PROTOCOL_HTTP2
 	BPF_L7_PROTOCOL_REDIS
 	BPF_L7_PROTOCOL_KAFKA
+	BPF_L7_PROTOCOL_MYSQL
 )
 
 // for user space
@@ -34,6 +35,7 @@ const (
 	L7_PROTOCOL_POSTGRES = "POSTGRES"
 	L7_PROTOCOL_REDIS    = "REDIS"
 	L7_PROTOCOL_KAFKA    = "KAFKA"
+	L7_PROTOCOL_MYSQL    = "MYSQL"
 	L7_PROTOCOL_UNKNOWN  = "UNKNOWN"
 )
 
@@ -55,6 +57,8 @@ func (e L7ProtocolConversion) String() string {
 		return L7_PROTOCOL_REDIS
 	case BPF_L7_PROTOCOL_KAFKA:
 		return L7_PROTOCOL_KAFKA
+	case BPF_L7_PROTOCOL_MYSQL:
+		return L7_PROTOCOL_MYSQL
 	case BPF_L7_PROTOCOL_UNKNOWN:
 		return L7_PROTOCOL_UNKNOWN
 	default:
@@ -127,6 +131,15 @@ const (
 	METHOD_KAFKA_FETCH_RESPONSE
 )
 
+// match with values in l7.c, order is important
+const (
+	BPF_MYSQL_METHOD_UNKNOWN = iota
+	METHOD_MYSQL_TEXT_QUERY
+	METHOD_MYSQL_PREPARE_STMT
+	METHOD_MYSQL_EXEC_STMT
+	METHOD_MYSQL_STMT_CLOSE
+)
+
 // for http, user space
 const (
 	GET     = "GET"
@@ -170,6 +183,14 @@ const (
 const (
 	KAFKA_PRODUCE_REQUEST = "PRODUCE_REQUEST"
 	KAFKA_FETCH_RESPONSE  = "FETCH_RESPONSE"
+)
+
+// for mysql, user space
+const (
+	MYSQL_TEXT_QUERY   = "TEXT_QUERY"
+	MYSQL_PREPARE_STMT = "PREPARE_STMT"
+	MYSQL_EXEC_STMT    = "EXEC_STMT"
+	MYSQL_STMT_CLOSE   = "STMT_CLOSE"
 )
 
 // Custom type for the enumeration
@@ -280,6 +301,25 @@ func (e KafkaMethodConversion) String() string {
 	}
 }
 
+// Custom type for the enumeration
+type MySQLMethodConversion uint32
+
+// String representation of the enumeration values
+func (e MySQLMethodConversion) String() string {
+	switch e {
+	case METHOD_MYSQL_TEXT_QUERY:
+		return MYSQL_TEXT_QUERY
+	case METHOD_MYSQL_PREPARE_STMT:
+		return MYSQL_PREPARE_STMT
+	case METHOD_MYSQL_EXEC_STMT:
+		return MYSQL_EXEC_STMT
+	case METHOD_MYSQL_STMT_CLOSE:
+		return MYSQL_STMT_CLOSE
+	default:
+		return "Unknown"
+	}
+}
+
 var FirstKernelTime uint64 = 0 // nanoseconds since boot
 var FirstUserspaceTime uint64 = 0
 
@@ -317,12 +357,13 @@ type bpfL7Event struct {
 	Tid                 uint32
 	KafkaApiVersion     int16
 	_                   [2]byte
+	PrepStatementId     uint32 // for mysql
 	Saddr               uint32
 	Sport               uint16
 	_                   [2]byte
 	Daddr               uint32
 	Dport               uint16
-	_                   [2]byte
+	_                   [6]byte
 }
 
 type bpfTraceEvent struct {
@@ -365,6 +406,7 @@ type L7Event struct {
 	Tid                 uint32
 	Seq                 uint32 // tcp seq num
 	KafkaApiVersion     int16
+	MySqlPrepStmtId     uint32
 	Saddr               uint32
 	Sport               uint16
 	Daddr               uint32
@@ -676,6 +718,8 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 				method = RedisMethodConversion(l7Event.Method).String()
 			case L7_PROTOCOL_KAFKA:
 				method = KafkaMethodConversion(l7Event.Method).String()
+			case L7_PROTOCOL_MYSQL:
+				method = MySQLMethodConversion(l7Event.Method).String()
 			// no method set for kafka on kernel side
 			default:
 				method = "Unknown"
@@ -701,6 +745,7 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 				Tid:                 l7Event.Tid,
 				Seq:                 l7Event.Seq,
 				KafkaApiVersion:     l7Event.KafkaApiVersion,
+				MySqlPrepStmtId:     l7Event.PrepStatementId,
 				Saddr:               l7Event.Saddr,
 				Sport:               l7Event.Sport,
 				Daddr:               l7Event.Daddr,
