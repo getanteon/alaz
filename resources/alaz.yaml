@@ -89,9 +89,9 @@ spec:
           protocol: TCP
         resources:
           limits:
-            cpu: "1"
             memory: 1Gi
           requests:
+            cpu: "1"
             memory: 400Mi
         securityContext:
           privileged: true 
