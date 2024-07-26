@@ -36,6 +36,7 @@
 #include "redis.c"
 #include "kafka.c"
 #include "mysql.c"
+#include "mongo.c"
 #include "openssl.c"
 #include "http2.c"
 #include "tcp_sock.c"
