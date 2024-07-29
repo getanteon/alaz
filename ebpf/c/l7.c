@@ -7,6 +7,7 @@
 #define PROTOCOL_REDIS	    5
 #define PROTOCOL_KAFKA	    6
 #define PROTOCOL_MYSQL	    7
+#define PROTOCOL_MONGO      8
 
 
 
@@ -323,6 +324,8 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
                 return 0;
             }
             req->protocol = PROTOCOL_MYSQL;
+        }else if(is_mongo_request(buf,count)){
+            req->protocol = PROTOCOL_MONGO;
         }else if (is_http2_frame(buf, count)){
             struct l7_event *e = bpf_map_lookup_elem(&l7_event_heap, &zero);
             if (!e) {
@@ -863,9 +866,15 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
             }else if(active_req->request_type == MYSQL_COM_QUERY){
                 e->method = METHOD_MYSQL_TEXT_QUERY;
             }
+        }else if (e->protocol == PROTOCOL_MONGO){
+            e->status = is_mongo_reply(read_info->buf, ret);
         }
     }else{
         bpf_map_delete_elem(&active_reads, &id);
+        return 0;
+    }
+
+    if (e->status == 0){
         return 0;
     }
        

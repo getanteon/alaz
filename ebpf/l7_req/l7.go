@@ -25,6 +25,7 @@ const (
 	BPF_L7_PROTOCOL_REDIS
 	BPF_L7_PROTOCOL_KAFKA
 	BPF_L7_PROTOCOL_MYSQL
+	BPF_L7_PROTOCOL_MONGO
 )
 
 // for user space
@@ -36,6 +37,7 @@ const (
 	L7_PROTOCOL_REDIS    = "REDIS"
 	L7_PROTOCOL_KAFKA    = "KAFKA"
 	L7_PROTOCOL_MYSQL    = "MYSQL"
+	L7_PROTOCOL_MONGO    = "MONGO"
 	L7_PROTOCOL_UNKNOWN  = "UNKNOWN"
 )
 
@@ -59,6 +61,8 @@ func (e L7ProtocolConversion) String() string {
 		return L7_PROTOCOL_KAFKA
 	case BPF_L7_PROTOCOL_MYSQL:
 		return L7_PROTOCOL_MYSQL
+	case BPF_L7_PROTOCOL_MONGO:
+		return L7_PROTOCOL_MONGO
 	case BPF_L7_PROTOCOL_UNKNOWN:
 		return L7_PROTOCOL_UNKNOWN
 	default:
@@ -721,6 +725,8 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 			case L7_PROTOCOL_MYSQL:
 				method = MySQLMethodConversion(l7Event.Method).String()
 			// no method set for kafka on kernel side
+			// no method set for mongo on kernel side
+
 			default:
 				method = "Unknown"
 			}
