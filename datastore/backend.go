@@ -281,7 +281,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 	}
 
 	caCertGiven := false
-	caCert, err := os.ReadFile("/tmp/anteon-ca-cert/ca.crt")
+	caCert, err := os.ReadFile("/tmp/anteon-ca-cert/tls.crt")
 	if err == nil && caCert != nil {
 		caCertGiven = true
 	}

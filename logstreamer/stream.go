@@ -49,7 +49,7 @@ type fileReader struct {
 }
 
 func createTLSConfig() (*tls.Config, error) {
-	caCert, err := os.ReadFile("/tmp/anteon-ca-cert/ca.crt")
+	caCert, err := os.ReadFile("/tmp/anteon-ca-cert/tls.crt")
 	if err != nil {
 		log.Logger.Fatal().Err(err).Msg("invalid ca.crt for log streaming")
 	}
