@@ -49,8 +49,15 @@ type fileReader struct {
 }
 
 func createTLSConfig() (*tls.Config, error) {
+	caCert, err := os.ReadFile("/tmp/anteon-ca-cert/ca.crt")
+	if err != nil {
+		log.Logger.Fatal().Err(err).Msg("invalid ca.crt for log streaming")
+	}
+
+	// use given ca cert for logs for all cases.
+	// TODO: check
+
 	caCertPool := x509.NewCertPool()
-	caCert := []byte(CaCert)
 	caCertPool.AppendCertsFromPEM(caCert)
 
 	serverName := os.Getenv("LOG_BACKEND_SERVER_NAME")

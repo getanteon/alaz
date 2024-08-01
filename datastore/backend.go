@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"container/list"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -277,6 +279,28 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 		DisableKeepAlives: false,
 		MaxConnsPerHost:   500, // 500 connection per host
 	}
+
+	caCertGiven := false
+	caCert, err := os.ReadFile("/tmp/anteon-ca-cert/ca.crt")
+	if err == nil && caCert != nil {
+		caCertGiven = true
+	}
+
+	useCaCert, err := strconv.ParseBool(os.Getenv("USE_CA_CERT_FOR_BACKEND"))
+	if err != nil {
+		log.Logger.Info().Err(err).Msg("invalid USE_CA_CERT_FOR_BACKEND usage")
+		useCaCert = false
+	}
+	if caCertGiven && useCaCert {
+		caCertPool := x509.NewCertPool()
+		caCertPool.AppendCertsFromPEM(caCert)
+
+		retryClient.HTTPClient.Transport.(*http.Transport).TLSClientConfig = &tls.Config{
+			RootCAs:    caCertPool,
+			MinVersion: tls.VersionTLS12,
+		}
+	}
+
 	retryClient.HTTPClient.Timeout = 10 * time.Second // Set a timeout for the request
 	client := retryClient.StandardClient()
 

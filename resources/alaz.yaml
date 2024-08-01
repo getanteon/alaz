@@ -84,6 +84,11 @@ spec:
         image: ddosify/alaz:v0.11.0
         imagePullPolicy: IfNotPresent
         name: alaz-pod
+        # self-signed cert will be used
+        # volumeMounts:
+        # - name: ca-cert
+        #   mountPath: "/tmp/anteon-ca-cert"
+        #   readOnly: true
         ports:
         - containerPort: 8181
           protocol: TCP
@@ -102,6 +107,11 @@ spec:
         - mountPath: /sys/kernel/debug
           name: debugfs
           readOnly: false
+      # self-signed cert will be used
+      # volumes:
+      # - name: ca-cert
+      #   secret:
+      #     secretName: anteon-ca
       dnsPolicy: ClusterFirst
       restartPolicy: Always
       schedulerName: default-scheduler
@@ -114,3 +124,13 @@ spec:
       - name: debugfs
         hostPath:
           path: /sys/kernel/debug
+---
+apiVersion: v1
+data:
+  # // cat ca.crt | base64
+  ca.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURBekNDQWV1Z0F3SUJBZ0lVRDlyTTdRbVhIdmZiRUNiZm5NRlF6VWdXdk9zd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0VURVBNQTBHQTFVRUF3d0dZVzUwWlc5dU1CNFhEVEkwTURjek1UQTROREUwTVZvWERUSTNNRFF5TnpBNApOREUwTVZvd0VURVBNQTBHQTFVRUF3d0dZVzUwWlc5dU1JSUJJakFOQmdrcWhraUc5dzBCQVFFRkFBT0NBUThBCk1JSUJDZ0tDQVFFQXlNeHpaTm82c0ZQTmVsMHFmc00wTy9vTlMvSlVYRm55RmJOdUk5L2FtYTJwOFMwZWk0eU4KZ1dnaCtIczhtTVUyRHYzTkVVQjF6WFdLWW5mUU9icGhvNGJERFBJOVVVRHJzOTZaSEE4VXBmQjBmSjBZU0lvcwpSUHRjQUN2dzNxbnNpNUxMV2ZrMVhucFBmR1dEbXZLeVY2ZXpHcUt3bzhGQUpxNm5uSWJLblJBVE05WUVWbnI4ClBRQ3B6YmVTWnBRWlc1K0YySll0TERyd29mNHQ5RzlrL0l6Mlg4U0VBSUgvSTlyZkp1d2l4SkxQdnROL2I0aTAKN2xta3FXaHhFTHpmVFVnbmhYYlpXdlNLYzZVRzgvY1BpT0tYK0hNaDY3eU5IVDRvekhzZUZwZXREMjdLVWdlTQpYYnd3WTlQdlBJYUR6cW16bkI3anUybUVnVHdvTjhqb3VRSURBUUFCbzFNd1VUQWRCZ05WSFE0RUZnUVVpeXNuCmNNMnlHTkMwV01JV3ZKRXJOdkNaVnRBd0h3WURWUjBqQkJnd0ZvQVVpeXNuY00yeUdOQzBXTUlXdkpFck52Q1oKVnRBd0R3WURWUjBUQVFIL0JBVXdBd0VCL3pBTkJna3Foa2lHOXcwQkFRc0ZBQU9DQVFFQUVDbURhTU9OVDNIYwpRT2VxdWwzK2ZXWlVvZWVaU3Vzc2lTYkppNkpzS204Unh1VVd6QTIwbWVCOUl0V2JqWjZ2Y3hLTFgxMXRQR3AvCnJMZnZSZUZCL3ZRTEJpMU4wdFNOM1pVVFlkVW5hRFJXa1BvUzRnUS9hbjlYRjJuNXRrc0Z2Q1JvRm1vSWVteWMKYTlCczhUSE5DT2VBdW13UnUxMndqSmlYdk9TWm5VcEJiNmZLZ0w1TDZDdFZSYWpiVlBCOUM2bG5RZDhjUy9qbgpxd2hVWFc1ZHNiN2ZLNENwQkNIMW5rbmQxdjE1Y0x4RVVOUmlrMmZuOG9tTjdnb0IyTzhIT0lBcGV6VTNtNUNxCkcrOG42Y1UxaEY2cVBlZ2FBaGdpRE1DT1h3RFZvYU51VzFGZ0g1cHROMENqNmVVUkw4M1FUMStDMTRQWGRqMWsKUUN5MHRaMGZyUT09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+kind: Secret
+metadata:
+  name: anteon-ca
+  namespace: anteon
+type: kubernetes.io/tls
