@@ -1541,6 +1541,13 @@ func (a *Aggregator) parsePostgresCommand(d *l7_req.L7Event) (string, error) {
 }
 
 func (a *Aggregator) parseMongoEvent(d *l7_req.L7Event) (string, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Logger.Debug().Any("r", r).
+				Msg("recovered from mongo event,probably slice out of bounds")
+		}
+	}()
+
 	payload := d.Payload[:d.PayloadSize]
 
 	// cut mongo header, 4 bytes MessageLength, 4 bytes RequestID, 4 bytes ResponseTo, 4 bytes Opcode, 4 bytes MessageFlags
