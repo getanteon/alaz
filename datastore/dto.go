@@ -136,8 +136,9 @@ type KafkaEvent struct {
 	Value     string
 	Type      string // PUBLISH or CONSUME
 	Tls       bool
-	Tid       uint32
-	Seq       uint32
+	// dist tracing disabled by default temporarily
+	// Tid       uint32
+	// Seq       uint32
 }
 
 func (ke *KafkaEvent) SetFromUID(uid string) {
@@ -191,8 +192,9 @@ type Request struct {
 	FailReason string
 	Method     string
 	Path       string
-	Tid        uint32
-	Seq        uint32
+	// dist tracing disabled by default temporarily
+	// Tid        uint32
+	// Seq        uint32
 }
 
 func (r *Request) SetFromUID(uid string) {

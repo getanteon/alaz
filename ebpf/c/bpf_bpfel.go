@@ -48,8 +48,6 @@ type bpfL7Event struct {
 	Failed              uint8
 	IsTls               uint8
 	_                   [1]byte
-	Seq                 uint32
-	Tid                 uint32
 	KafkaApiVersion     int16
 	_                   [2]byte
 	PrepStatementId     uint32
@@ -71,8 +69,6 @@ type bpfL7Request struct {
 	PayloadReadComplete uint8
 	RequestType         uint8
 	_                   [2]byte
-	Seq                 uint32
-	Tid                 uint32
 	CorrelationId       int32
 	ApiKey              int16
 	ApiVersion          int16
