@@ -1,9 +1,5 @@
 package datastore
 
-import (
-	"github.com/ddosify/alaz/ebpf/l7_req"
-)
-
 type DataStore interface {
 	PersistPod(pod Pod, eventType string) error
 	PersistService(service Service, eventType string) error
@@ -18,7 +14,7 @@ type DataStore interface {
 
 	PersistKafkaEvent(request *KafkaEvent) error
 
-	PersistTraceEvent(trace *l7_req.TraceEvent) error
+	// PersistTraceEvent(trace *l7_req.TraceEvent) error
 
 	PersistAliveConnection(trace *AliveConnection) error
 }
