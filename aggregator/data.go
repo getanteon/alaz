@@ -324,12 +324,13 @@ func (a *Aggregator) processEbpf(ctx context.Context) {
 				ctxPid := context.WithValue(a.ctx, log.LOG_CONTEXT, fmt.Sprint(d.Pid))
 				go a.signalTlsAttachment(d.Pid)
 				a.processL7(ctxPid, d)
-			case l7_req.TRACE_EVENT:
-				d := data.(*l7_req.TraceEvent)
-				rateLimiter := a.getRateLimiterForPid(d.Pid)
-				if rateLimiter.Allow() {
-					a.ds.PersistTraceEvent(d)
-				}
+				// dist tracing disabled by default temporarily
+				// case l7_req.TRACE_EVENT:
+				// 	d := data.(*l7_req.TraceEvent)
+				// 	rateLimiter := a.getRateLimiterForPid(d.Pid)
+				// 	if rateLimiter.Allow() {
+				// 		a.ds.PersistTraceEvent(d)
+				// 	}
 			}
 		}
 	}
@@ -1050,8 +1051,9 @@ func (a *Aggregator) processKafkaEvent(ctx context.Context, d *l7_req.L7Event) {
 			Key:       msg.Key,
 			Value:     msg.Value,
 			Type:      msg.Type,
-			Tid:       d.Tid,
-			Seq:       d.Seq,
+			// dist tracing disabled by default temporarily
+			// Tid:       d.Tid,
+			// Seq:       d.Seq,
 		}
 
 		err := a.setFromToV2(addrPair, d, event, "")
@@ -1084,8 +1086,9 @@ func (a *Aggregator) processAmqpEvent(ctx context.Context, d *l7_req.L7Event) {
 		FailReason: "",
 		Method:     d.Method,
 		Path:       "",
-		Tid:        d.Tid,
-		Seq:        d.Seq,
+		// dist tracing disabled by default temporarily
+		// Tid:        d.Tid,
+		// Seq:        d.Seq,
 	}
 
 	err := a.setFromToV2(addrPair, d, reqDto, "")
@@ -1124,8 +1127,9 @@ func (a *Aggregator) processRedisEvent(ctx context.Context, d *l7_req.L7Event) {
 		FailReason: "",
 		Method:     d.Method,
 		Path:       query,
-		Tid:        d.Tid,
-		Seq:        d.Seq,
+		// dist tracing disabled by default temporarily
+		// Tid:        d.Tid,
+		// Seq:        d.Seq,
 	}
 
 	err := a.setFromToV2(addrPair, d, reqDto, "")
@@ -1216,8 +1220,9 @@ func (a *Aggregator) processHttpEvent(ctx context.Context, d *l7_req.L7Event) {
 		FailReason: "",
 		Method:     d.Method,
 		Path:       path,
-		Tid:        d.Tid,
-		Seq:        d.Seq,
+		// dist tracing disabled by default temporarily
+		// Tid:        d.Tid,
+		// Seq:        d.Seq,
 	}
 
 	err := a.setFromToV2(addrPair, d, reqDto, reqHostHeader)
@@ -1256,8 +1261,9 @@ func (a *Aggregator) processMySQLEvent(ctx context.Context, d *l7_req.L7Event) {
 		FailReason: "",
 		Method:     d.Method,
 		Path:       query,
-		Tid:        d.Tid,
-		Seq:        d.Seq,
+		// dist tracing disabled by default temporarily
+		// Tid:        d.Tid,
+		// Seq:        d.Seq,
 	}
 
 	err = a.setFromToV2(addrPair, d, reqDto, "")
@@ -1297,8 +1303,9 @@ func (a *Aggregator) processPostgresEvent(ctx context.Context, d *l7_req.L7Event
 		FailReason: "",
 		Method:     d.Method,
 		Path:       query,
-		Tid:        d.Tid,
-		Seq:        d.Seq,
+		// dist tracing disabled by default temporarily
+		// Tid:        d.Tid,
+		// Seq:        d.Seq,
 	}
 
 	err = a.setFromToV2(addrPair, d, reqDto, "")

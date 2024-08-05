@@ -16,6 +16,7 @@
 #endif
 
 #define FILTER_OUT_NON_CONTAINER
+// #define DIST_TRACING_ENABLED // disabled by default 
 
 #include <stddef.h>
 #include "../headers/pt_regs.h"

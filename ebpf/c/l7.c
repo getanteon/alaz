@@ -30,8 +30,10 @@ struct l7_event {
     __u8 failed;
     __u8 is_tls;
     
+    #ifdef DIST_TRACING_ENABLED
     __u32 seq; // tcp sequence number
     __u32 tid; // thread id
+    #endif
 
     __s16 kafka_api_version; // used only for kafka
     __u32 prep_statement_id; // used only for mysql
@@ -51,8 +53,12 @@ struct l7_request {
     __u32 payload_size;
     __u8 payload_read_complete;
     __u8 request_type;
+
+    #ifdef DIST_TRACING_ENABLED
     __u32 seq;
     __u32 tid;
+    #endif
+
     __s32 correlation_id; // used only for kafka
     __s16 api_key; // used only for kafka
     __s16 api_version; // used only for kafka
@@ -389,12 +395,12 @@ int process_enter_of_syscalls_write_sendto(void* ctx, __u64 fd, __u8 is_tls, cha
         req->payload_read_complete = 1;
     }
 
+    #ifdef DIST_TRACING_ENABLED
     __u32 tid = id & 0xFFFFFFFF;
     __u32 seq = process_for_dist_trace_write(ctx,fd);
-
-    // for distributed tracing
     req->seq = seq;
     req->tid = tid;
+    #endif
 
 
     struct sock* sk = get_sock(fd);
@@ -452,7 +458,9 @@ int process_enter_of_syscalls_read_recvfrom(void *ctx, struct read_enter_args * 
     // }
 
     // for distributed tracing
+    #ifdef DIST_TRACING_ENABLED
     process_for_dist_trace_read(ctx,params->fd);
+    #endif
 
     
     struct read_args args = {};
@@ -541,8 +549,10 @@ int process_exit_of_syscalls_write_sendto(void* ctx, __s64 ret){
         bpf_map_delete_elem(&active_writes, &id);
 
         // for distributed tracing
+        #ifdef DIST_TRACING_ENABLED
         e->seq = active_req->seq;
         e->tid = active_req->tid;
+        #endif
 
 
         e->saddr = active_req->saddr;
@@ -641,9 +651,10 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
         e->fd = k.fd;
         e->pid = k.pid;
 
-        // for distributed tracing
+        #ifdef DIST_TRACING_ENABLED
         e->seq = 0; // default value
         e->tid = bpf_get_current_pid_tgid() & 0xFFFFFFFF;
+        #endif
 
         // reset payload
         for (int i = 0; i < MAX_PAYLOAD_SIZE; i++) {
@@ -737,9 +748,10 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
             e->fd = k.fd;
             e->pid = k.pid;
 
-            // for distributed tracing
+            #ifdef DIST_TRACING_ENABLED
             e->seq = 0; // default value
             e->tid = bpf_get_current_pid_tgid() & 0xFFFFFFFF;
+            #endif
             
 
             struct sock* sk = get_sock(read_info->fd);
@@ -783,10 +795,10 @@ int process_exit_of_syscalls_read_recvfrom(void* ctx, __u64 id, __u32 pid, __s64
 
     e->failed = 0; // success
 
-    // for distributed tracing
+    #ifdef DIST_TRACING_ENABLED
     e->seq = active_req->seq;
     e->tid = active_req->tid;
-
+    #endif
 
     e->saddr = active_req->saddr;
     e->sport = active_req->sport;
@@ -1314,8 +1326,9 @@ int process_enter_of_go_conn_write(void *ctx, __u32 pid, __u32 fd, char *buf_ptr
                 log_to_userspace(ctx, WARN, func_name, log_msg, r, e->fd, e->payload_size);        
             }
 
-            // TODO: we will add tracing for http2 requests
+            #ifdef DIST_TRACING_ENABLED
             process_for_dist_trace_write(ctx,fd);
+            #endif
             return 0;
         }else{
             req->protocol = PROTOCOL_UNKNOWN;
@@ -1336,9 +1349,10 @@ int process_enter_of_go_conn_write(void *ctx, __u32 pid, __u32 fd, char *buf_ptr
     }
 
    
+    #ifdef DIST_TRACING_ENABLED
     req->seq = process_for_dist_trace_write(ctx,fd);
-    __u32 tid = bpf_get_current_pid_tgid() & 0xFFFFFFFF;
-    req->tid = tid;
+    req->tid = bpf_get_current_pid_tgid() & 0xFFFFFFFF;
+    #endif
 
 
     struct sock* sk = get_sock(fd);
@@ -1419,8 +1433,9 @@ int BPF_UPROBE(go_tls_conn_read_enter) {
         return 1;
     }
 
-    // for distributed tracing
+    #ifdef DIST_TRACING_ENABLED
     process_for_dist_trace_read(ctx,fd);
+    #endif
 
     // X1(arm64) register contains the byte ptr, pointing to first byte of the slice
     char *buf_ptr = (char*)GO_PARAM2(ctx);
