@@ -1573,18 +1573,20 @@ func (a *Aggregator) sendOpenConnection(sl *SocketLine) {
 	}
 }
 
-// TODO: connection send is made here, sendOpenConnection must be called, refactor this func and its calling place
 func (a *Aggregator) clearSocketLines(ctx context.Context) {
 	ticker := time.NewTicker(120 * time.Second)
 	skLineCh := make(chan *SocketLine, 1000)
 
+	sendAliveConnections, _ := strconv.ParseBool(os.Getenv("SEND_ALIVE_TCP_CONNECTIONS"))
 	go func() {
 		// spawn N goroutines to clear socket map
 		for i := 0; i < 10; i++ {
 			go func() {
 				for skLine := range skLineCh {
 					// send open connections to datastore
-					a.sendOpenConnection(skLine)
+					if sendAliveConnections {
+						a.sendOpenConnection(skLine)
+					}
 					// clear socket history
 					skLine.DeleteUnused()
 				}
