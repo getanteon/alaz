@@ -70,13 +70,6 @@ func main() {
 	}
 
 	tracingEnabled, err := strconv.ParseBool(os.Getenv("TRACING_ENABLED"))
-	if err != nil {
-		// for backwards compatibility
-		ebpfEnabled, _ := strconv.ParseBool(os.Getenv("SERVICE_MAP_ENABLED"))
-		distTracingEnabled, _ := strconv.ParseBool(os.Getenv("DIST_TRACING_ENABLED"))
-		tracingEnabled = ebpfEnabled || distTracingEnabled
-	}
-
 	metricsEnabled, _ := strconv.ParseBool(os.Getenv("METRICS_ENABLED"))
 	logsEnabled, _ := strconv.ParseBool(os.Getenv("LOGS_ENABLED"))
 
@@ -105,7 +98,7 @@ func main() {
 		a := aggregator.NewAggregator(ctx, ct, kubeEvents, ec.EbpfEvents(), ec.EbpfProcEvents(), ec.EbpfTcpEvents(), ec.TlsAttachQueue(), dsBackend)
 		a.Run()
 
-		a.AdvertiseDebugData()
+		// a.AdvertiseDebugData()
 
 		ec.Init()
 		go ec.ListenEvents()

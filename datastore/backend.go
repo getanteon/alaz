@@ -2,7 +2,6 @@ package datastore
 
 import (
 	"bytes"
-	"container/list"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,11 +12,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/ddosify/alaz/config"
-	"github.com/ddosify/alaz/ebpf/l7_req"
 	"github.com/ddosify/alaz/gpu"
 	"github.com/ddosify/alaz/log"
 
@@ -148,10 +145,10 @@ type BackendDS struct {
 	aliveConnPool      *poolutil.Pool[*ConnInfo]
 	kafkaEventInfoPool *poolutil.Pool[*KafkaEventInfo]
 
-	traceEventQueue *list.List
-	traceEventMu    sync.RWMutex
-
-	traceInfoPool *poolutil.Pool[*TraceInfo]
+	// dist tracing disabled by default temporarily
+	// traceEventQueue *list.List
+	// traceEventMu    sync.RWMutex
+	// traceInfoPool *poolutil.Pool[*TraceInfo]
 
 	metricsExport         bool
 	gpuMetricsExport      bool
@@ -172,21 +169,21 @@ type BackendDS struct {
 }
 
 const (
-	podEndpoint        = "/pod/"
-	svcEndpoint        = "/svc/"
-	rsEndpoint         = "/replicaset/"
-	depEndpoint        = "/deployment/"
-	epEndpoint         = "/endpoint/"
-	containerEndpoint  = "/container/"
-	dsEndpoint         = "/daemonset/"
-	ssEndpoint         = "/statefulset/"
-	reqEndpoint        = "/requests/"
-	connEndpoint       = "/connections/"
-	kafkaEventEndpoint = "/events/kafka/"
-
-	traceEventEndpoint = "/dist_tracing/traffic/"
-
+	podEndpoint         = "/pod/"
+	svcEndpoint         = "/svc/"
+	rsEndpoint          = "/replicaset/"
+	depEndpoint         = "/deployment/"
+	epEndpoint          = "/endpoint/"
+	containerEndpoint   = "/container/"
+	dsEndpoint          = "/daemonset/"
+	ssEndpoint          = "/statefulset/"
+	reqEndpoint         = "/requests/"
+	connEndpoint        = "/connections/"
+	kafkaEventEndpoint  = "/events/kafka/"
 	healthCheckEndpoint = "/healthcheck/"
+
+	// dist tracing disabled by default temporarily
+	// traceEventEndpoint = "/dist_tracing/traffic/"
 )
 
 type LeveledLogger struct {
@@ -296,7 +293,6 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 		reqInfoPool:           newReqInfoPool(func() *ReqInfo { return &ReqInfo{} }, func(r *ReqInfo) {}),
 		aliveConnPool:         newAliveConnPool(func() *ConnInfo { return &ConnInfo{} }, func(r *ConnInfo) {}),
 		kafkaEventInfoPool:    newKafkaEventPool(func() *KafkaEventInfo { return &KafkaEventInfo{} }, func(r *KafkaEventInfo) {}),
-		traceInfoPool:         newTraceInfoPool(func() *TraceInfo { return &TraceInfo{} }, func(r *TraceInfo) {}),
 		reqChanBuffer:         make(chan *ReqInfo, conf.ReqBufferSize),
 		connChanBuffer:        make(chan *ConnInfo, conf.ConnBufferSize),
 		kafkaChanBuffer:       make(chan *KafkaEventInfo, conf.ReqBufferSize),
@@ -308,10 +304,11 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 		containerEventChan:    make(chan interface{}, 5*resourceChanSize),
 		dsEventChan:           make(chan interface{}, resourceChanSize),
 		ssEventChan:           make(chan interface{}, resourceChanSize),
-		traceEventQueue:       list.New(),
 		metricsExport:         conf.MetricsExport,
 		gpuMetricsExport:      conf.GpuMetricsExport,
 		metricsExportInterval: conf.MetricsExportInterval,
+		// traceEventQueue:       list.New(),
+		// traceInfoPool:      newTraceInfoPool(func() *TraceInfo { return &TraceInfo{} }, func(r *TraceInfo) {}),
 	}
 
 	return ds
@@ -321,7 +318,8 @@ func (ds *BackendDS) Start() {
 	go ds.sendReqsInBatch(ds.batchSize)
 	go ds.sendConnsInBatch(ds.batchSize / 2)
 	go ds.sendKafkaEventsInBatch(ds.batchSize / 2)
-	go ds.sendTraceEventsInBatch(10 * ds.batchSize)
+
+	// go ds.sendTraceEventsInBatch(10 * ds.batchSize)
 
 	// events are resynced every 60 seconds on k8s informers
 	// resourceBatchSize ~ burst size, if more than resourceBatchSize events are sent in a moment, blocking can occur
@@ -402,32 +400,32 @@ func (ds *BackendDS) Start() {
 	}()
 }
 
-func (b *BackendDS) enqueueTraceInfo(traceInfo *TraceInfo) {
-	b.traceEventMu.Lock()
-	defer b.traceEventMu.Unlock()
-	b.traceEventQueue.PushBack(traceInfo)
-}
+// func (b *BackendDS) enqueueTraceInfo(traceInfo *TraceInfo) {
+// 	b.traceEventMu.Lock()
+// 	defer b.traceEventMu.Unlock()
+// 	b.traceEventQueue.PushBack(traceInfo)
+// }
 
-func (b *BackendDS) dequeueTraceEvents(batchSize uint64) []*TraceInfo {
-	b.traceEventMu.Lock()
-	defer b.traceEventMu.Unlock()
+// func (b *BackendDS) dequeueTraceEvents(batchSize uint64) []*TraceInfo {
+// 	b.traceEventMu.Lock()
+// 	defer b.traceEventMu.Unlock()
 
-	batch := make([]*TraceInfo, 0, batchSize)
+// 	batch := make([]*TraceInfo, 0, batchSize)
 
-	for i := 0; i < int(batchSize); i++ {
-		if b.traceEventQueue.Len() == 0 {
-			return batch
-		}
+// 	for i := 0; i < int(batchSize); i++ {
+// 		if b.traceEventQueue.Len() == 0 {
+// 			return batch
+// 		}
 
-		elem := b.traceEventQueue.Front()
-		b.traceEventQueue.Remove(elem)
-		tInfo, _ := elem.Value.(*TraceInfo)
+// 		elem := b.traceEventQueue.Front()
+// 		b.traceEventQueue.Remove(elem)
+// 		tInfo, _ := elem.Value.(*TraceInfo)
 
-		batch = append(batch, tInfo)
-	}
+// 		batch = append(batch, tInfo)
+// 	}
 
-	return batch
-}
+// 	return batch
+// }
 
 func (b *BackendDS) DoRequest(req *http.Request) error {
 	req.Header.Set("Content-Type", "application/json")
@@ -489,17 +487,18 @@ func convertConnsToPayload(batch []*ConnInfo) ConnInfoPayload {
 	}
 }
 
-func convertTraceEventsToPayload(batch []*TraceInfo) TracePayload {
-	return TracePayload{
-		Metadata: Metadata{
-			MonitoringID:   MonitoringID,
-			IdempotencyKey: string(uuid.NewUUID()),
-			NodeID:         NodeID,
-			AlazVersion:    tag,
-		},
-		Traces: batch,
-	}
-}
+// dist tracing disabled
+// func convertTraceEventsToPayload(batch []*TraceInfo) TracePayload {
+// 	return TracePayload{
+// 		Metadata: Metadata{
+// 			MonitoringID:   MonitoringID,
+// 			IdempotencyKey: string(uuid.NewUUID()),
+// 			NodeID:         NodeID,
+// 			AlazVersion:    tag,
+// 		},
+// 		Traces: batch,
+// 	}
+// }
 
 func (b *BackendDS) sendMetricsToBackend(r io.Reader) {
 	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/metrics/scrape/?instance=%s&monitoring_id=%s", b.host, NodeID, MonitoringID), r)
@@ -556,37 +555,38 @@ func (b *BackendDS) sendToBackend(method string, payload interface{}, endpoint s
 	}
 }
 
-func (b *BackendDS) sendTraceEventsInBatch(batchSize uint64) {
-	t := time.NewTicker(1 * time.Second)
-	defer t.Stop()
+// dist tracing disabled by default temporarily
+// func (b *BackendDS) sendTraceEventsInBatch(batchSize uint64) {
+// 	t := time.NewTicker(1 * time.Second)
+// 	defer t.Stop()
 
-	send := func() {
-		batch := b.dequeueTraceEvents(batchSize)
+// 	send := func() {
+// 		batch := b.dequeueTraceEvents(batchSize)
 
-		if len(batch) == 0 {
-			return
-		}
+// 		if len(batch) == 0 {
+// 			return
+// 		}
 
-		tracePayload := convertTraceEventsToPayload(batch)
-		go b.sendToBackend(http.MethodPost, tracePayload, traceEventEndpoint)
+// 		tracePayload := convertTraceEventsToPayload(batch)
+// 		go b.sendToBackend(http.MethodPost, tracePayload, traceEventEndpoint)
 
-		// return reqInfoss to the pool
-		for _, trace := range batch {
-			b.traceInfoPool.Put(trace)
-		}
-	}
+// 		// return reqInfoss to the pool
+// 		for _, trace := range batch {
+// 			b.traceInfoPool.Put(trace)
+// 		}
+// 	}
 
-	for {
-		select {
-		case <-b.ctx.Done():
-			log.Logger.Info().Msg("stopping sending trace events to backend")
-			return
-		case <-t.C:
-			send()
-		}
-	}
+// 	for {
+// 		select {
+// 		case <-b.ctx.Done():
+// 			log.Logger.Info().Msg("stopping sending trace events to backend")
+// 			return
+// 		case <-t.C:
+// 			send()
+// 		}
+// 	}
 
-}
+// }
 
 func (b *BackendDS) sendReqsInBatch(batchSize uint64) {
 	t := time.NewTicker(5 * time.Second)
@@ -780,13 +780,13 @@ func newAliveConnPool(factory func() *ConnInfo, close func(*ConnInfo)) *poolutil
 	}
 }
 
-func newTraceInfoPool(factory func() *TraceInfo, close func(*TraceInfo)) *poolutil.Pool[*TraceInfo] {
-	return &poolutil.Pool[*TraceInfo]{
-		Items:   make(chan *TraceInfo, 50000),
-		Factory: factory,
-		Close:   close,
-	}
-}
+// func newTraceInfoPool(factory func() *TraceInfo, close func(*TraceInfo)) *poolutil.Pool[*TraceInfo] {
+// 	return &poolutil.Pool[*TraceInfo]{
+// 		Items:   make(chan *TraceInfo, 50000),
+// 		Factory: factory,
+// 		Close:   close,
+// 	}
+// }
 
 func newKafkaEventPool(factory func() *KafkaEventInfo, close func(*KafkaEventInfo)) *poolutil.Pool[*KafkaEventInfo] {
 	return &poolutil.Pool[*KafkaEventInfo]{
@@ -837,8 +837,9 @@ func (b *BackendDS) PersistRequest(request *Request) error {
 	reqInfo[13] = request.Method
 	reqInfo[14] = request.Path
 	reqInfo[15] = request.Tls
-	reqInfo[16] = request.Seq
-	reqInfo[17] = request.Tid
+	// dist tracing disabled
+	// reqInfo[16] = request.Seq
+	// reqInfo[17] = request.Tid
 
 	b.reqChanBuffer <- reqInfo
 
@@ -866,35 +867,37 @@ func (b *BackendDS) PersistKafkaEvent(ke *KafkaEvent) error {
 	kafkaInfo[13] = ke.Value
 	kafkaInfo[14] = ke.Type
 	kafkaInfo[15] = ke.Tls
-	kafkaInfo[16] = ke.Seq
-	kafkaInfo[17] = ke.Tid
+	// dist tracing disabled
+	// kafkaInfo[16] = ke.Seq
+	// kafkaInfo[17] = ke.Tid
 
 	b.kafkaChanBuffer <- kafkaInfo
 
 	return nil
 }
 
-func (b *BackendDS) PersistTraceEvent(trace *l7_req.TraceEvent) error {
-	if trace == nil {
-		return fmt.Errorf("trace event is nil")
-	}
+// dist tracing disabled by default temporarily
+// func (b *BackendDS) PersistTraceEvent(trace *l7_req.TraceEvent) error {
+// 	if trace == nil {
+// 		return fmt.Errorf("trace event is nil")
+// 	}
 
-	t := b.traceInfoPool.Get()
+// 	t := b.traceInfoPool.Get()
 
-	t[0] = trace.Tx
-	t[1] = trace.Seq
-	t[2] = trace.Tid
+// 	t[0] = trace.Tx
+// 	t[1] = trace.Seq
+// 	t[2] = trace.Tid
 
-	ingress := false      // EGRESS
-	if trace.Type_ == 0 { // INGRESS
-		ingress = true
-	}
+// 	ingress := false      // EGRESS
+// 	if trace.Type_ == 0 { // INGRESS
+// 		ingress = true
+// 	}
 
-	t[3] = ingress
+// 	t[3] = ingress
 
-	b.enqueueTraceInfo(t)
-	return nil
-}
+// 	b.enqueueTraceInfo(t)
+// 	return nil
+// }
 
 func (b *BackendDS) PersistPod(pod Pod, eventType string) error {
 	podEvent := convertPodToPodEvent(pod, eventType)

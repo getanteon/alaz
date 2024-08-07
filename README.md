@@ -13,7 +13,7 @@
 </p>
 
 <h2 align="center">
-    <a href="https://demo.getanteo.com/clusters/0ce2ef05-ef64-459d-90d9-7f2cbd65fff8" target="_blank">Live Demo</a> •
+    <a href="https://demo.getanteon.com/clusters/0ce2ef05-ef64-459d-90d9-7f2cbd65fff8" target="_blank">Live Demo</a> •
     <a href="https://getanteon.com/docs/" target="_blank">Documentation</a> •
     <a href="https://getanteon.com/docs/deployment/" target="_blank">Deployment</a> •
     <a href="https://discord.com/invite/9KdnrSUZQg" target="_blank">Discord</a>
@@ -170,8 +170,9 @@ Alaz supports the following protocols:
 - Redis (RESP)
 - Kafka
 - MySQL
+- MongoDB
 
-Other protocols will be supported soon.
+Other protocols will be supported soon. If you have a specific protocol you would like to see supported, please open an issue.
 
 ## Limitations
 
@@ -186,7 +187,7 @@ command and whether btf is enabled by default or not at the [btfhub](https://git
 
 For the time being, we expect that btf information is readily available on your system. We'll support all kernels in the upcoming weeks leveraging [btfhub](https://github.com/aquasecurity/btfhub).
 
-#### Encryption Libraries
+### Encryption Libraries
 These are the libraries that alaz hooks into for capturing encrypted traffic.
 - [crypto/tls](https://pkg.go.dev/crypto/tls):
 In order to Alaz to capture tls requests in your Go applications, your go version must be **1.17+** and your executable must include debug info.

@@ -122,9 +122,11 @@ type ContainerEvent struct {
 // 13) Method
 // 14) Path
 // 15) Encrypted (bool)
+type ReqInfo [16]interface{}
+
+// dist tracing disabled
 // 16) Seq
 // 17) Tid
-type ReqInfo [18]interface{}
 
 type RequestsPayload struct {
 	Metadata Metadata   `json:"metadata"`
@@ -174,9 +176,11 @@ type TracePayload struct {
 // 13) Value
 // 14) Type
 // 15) Encrypted (bool)
+type KafkaEventInfo [16]interface{}
+
+// dist tracing disabled
 // 16) Seq
 // 17) Tid
-type KafkaEventInfo [18]interface{}
 
 type KafkaEventInfoPayload struct {
 	Metadata    Metadata          `json:"metadata"`
