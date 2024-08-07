@@ -13,7 +13,7 @@
 </p>
 
 <h2 align="center">
-    <a href="https://demo.getanteo.com/clusters/0ce2ef05-ef64-459d-90d9-7f2cbd65fff8" target="_blank">Live Demo</a> •
+    <a href="https://demo.getanteon.com/clusters/0ce2ef05-ef64-459d-90d9-7f2cbd65fff8" target="_blank">Live Demo</a> •
     <a href="https://getanteon.com/docs/" target="_blank">Documentation</a> •
     <a href="https://getanteon.com/docs/deployment/" target="_blank">Deployment</a> •
     <a href="https://discord.com/invite/9KdnrSUZQg" target="_blank">Discord</a>
