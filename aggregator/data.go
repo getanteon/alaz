@@ -941,6 +941,13 @@ func (a *Aggregator) decodeKafkaPayload(d *l7_req.L7Event) ([]*KafkaMessage, err
 	// var message protocol.Message
 	// var err error
 
+	defer func() {
+		if r := recover(); r != nil {
+			log.Logger.Debug().Any("r", r).
+				Msg("recovered from kafka event,probably slice out of bounds") // since we read 1024 bytes at most from ebpf, slice out of bounds can occur
+		}
+	}()
+
 	result := make([]*KafkaMessage, 0)
 
 	if d.Method == l7_req.KAFKA_PRODUCE_REQUEST {
