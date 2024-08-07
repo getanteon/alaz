@@ -1,6 +1,7 @@
 package aggregator
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/ddosify/alaz/datastore"
@@ -41,19 +42,26 @@ func (a *Aggregator) processPod(d k8s.K8sResourceMessage) {
 		return
 	}
 
-	// take last state ?
-
-	var message string
+	ctx := context.WithValue(context.Background(), log.LOG_CONTEXT, "status-msg")
+	var containerStatusMsg string
 	containerStatutes := pod.Status.ContainerStatuses
 	// take first container
 	cs := containerStatutes[0] // TODO: check
+
 	if cs.Started == nil || *cs.Started == false {
 		if cs.State.Running == nil && cs.State.Waiting != nil {
-			message = fmt.Sprintf("%s: %s", cs.State.Waiting.Reason, cs.State.Waiting.Message)
+			containerStatusMsg = fmt.Sprintf("%s: %s", cs.State.Waiting.Reason, cs.State.Waiting.Message)
 		}
 	}
 
-	// TODO: add message here
+	if cs.Started != nil && *cs.Started == true {
+		if cs.State.Running != nil && cs.State.Waiting == nil {
+			containerStatusMsg = fmt.Sprintf("Started at %s", cs.State.Running.StartedAt)
+		}
+	}
+
+	log.Logger.Info().Ctx(ctx).Str("statusMsg", containerStatusMsg).Msg("pod-container-status")
+
 	dtoPod := datastore.Pod{
 		UID:       string(pod.UID),
 		Name:      pod.Name,
