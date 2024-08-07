@@ -941,6 +941,13 @@ func (a *Aggregator) decodeKafkaPayload(d *l7_req.L7Event) ([]*KafkaMessage, err
 	// var message protocol.Message
 	// var err error
 
+	defer func() {
+		if r := recover(); r != nil {
+			log.Logger.Debug().Any("r", r).
+				Msg("recovered from kafka event,probably slice out of bounds") // since we read 1024 bytes at most from ebpf, slice out of bounds can occur
+		}
+	}()
+
 	result := make([]*KafkaMessage, 0)
 
 	if d.Method == l7_req.KAFKA_PRODUCE_REQUEST {
@@ -1241,6 +1248,42 @@ func (a *Aggregator) processHttpEvent(ctx context.Context, d *l7_req.L7Event) {
 
 }
 
+func (a *Aggregator) processMongoEvent(ctx context.Context, d *l7_req.L7Event) {
+	query, err := a.parseMongoEvent(d)
+	if err != nil {
+		log.Logger.Error().AnErr("err", err)
+		return
+	}
+	addrPair := extractAddressPair(d)
+
+	reqDto := &datastore.Request{
+		StartTime:  int64(convertKernelTimeToUserspaceTime(d.WriteTimeNs) / 1e6),
+		Latency:    d.Duration,
+		FromIP:     addrPair.Saddr,
+		ToIP:       addrPair.Daddr,
+		Protocol:   d.Protocol,
+		Tls:        d.Tls,
+		Completed:  true,
+		StatusCode: d.Status,
+		FailReason: "",
+		Method:     d.Method,
+		Path:       query,
+		// dist tracing disabled by default temporarily
+		// Tid:        d.Tid,
+		// Seq:        d.Seq,
+	}
+
+	err = a.setFromToV2(addrPair, d, reqDto, "")
+	if err != nil {
+		return
+	}
+
+	err = a.ds.PersistRequest(reqDto)
+	if err != nil {
+		log.Logger.Error().Err(err).Msg("error persisting request")
+	}
+}
+
 func (a *Aggregator) processMySQLEvent(ctx context.Context, d *l7_req.L7Event) {
 	query, err := a.parseMySQLCommand(d)
 	if err != nil {
@@ -1271,7 +1314,6 @@ func (a *Aggregator) processMySQLEvent(ctx context.Context, d *l7_req.L7Event) {
 		return
 	}
 
-	log.Logger.Debug().Any("event", reqDto).Msg("persisting mysql-event")
 	err = a.ds.PersistRequest(reqDto)
 	if err != nil {
 		log.Logger.Error().Err(err).Msg("error persisting request")
@@ -1335,6 +1377,8 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 		a.processKafkaEvent(ctx, d)
 	case l7_req.L7_PROTOCOL_MYSQL:
 		a.processMySQLEvent(ctx, d)
+	case l7_req.L7_PROTOCOL_MONGO:
+		a.processMongoEvent(ctx, d)
 	}
 }
 
@@ -1509,6 +1553,56 @@ func (a *Aggregator) parsePostgresCommand(d *l7_req.L7Event) (string, error) {
 	}
 
 	return sqlCommand, nil
+}
+
+func (a *Aggregator) parseMongoEvent(d *l7_req.L7Event) (string, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Logger.Debug().Any("r", r).
+				Msg("recovered from mongo event,probably slice out of bounds")
+		}
+	}()
+
+	payload := d.Payload[:d.PayloadSize]
+
+	// cut mongo header, 4 bytes MessageLength, 4 bytes RequestID, 4 bytes ResponseTo, 4 bytes Opcode, 4 bytes MessageFlags
+	payload = payload[20:]
+
+	kind := payload[0]
+	payload = payload[1:] // cut kind
+	if kind == 0 {        // body
+		docLenBytes := payload[:4] // document length
+		docLen := binary.LittleEndian.Uint32(docLenBytes)
+		payload = payload[4:docLen] // cut docLen
+		// parse Element
+		type_ := payload[0] // 2 means string
+		if type_ != 2 {
+			return "", fmt.Errorf("document element not a string")
+		}
+		payload = payload[1:] // cut type
+
+		// read until NULL
+		element := []uint8{}
+		for _, p := range payload {
+			if p == 0 {
+				break
+			}
+			element = append(element, p)
+		}
+
+		// 1 byte NULL, 4 bytes len
+		elementLenBytes := payload[len(element)+1 : len(element)+1+4]
+		elementLength := binary.LittleEndian.Uint32(elementLenBytes)
+
+		payload = payload[len(element)+5:]        // cut element + null + len
+		elementValue := payload[:elementLength-1] // myCollection, last byte is null
+
+		result := fmt.Sprintf("%s %s", string(element), string(elementValue))
+		log.Logger.Debug().Str("result", result).Msg("mongo-elem-result")
+		return result, nil
+	}
+
+	return "", fmt.Errorf("could not parse mongo event")
 }
 
 func (a *Aggregator) getPgStmtKey(pid uint32, fd uint64, stmtName string) string {
