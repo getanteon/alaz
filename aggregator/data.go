@@ -1251,7 +1251,6 @@ func (a *Aggregator) processHttpEvent(ctx context.Context, d *l7_req.L7Event) {
 func (a *Aggregator) processMongoEvent(ctx context.Context, d *l7_req.L7Event) {
 	query, err := a.parseMongoEvent(d)
 	if err != nil {
-		log.Logger.Error().AnErr("err", err)
 		return
 	}
 	addrPair := extractAddressPair(d)
@@ -1278,6 +1277,7 @@ func (a *Aggregator) processMongoEvent(ctx context.Context, d *l7_req.L7Event) {
 		return
 	}
 
+	log.Logger.Debug().Str("path", reqDto.Path).Msg("processmongoEvent persisting")
 	err = a.ds.PersistRequest(reqDto)
 	if err != nil {
 		log.Logger.Error().Err(err).Msg("error persisting request")
@@ -1555,6 +1555,9 @@ func (a *Aggregator) parsePostgresCommand(d *l7_req.L7Event) (string, error) {
 	return sqlCommand, nil
 }
 
+var MongoOpCompressed uint32 = 2012
+var MongoOpMsg uint32 = 2013
+
 func (a *Aggregator) parseMongoEvent(d *l7_req.L7Event) (string, error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -1565,41 +1568,49 @@ func (a *Aggregator) parseMongoEvent(d *l7_req.L7Event) (string, error) {
 
 	payload := d.Payload[:d.PayloadSize]
 
-	// cut mongo header, 4 bytes MessageLength, 4 bytes RequestID, 4 bytes ResponseTo, 4 bytes Opcode, 4 bytes MessageFlags
-	payload = payload[20:]
+	// cut mongo header, 4 bytes MessageLength, 4 bytes RequestID, 4 bytes ResponseTo
+	payload = payload[12:]
+	// cut 4 bytes Opcode, 4 bytes MessageFlags
+	opcode := payload[:4]
+	payload = payload[8:]
 
-	kind := payload[0]
-	payload = payload[1:] // cut kind
-	if kind == 0 {        // body
-		docLenBytes := payload[:4] // document length
-		docLen := binary.LittleEndian.Uint32(docLenBytes)
-		payload = payload[4:docLen] // cut docLen
-		// parse Element
-		type_ := payload[0] // 2 means string
-		if type_ != 2 {
-			return "", fmt.Errorf("document element not a string")
-		}
-		payload = payload[1:] // cut type
+	opcodeInt := binary.LittleEndian.Uint32(opcode)
 
-		// read until NULL
-		element := []uint8{}
-		for _, p := range payload {
-			if p == 0 {
-				break
+	if opcodeInt == MongoOpCompressed {
+		return "compressed mongo event", nil
+	} else if opcodeInt == MongoOpMsg {
+		kind := payload[0]
+		payload = payload[1:] // cut kind
+		if kind == 0 {        // body
+			docLenBytes := payload[:4] // document length
+			docLen := binary.LittleEndian.Uint32(docLenBytes)
+			payload = payload[4:docLen] // cut docLen
+			// parse Element
+			type_ := payload[0] // 2 means string
+			if type_ != 2 {
+				return "", fmt.Errorf("document element not a string")
 			}
-			element = append(element, p)
+			payload = payload[1:] // cut type
+
+			// read until NULL
+			element := []uint8{}
+			for _, p := range payload {
+				if p == 0 {
+					break
+				}
+				element = append(element, p)
+			}
+
+			// 1 byte NULL, 4 bytes len
+			elementLenBytes := payload[len(element)+1 : len(element)+1+4]
+			elementLength := binary.LittleEndian.Uint32(elementLenBytes)
+
+			payload = payload[len(element)+5:]        // cut element + null + len
+			elementValue := payload[:elementLength-1] // myCollection, last byte is null
+
+			result := fmt.Sprintf("%s %s", string(element), string(elementValue))
+			return result, nil
 		}
-
-		// 1 byte NULL, 4 bytes len
-		elementLenBytes := payload[len(element)+1 : len(element)+1+4]
-		elementLength := binary.LittleEndian.Uint32(elementLenBytes)
-
-		payload = payload[len(element)+5:]        // cut element + null + len
-		elementValue := payload[:elementLength-1] // myCollection, last byte is null
-
-		result := fmt.Sprintf("%s %s", string(element), string(elementValue))
-		log.Logger.Debug().Str("result", result).Msg("mongo-elem-result")
-		return result, nil
 	}
 
 	return "", fmt.Errorf("could not parse mongo event")
