@@ -243,18 +243,23 @@ func (e *EbpfCollector) close() {
 	for pid := range e.sslWriteUprobes {
 		e.sslWriteUprobes[pid].Close()
 	}
+	log.Logger.Info().Msg("closed sslWriteUprobes")
 	for pid := range e.sslReadEnterUprobes {
 		e.sslReadEnterUprobes[pid].Close()
 	}
+	log.Logger.Info().Msg("closed sslReadEnterUprobes")
 	for pid := range e.sslReadURetprobes {
 		e.sslReadURetprobes[pid].Close()
 	}
+	log.Logger.Info().Msg("closed sslReadURetprobes")
 	for pid := range e.goTlsWriteUprobes {
 		e.goTlsWriteUprobes[pid].Close()
 	}
+	log.Logger.Info().Msg("closed goTlsWriteUprobes")
 	for pid := range e.goTlsReadUprobes {
 		e.goTlsReadUprobes[pid].Close()
 	}
+	log.Logger.Info().Msg("closed goTlsReadUprobes")
 	for pid := range e.goTlsReadUretprobes {
 		for _, l := range e.goTlsReadUretprobes[pid] {
 			l.Close()
