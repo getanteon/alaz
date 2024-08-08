@@ -62,7 +62,7 @@ spec:
         - name: METRICS_ENABLED
           value: "true"
         - name: LOGS_ENABLED
-          value: "true"
+          value: "false"
         - name: BACKEND_HOST
           value: https://api-alaz.getanteon.com:443
         - name: LOG_LEVEL
@@ -71,6 +71,8 @@ spec:
         #   value: "^anteon.*"
         - name: MONITORING_ID
           value: <MONITORING_ID>
+        - name: SEND_ALIVE_TCP_CONNECTIONS  # Send undetected protocol connections (unknown connections)
+          value: "false"
         - name: NODE_NAME
           valueFrom:
             fieldRef:
@@ -81,7 +83,7 @@ spec:
         - --no-collector.hwmon
         - --collector.filesystem.ignored-mount-points=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/pods/.+)($|/)
         - --collector.netclass.ignored-devices=^(veth.*)$
-        image: ddosify/alaz:v0.11.0
+        image: ddosify/alaz:v0.11.3
         imagePullPolicy: IfNotPresent
         name: alaz-pod
         ports:
