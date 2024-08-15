@@ -41,6 +41,8 @@
 
 <!-- vim-markdown-toc -->
 
+</details>
+
 ## What is Alaz?
 
 [**Alaz**](https://github.com/getanteon/alaz) is an open-source Anteon eBPF agent that can inspect and collect Kubernetes (K8s) service traffic without the need for code instrumentation, sidecars, or service restarts. This is possible due to its use of eBPF technology.
