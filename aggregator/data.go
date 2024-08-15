@@ -416,9 +416,6 @@ func (a *Aggregator) processTcpConnect(ctx context.Context, d *tcp_state.TcpConn
 		sockMap = a.clusterInfo.SocketMaps[d.Pid]
 		if sockMap == nil {
 			// signal socket map creation and requeue event
-			log.Logger.Warn().Ctx(ctx).
-				Uint32("pid", d.Pid).Str("func", "processTcpConnect").Str("event", "ESTABLISHED").Msg("socket map not initialized")
-
 			go a.clusterInfo.SignalSocketMapCreation(d.Pid)
 			a.ebpfTcpChan <- d
 			return

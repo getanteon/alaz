@@ -241,7 +241,10 @@ func (e *EbpfCollector) close() {
 	log.Logger.Info().Msg("closing ebpf uprobes")
 
 	for pid := range e.sslWriteUprobes {
-		e.sslWriteUprobes[pid].Close()
+		err := e.sslWriteUprobes[pid].Close()
+		if err != nil {
+			log.Logger.Error().Err(err).Msg("sslWriteUprobes link close")
+		}
 	}
 	log.Logger.Info().Msg("closed sslWriteUprobes")
 	for pid := range e.sslReadEnterUprobes {

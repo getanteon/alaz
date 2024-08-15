@@ -15,12 +15,27 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
+	"github.com/ddosify/alaz/datastore"
 	"github.com/ddosify/alaz/log"
 
 	"github.com/ddosify/alaz/cri"
 	"github.com/fsnotify/fsnotify"
+
+	otlploghttp "go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
+	otellog "go.opentelemetry.io/otel/log"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
+
+type ContainerMetadata struct {
+	containerId        string
+	containerName      string
+	podName            string
+	podUid             string
+	namespace          string
+	containerSuffixNum int
+}
 
 type LogStreamer struct {
 	critool *cri.CRITool
@@ -31,16 +46,21 @@ type LogStreamer struct {
 	readerMapMu   sync.RWMutex
 	logPathToFile map[string]*fileReader
 
-	metaMapMu              sync.RWMutex
-	logPathToContainerMeta map[string]string
+	metaMapMu                    sync.RWMutex
+	logPathToContainerMetaLine   map[string]string
+	logPathToContainerMetaStruct map[string]ContainerMetadata
 
 	idToPathMu           sync.RWMutex
 	containerIdToLogPath map[string]string
+	logPathToContainerId map[string]string
 
 	ctx  context.Context
 	done chan struct{}
 
 	maxConnection int
+
+	isBackendOTLP bool
+	otlpExporter  *otlploghttp.Exporter
 }
 
 type fileReader struct {
@@ -69,66 +89,92 @@ func createFsNotifyWatcher() (*fsnotify.Watcher, error) {
 	return fsnotify.NewBufferedWatcher(sz)
 }
 
+// LogStreamer accepts two types of backend.
+// 1. Using its own protocol and streaming logs over tcp connections.
+// 2. Sending logs in OTLP to Otel Collector with http.
 func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, error) {
 	ls := &LogStreamer{
 		critool: critool,
 	}
 
-	logBackend := os.Getenv("LOG_BACKEND")
-	if logBackend == "" {
-		logBackend = "log-alaz.getanteon.com:443"
-	}
-
-	dialer := &net.Dialer{
-		Timeout: 60 * time.Second,
-	}
-
-	tlsConfig, err := createTLSConfig()
-	if err != nil {
-		log.Logger.Error().Err(err).Msg("failed to create TLS config")
-		return nil, err
-	}
-
-	max_connection := 30
-	max_connection_str := os.Getenv("LOG_BACKEND_MAX_CONNECTION")
-	if max_connection_str != "" {
-		m, err := strconv.Atoi(max_connection_str)
-		if err == nil {
-			max_connection = m
-		}
-	}
-
-	tlsFunc := func() (net.Conn, error) {
-		log.Logger.Debug().Msgf("dialing to log backend: %s", logBackend)
-		return tls.DialWithDialer(dialer, "tcp", logBackend, tlsConfig)
-	}
-
-	plainFunc := func() (net.Conn, error) {
-		log.Logger.Debug().Msgf("dialing to log backend: %s", logBackend)
-		return net.Dial("tcp", logBackend)
-	}
-
-	var factory Factory
-
 	var logTls = true
-
 	logTlsEnv, err := strconv.ParseBool(os.Getenv("LOG_BACKEND_TLS"))
-	if err == nil && logTlsEnv == false {
+	if err == nil && !logTlsEnv {
 		logTls = false
 	}
 
-	if logTls {
-		factory = tlsFunc
+	logBackendOtlp := os.Getenv("LOG_BACKEND_OTLP")
+	if logBackendOtlp != "" {
+		// otlp
+		ls.isBackendOTLP = true
+		opts := []otlploghttp.Option{otlploghttp.WithEndpoint(logBackendOtlp)}
+		if !logTls {
+			opts = append(opts, otlploghttp.WithInsecure())
+		} else {
+			tlsConfig, err := createTLSConfig()
+			if err != nil {
+				log.Logger.Error().Err(err).Msg("failed to create TLS config")
+				return nil, err
+			}
+			opts = append(opts, otlploghttp.WithTLSClientConfig(tlsConfig))
+		}
+
+		exporter, err := otlploghttp.New(ctx, opts...)
+		if err != nil {
+			log.Logger.Fatal().Err(err).Msg("otlp exporter for logs not created")
+		}
+		ls.otlpExporter = exporter
 	} else {
-		factory = plainFunc
-	}
+		// tcp
+		logBackend := os.Getenv("LOG_BACKEND")
+		if logBackend == "" {
+			logBackend = "log-alaz.getanteon.com:443"
+		}
 
-	connPool, err := NewChannelPool(5, max_connection, factory, logTls)
-	ls.connPool = connPool
-	ls.maxConnection = max_connection
+		dialer := &net.Dialer{
+			Timeout: 60 * time.Second,
+		}
 
-	if err != nil {
-		return nil, fmt.Errorf("failed to create connection pool: %v", err)
+		tlsConfig, err := createTLSConfig()
+		if err != nil {
+			log.Logger.Error().Err(err).Msg("failed to create TLS config")
+			return nil, err
+		}
+
+		max_connection := 30
+		max_connection_str := os.Getenv("LOG_BACKEND_MAX_CONNECTION")
+		if max_connection_str != "" {
+			m, err := strconv.Atoi(max_connection_str)
+			if err == nil {
+				max_connection = m
+			}
+		}
+
+		tlsFunc := func() (net.Conn, error) {
+			log.Logger.Debug().Msgf("dialing to log backend: %s", logBackend)
+			return tls.DialWithDialer(dialer, "tcp", logBackend, tlsConfig)
+		}
+
+		plainFunc := func() (net.Conn, error) {
+			log.Logger.Debug().Msgf("dialing to log backend: %s", logBackend)
+			return net.Dial("tcp", logBackend)
+		}
+
+		var factory Factory
+
+		if logTls {
+			factory = tlsFunc
+		} else {
+			factory = plainFunc
+		}
+
+		connPool, err := NewChannelPool(5, max_connection, factory, logTls)
+		ls.connPool = connPool
+		ls.maxConnection = max_connection
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to create connection pool: %v", err)
+		}
 	}
 
 	watcher, err := createFsNotifyWatcher()
@@ -149,8 +195,10 @@ func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, er
 
 	ls.readerMapMu = sync.RWMutex{}
 	ls.logPathToFile = make(map[string]*fileReader, 0)
-	ls.logPathToContainerMeta = make(map[string]string, 0)
+	ls.logPathToContainerMetaLine = make(map[string]string, 0)
+	ls.logPathToContainerMetaStruct = make(map[string]ContainerMetadata, 0)
 	ls.containerIdToLogPath = make(map[string]string, 0)
+	ls.logPathToContainerId = make(map[string]string, 0)
 
 	return ls, nil
 }
@@ -196,6 +244,7 @@ func (ls *LogStreamer) watchContainer(id string, name string, new bool) error {
 	}
 	ls.idToPathMu.Lock()
 	ls.containerIdToLogPath[id] = logPath
+	ls.logPathToContainerId[logPath] = id
 	ls.idToPathMu.Unlock()
 
 	fileName := filepath.Base(logPath)
@@ -206,12 +255,178 @@ func (ls *LogStreamer) watchContainer(id string, name string, new bool) error {
 	}
 
 	ls.metaMapMu.Lock()
-	ls.logPathToContainerMeta[logPath] = getContainerMetadataLine(resp.PodNs, resp.PodName, resp.PodUid, name, suffixNum)
+	ls.logPathToContainerMetaLine[logPath] = getContainerMetadataLine(resp.PodNs, resp.PodName, resp.PodUid, name, suffixNum)
+	ls.logPathToContainerMetaStruct[logPath] = ContainerMetadata{
+		containerId:        id,
+		containerName:      name,
+		podName:            resp.PodName,
+		podUid:             resp.PodUid,
+		namespace:          resp.PodNs,
+		containerSuffixNum: suffixNum,
+	}
+
 	ls.metaMapMu.Unlock()
 	return nil
 }
 
+func (ls *LogStreamer) sendLogsInOTLP(logPath string) error {
+	ls.readerMapMu.RLock()
+	reader, ok := ls.logPathToFile[logPath]
+	ls.readerMapMu.RUnlock()
+
+	if !ok || reader == nil {
+		log.Logger.Error().Msgf("reader for log path %s is not found", logPath)
+		return nil
+	}
+
+	ls.idToPathMu.RLock()
+	containerId, ok := ls.logPathToContainerId[logPath]
+	ls.idToPathMu.RUnlock()
+
+	if !ok {
+		log.Logger.Error().Msgf("containerId not found for %s", logPath)
+		return nil
+	}
+
+	ls.metaMapMu.RLock()
+	metaStruct, ok := ls.logPathToContainerMetaStruct[logPath]
+	ls.metaMapMu.RUnlock()
+
+	if !ok {
+		log.Logger.Warn().Msgf("metadata for log path %s is not found", logPath)
+		reader.mu.Unlock()
+		return nil
+	}
+
+	if !ok || reader == nil {
+		err := fmt.Errorf("reader for log path %s is not found", logPath)
+		log.Logger.Error().Err(err).Msg("")
+		return err
+	}
+
+	reader.mu.Lock()
+	records := make([]sdklog.Record, 0)
+	for {
+		timestamp, err := reader.ReadBytes(' ')
+		if err != nil {
+			break // TODO: read until EOF ?
+		}
+		stream, err := reader.ReadBytes(' ')
+		if err != nil {
+			break
+		}
+		p, err := reader.ReadBytes(' ')
+		if err != nil {
+			break
+		}
+		logString, err := reader.ReadBytes('\n')
+		if err != nil {
+			break
+		}
+
+		// trim last bytes
+		timestamp = timestamp[:len(timestamp)-1]
+		stream = stream[:len(stream)-1]
+		p = p[:len(p)-1]
+		logString = logString[:len(logString)-1]
+
+		record := sdklog.Record{}
+		monitoringId := otellog.KeyValue{
+			Key:   "monitoring_id",
+			Value: otellog.StringValue(datastore.MonitoringID), // performance gain ?
+		}
+		logData := otellog.KeyValue{
+			Key: "log",
+			Value: otellog.MapValue(
+				otellog.KeyValue{
+					Key:   "On",
+					Value: otellog.StringValue(logPath),
+				},
+				otellog.KeyValue{
+					Key:   "time",
+					Value: otellog.StringValue(string(timestamp)),
+				},
+				otellog.KeyValue{
+					Key:   "_p",
+					Value: otellog.StringValue(string(p)),
+				},
+				otellog.KeyValue{
+					Key:   "stream",
+					Value: otellog.StringValue(string(stream)),
+				},
+				otellog.KeyValue{
+					Key:   "log",
+					Value: otellog.StringValue(*((*string)(unsafe.Pointer(&logString)))),
+				},
+				otellog.KeyValue{
+					Key: "kubernetes",
+					Value: otellog.MapValue(
+						otellog.KeyValue{
+							Key:   "namespace_name",
+							Value: otellog.StringValue(metaStruct.namespace),
+						},
+						otellog.KeyValue{
+							Key:   "container_hash",
+							Value: otellog.StringValue(""),
+						},
+						otellog.KeyValue{
+							Key:   "container_image",
+							Value: otellog.StringValue(""),
+						},
+						otellog.KeyValue{
+							Key:   "container_id",
+							Value: otellog.StringValue(containerId),
+						},
+						otellog.KeyValue{
+							Key:   "docker_id",
+							Value: otellog.StringValue(""),
+						},
+						otellog.KeyValue{
+							Key:   "pod_id",
+							Value: otellog.StringValue(metaStruct.podUid),
+						},
+						otellog.KeyValue{
+							Key:   "container_name",
+							Value: otellog.StringValue(metaStruct.containerName),
+						},
+						otellog.KeyValue{
+							Key:   "labels",
+							Value: otellog.MapValue(),
+						},
+						otellog.KeyValue{
+							Key:   "pod_name",
+							Value: otellog.StringValue(metaStruct.podName),
+						},
+						otellog.KeyValue{
+							Key:   "host",
+							Value: otellog.StringValue(datastore.NodeID),
+						},
+						otellog.KeyValue{
+							Key:   "annotations",
+							Value: otellog.MapValue(),
+						}),
+				})}
+
+		mapv := otellog.Map("map", logData, monitoringId)
+		record.SetBody(mapv.Value)
+		record.SetTimestamp(time.Now())
+
+		records = append(records, record)
+	}
+
+	log.Logger.Debug().Msgf("exporting logs in otlp for %s", logPath)
+	err := ls.otlpExporter.Export(ls.ctx, records)
+	reader.mu.Unlock()
+
+	return err
+}
+
 func (ls *LogStreamer) sendLogs(logPath string) error {
+	log.Logger.Debug().Msgf("sendLogs called for %s", logPath)
+	if ls.isBackendOTLP {
+		return ls.sendLogsInOTLP(logPath)
+	}
+
 	var err error
 	var poolConn *PoolConn = nil
 
@@ -248,7 +463,7 @@ func (ls *LogStreamer) sendLogs(logPath string) error {
 
 	// send metadata first
 	ls.metaMapMu.RLock()
-	metaLine, ok := ls.logPathToContainerMeta[logPath]
+	metaLine, ok := ls.logPathToContainerMetaLine[logPath]
 	ls.metaMapMu.RUnlock()
 
 	if !ok {
@@ -312,11 +527,12 @@ func (ls *LogStreamer) unwatchContainer(id string) {
 	ls.readerMapMu.Unlock()
 
 	ls.metaMapMu.Lock()
-	delete(ls.logPathToContainerMeta, logPath)
+	delete(ls.logPathToContainerMetaLine, logPath)
 	ls.metaMapMu.Unlock()
 
 	ls.idToPathMu.Lock()
 	delete(ls.containerIdToLogPath, id)
+	delete(ls.logPathToContainerId, logPath)
 	ls.idToPathMu.Unlock()
 }
 
@@ -430,7 +646,10 @@ func (ls *LogStreamer) StreamLogs() error {
 	mu2 := sync.RWMutex{}
 	lastSkippedWriteEventTimeMap := make(map[string]time.Time, 0)
 
-	workerCount := ls.maxConnection
+	var workerCount int = 30
+	if !ls.isBackendOTLP {
+		workerCount = ls.maxConnection
+	}
 
 	// workers will listen for log events and send logs
 	logPathChan := make(chan string, 1000)
