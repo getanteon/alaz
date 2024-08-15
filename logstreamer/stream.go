@@ -59,8 +59,9 @@ type LogStreamer struct {
 
 	maxConnection int
 
-	isBackendOTLP bool
-	otlpExporter  *otlploghttp.Exporter
+	isBackendOTLP  bool
+	otlpExporter   *otlploghttp.Exporter
+	batchProcessor *sdklog.BatchProcessor
 }
 
 type fileReader struct {
@@ -124,6 +125,7 @@ func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, er
 			log.Logger.Fatal().Err(err).Msg("otlp exporter for logs not created")
 		}
 		ls.otlpExporter = exporter
+		ls.batchProcessor = sdklog.NewBatchProcessor(ls.otlpExporter, sdklog.WithExportInterval(5*time.Millisecond))
 	} else {
 		// tcp
 		logBackend := os.Getenv("LOG_BACKEND")
@@ -189,7 +191,9 @@ func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, er
 	go func() {
 		<-ctx.Done()
 		ls.watcher.Close()
-		ls.connPool.Close()
+		if !ls.isBackendOTLP {
+			ls.connPool.Close()
+		}
 		close(ls.done)
 	}()
 
@@ -305,11 +309,10 @@ func (ls *LogStreamer) sendLogsInOTLP(logPath string) error {
 	}
 
 	reader.mu.Lock()
-	records := make([]sdklog.Record, 0)
 	for {
 		timestamp, err := reader.ReadBytes(' ')
 		if err != nil {
-			break // TODO: read until EOF ?
+			break
 		}
 		stream, err := reader.ReadBytes(' ')
 		if err != nil {
@@ -411,14 +414,12 @@ func (ls *LogStreamer) sendLogsInOTLP(logPath string) error {
 		record.SetBody(mapv.Value)
 		record.SetTimestamp(time.Now())
 
-		records = append(records, record)
+		err = ls.batchProcessor.OnEmit(ls.ctx, record)
 	}
 
-	log.Logger.Debug().Msgf("exporting logs in otlp for %s", logPath)
-	err := ls.otlpExporter.Export(ls.ctx, records)
 	reader.mu.Unlock()
 
-	return err
+	return nil
 }
 
 func (ls *LogStreamer) sendLogs(logPath string) error {
