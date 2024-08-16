@@ -37,10 +37,17 @@ type CRITool struct {
 }
 
 func NewCRITool(ctx context.Context) (*CRITool, error) {
+	var runtimeEndpointPaths = defaultRuntimeEndpoints
 	var res internalapi.RuntimeService
 	var err error
+
+	// prepend CRI_RUNTIME_ENDPOINT if set as ENV-var to make sure ENV-var has priority
+	if os.Getenv("CRI_RUNTIME_ENDPOINT") != "" {
+		runtimeEndpointPaths = append([]string{os.Getenv("CRI_RUNTIME_ENDPOINT")}, runtimeEndpointPaths...)
+	}
+
 	t := 10 * time.Second
-	for _, endPoint := range defaultRuntimeEndpoints {
+	for _, endPoint := range runtimeEndpointPaths {
 		res, err = remote.NewRemoteRuntimeService(endPoint, t, nil)
 		if err != nil {
 			continue

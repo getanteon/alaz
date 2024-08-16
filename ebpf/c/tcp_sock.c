@@ -95,7 +95,6 @@ struct sock {
 #define sk_daddr		__sk_common.skc_daddr
 #define sk_num			__sk_common.skc_num
 #define sk_dport		__sk_common.skc_dport
-
 };
 
 static __always_inline

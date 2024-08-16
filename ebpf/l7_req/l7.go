@@ -24,6 +24,8 @@ const (
 	BPF_L7_PROTOCOL_HTTP2
 	BPF_L7_PROTOCOL_REDIS
 	BPF_L7_PROTOCOL_KAFKA
+	BPF_L7_PROTOCOL_MYSQL
+	BPF_L7_PROTOCOL_MONGO
 )
 
 // for user space
@@ -34,6 +36,8 @@ const (
 	L7_PROTOCOL_POSTGRES = "POSTGRES"
 	L7_PROTOCOL_REDIS    = "REDIS"
 	L7_PROTOCOL_KAFKA    = "KAFKA"
+	L7_PROTOCOL_MYSQL    = "MYSQL"
+	L7_PROTOCOL_MONGO    = "MONGO"
 	L7_PROTOCOL_UNKNOWN  = "UNKNOWN"
 )
 
@@ -55,6 +59,10 @@ func (e L7ProtocolConversion) String() string {
 		return L7_PROTOCOL_REDIS
 	case BPF_L7_PROTOCOL_KAFKA:
 		return L7_PROTOCOL_KAFKA
+	case BPF_L7_PROTOCOL_MYSQL:
+		return L7_PROTOCOL_MYSQL
+	case BPF_L7_PROTOCOL_MONGO:
+		return L7_PROTOCOL_MONGO
 	case BPF_L7_PROTOCOL_UNKNOWN:
 		return L7_PROTOCOL_UNKNOWN
 	default:
@@ -127,6 +135,15 @@ const (
 	METHOD_KAFKA_FETCH_RESPONSE
 )
 
+// match with values in l7.c, order is important
+const (
+	BPF_MYSQL_METHOD_UNKNOWN = iota
+	METHOD_MYSQL_TEXT_QUERY
+	METHOD_MYSQL_PREPARE_STMT
+	METHOD_MYSQL_EXEC_STMT
+	METHOD_MYSQL_STMT_CLOSE
+)
+
 // for http, user space
 const (
 	GET     = "GET"
@@ -170,6 +187,14 @@ const (
 const (
 	KAFKA_PRODUCE_REQUEST = "PRODUCE_REQUEST"
 	KAFKA_FETCH_RESPONSE  = "FETCH_RESPONSE"
+)
+
+// for mysql, user space
+const (
+	MYSQL_TEXT_QUERY   = "TEXT_QUERY"
+	MYSQL_PREPARE_STMT = "PREPARE_STMT"
+	MYSQL_EXEC_STMT    = "EXEC_STMT"
+	MYSQL_STMT_CLOSE   = "STMT_CLOSE"
 )
 
 // Custom type for the enumeration
@@ -280,6 +305,25 @@ func (e KafkaMethodConversion) String() string {
 	}
 }
 
+// Custom type for the enumeration
+type MySQLMethodConversion uint32
+
+// String representation of the enumeration values
+func (e MySQLMethodConversion) String() string {
+	switch e {
+	case METHOD_MYSQL_TEXT_QUERY:
+		return MYSQL_TEXT_QUERY
+	case METHOD_MYSQL_PREPARE_STMT:
+		return MYSQL_PREPARE_STMT
+	case METHOD_MYSQL_EXEC_STMT:
+		return MYSQL_EXEC_STMT
+	case METHOD_MYSQL_STMT_CLOSE:
+		return MYSQL_STMT_CLOSE
+	default:
+		return "Unknown"
+	}
+}
+
 var FirstKernelTime uint64 = 0 // nanoseconds since boot
 var FirstUserspaceTime uint64 = 0
 
@@ -313,40 +357,40 @@ type bpfL7Event struct {
 	Failed              uint8
 	IsTls               uint8
 	_                   [1]byte
-	Seq                 uint32
-	Tid                 uint32
 	KafkaApiVersion     int16
 	_                   [2]byte
+	PrepStatementId     uint32 // for mysql
 	Saddr               uint32
 	Sport               uint16
 	_                   [2]byte
 	Daddr               uint32
 	Dport               uint16
-	_                   [2]byte
+	_                   [6]byte
 }
 
-type bpfTraceEvent struct {
-	Pid   uint32
-	Tid   uint32
-	Tx    uint64
-	Type_ uint8
-	_     [3]byte
-	Seq   uint32
-}
+// dist tracing disabled by default temporarily
+// type bpfTraceEvent struct {
+// 	Pid   uint32
+// 	Tid   uint32
+// 	Tx    uint64
+// 	Type_ uint8
+// 	_     [3]byte
+// 	Seq   uint32
+// }
 
-type TraceEvent struct {
-	Pid   uint32
-	Tid   uint32
-	Tx    int64
-	Type_ uint8
-	Seq   uint32
-}
+// type TraceEvent struct {
+// 	Pid   uint32
+// 	Tid   uint32
+// 	Tx    int64
+// 	Type_ uint8
+// 	Seq   uint32
+// }
 
-const TRACE_EVENT = "trace_event"
+// const TRACE_EVENT = "trace_event"
 
-func (e TraceEvent) Type() string {
-	return TRACE_EVENT
-}
+// func (e TraceEvent) Type() string {
+// 	return TRACE_EVENT
+// }
 
 // for user space
 type L7Event struct {
@@ -365,6 +409,7 @@ type L7Event struct {
 	Tid                 uint32
 	Seq                 uint32 // tcp seq num
 	KafkaApiVersion     int16
+	MySqlPrepStmtId     uint32
 	Saddr               uint32
 	Sport               uint16
 	Daddr               uint32
@@ -397,13 +442,15 @@ type L7Prog struct {
 	// links represent a program attached to a hook
 	links map[string]link.Link // key : hook name
 
-	l7Events *perf.Reader
-	logs     *perf.Reader
-	traffic  *perf.Reader // ingress-egress calls
-
+	l7Events        *perf.Reader
 	l7EventsMapSize uint32
-	trafficMapSize  uint32
-	logsMapsSize    uint32
+
+	logs         *perf.Reader
+	logsMapsSize uint32
+
+	// dist tracing disabled by default temporarily
+	// traffic        *perf.Reader // ingress-egress calls
+	// trafficMapSize uint32
 }
 
 func InitL7Prog(conf *L7ProgConfig) *L7Prog {
@@ -414,8 +461,8 @@ func InitL7Prog(conf *L7ProgConfig) *L7Prog {
 	return &L7Prog{
 		links:           map[string]link.Link{},
 		l7EventsMapSize: conf.L7EventsBpfMapSize,
-		trafficMapSize:  conf.TrafficBpfMapSize,
-		logsMapsSize:    conf.LogsBpfMapSize,
+		// trafficMapSize:  conf.TrafficBpfMapSize,
+		logsMapsSize: conf.LogsBpfMapSize,
 	}
 }
 
@@ -506,14 +553,15 @@ func (l7p *L7Prog) InitMaps() {
 		log.Logger.Fatal().Err(err).Msg("error creating perf event array reader")
 	}
 
-	l7p.traffic, err = perf.NewReaderWithOptions(c.BpfObjs.IngressEgressCalls, int(l7p.trafficMapSize)*os.Getpagesize(),
-		perf.ReaderOptions{
-			Watermark:    4 * os.Getpagesize(),
-			Overwritable: false,
-		})
-	if err != nil {
-		log.Logger.Fatal().Err(err).Msg("error creating perf reader")
-	}
+	// dist tracing disabled by default temporarily
+	// l7p.traffic, err = perf.NewReaderWithOptions(c.BpfObjs.IngressEgressCalls, int(l7p.trafficMapSize)*os.Getpagesize(),
+	// 	perf.ReaderOptions{
+	// 		Watermark:    4 * os.Getpagesize(),
+	// 		Overwritable: false,
+	// 	})
+	// if err != nil {
+	// 	log.Logger.Fatal().Err(err).Msg("error creating perf reader")
+	// }
 }
 
 // returns when program is detached
@@ -676,7 +724,11 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 				method = RedisMethodConversion(l7Event.Method).String()
 			case L7_PROTOCOL_KAFKA:
 				method = KafkaMethodConversion(l7Event.Method).String()
+			case L7_PROTOCOL_MYSQL:
+				method = MySQLMethodConversion(l7Event.Method).String()
 			// no method set for kafka on kernel side
+			// no method set for mongo on kernel side
+
 			default:
 				method = "Unknown"
 			}
@@ -698,13 +750,15 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 				PayloadReadComplete: uint8ToBool(l7Event.PayloadReadComplete),
 				Failed:              uint8ToBool(l7Event.Failed),
 				WriteTimeNs:         l7Event.WriteTimeNs,
-				Tid:                 l7Event.Tid,
-				Seq:                 l7Event.Seq,
 				KafkaApiVersion:     l7Event.KafkaApiVersion,
+				MySqlPrepStmtId:     l7Event.PrepStatementId,
 				Saddr:               l7Event.Saddr,
 				Sport:               l7Event.Sport,
 				Daddr:               l7Event.Daddr,
 				Dport:               l7Event.Dport,
+				// dist tracing disabled by default temporarily
+				// Tid:                 l7Event.Tid,
+				// Seq:                 l7Event.Seq,
 			}
 
 			go func(l7Event *L7Event) {
@@ -725,60 +779,61 @@ func (l7p *L7Prog) Consume(ctx context.Context, ch chan interface{}) {
 		}
 	}()
 
-	go func() {
-		var record perf.Record
-		droppedCount := 0
+	// dist tracing disabled by default temporarily
+	// go func() {
+	// 	var record perf.Record
+	// 	droppedCount := 0
 
-		go func() {
-			t := time.NewTicker(1 * time.Minute)
-			for range t.C {
-				log.Logger.Debug().Int("count", droppedCount).Msg("dropped trace events")
-			}
-		}()
+	// 	go func() {
+	// 		t := time.NewTicker(1 * time.Minute)
+	// 		for range t.C {
+	// 			log.Logger.Debug().Int("count", droppedCount).Msg("dropped trace events")
+	// 		}
+	// 	}()
 
-		read := func() {
-			err := l7p.traffic.ReadInto(&record)
-			if err != nil {
-				log.Logger.Warn().Err(err).Msg("error reading from dist-trace calls")
-			}
+	// 	read := func() {
+	// 		err := l7p.traffic.ReadInto(&record)
+	// 		if err != nil {
+	// 			log.Logger.Warn().Err(err).Msg("error reading from dist-trace calls")
+	// 		}
 
-			if record.LostSamples != 0 {
-				log.Logger.Warn().Msgf("lost samples dist-trace %d", record.LostSamples)
-			}
+	// 		if record.LostSamples != 0 {
+	// 			log.Logger.Warn().Msgf("lost samples dist-trace %d", record.LostSamples)
+	// 		}
 
-			if record.RawSample == nil || len(record.RawSample) == 0 {
-				log.Logger.Warn().Msgf("read sample dist-trace nil or empty")
-				return
-			}
+	// 		if record.RawSample == nil || len(record.RawSample) == 0 {
+	// 			log.Logger.Warn().Msgf("read sample dist-trace nil or empty")
+	// 			return
+	// 		}
 
-			bpfTraceEvent := (*bpfTraceEvent)(unsafe.Pointer(&record.RawSample[0]))
+	// 		bpfTraceEvent := (*bpfTraceEvent)(unsafe.Pointer(&record.RawSample[0]))
 
-			traceEvent := &TraceEvent{
-				Pid:   bpfTraceEvent.Pid,
-				Tid:   bpfTraceEvent.Tid,
-				Tx:    time.Now().UnixMilli(),
-				Type_: bpfTraceEvent.Type_,
-				Seq:   bpfTraceEvent.Seq,
-			}
+	// 		traceEvent := &TraceEvent{
+	// 			Pid:   bpfTraceEvent.Pid,
+	// 			Tid:   bpfTraceEvent.Tid,
+	// 			Tx:    time.Now().UnixMilli(),
+	// 			Type_: bpfTraceEvent.Type_,
+	// 			Seq:   bpfTraceEvent.Seq,
+	// 		}
 
-			go func(traceEvent *TraceEvent) {
-				select {
-				case ch <- traceEvent:
-				default:
-					droppedCount++
-				}
-			}(traceEvent)
+	// 		go func(traceEvent *TraceEvent) {
+	// 			select {
+	// 			case ch <- traceEvent:
+	// 			default:
+	// 				droppedCount++
+	// 			}
+	// 		}(traceEvent)
 
-		}
-		for {
-			select {
-			case <-stop:
-				return
-			default:
-				read()
-			}
-		}
-	}()
+	// 	}
+	// 	for {
+	// 		select {
+	// 		case <-stop:
+	// 			return
+	// 		default:
+	// 			read()
+	// 		}
+	// 	}
+	// }()
 
 	<-ctx.Done() // wait for context to be cancelled
 	close(stop)

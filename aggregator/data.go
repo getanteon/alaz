@@ -78,6 +78,10 @@ type Aggregator struct {
 	pgStmtsMu sync.RWMutex
 	pgStmts   map[string]string // pid-fd-stmtname -> query
 
+	// postgres prepared stmt
+	mySqlStmtsMu sync.RWMutex
+	mySqlStmts   map[string]string // pid-fd-stmtId -> query
+
 	liveProcessesMu sync.RWMutex
 	liveProcesses   map[uint32]struct{} // pid -> struct{}
 
@@ -153,6 +157,7 @@ func NewAggregator(parentCtx context.Context, ct *cri.CRITool, k8sChan chan inte
 		liveProcesses:       make(map[uint32]struct{}),
 		rateLimiters:        make(map[uint32]*rate.Limiter),
 		pgStmts:             make(map[string]string),
+		mySqlStmts:          make(map[string]string),
 	}
 
 	var err error
@@ -319,12 +324,13 @@ func (a *Aggregator) processEbpf(ctx context.Context) {
 				ctxPid := context.WithValue(a.ctx, log.LOG_CONTEXT, fmt.Sprint(d.Pid))
 				go a.signalTlsAttachment(d.Pid)
 				a.processL7(ctxPid, d)
-			case l7_req.TRACE_EVENT:
-				d := data.(*l7_req.TraceEvent)
-				rateLimiter := a.getRateLimiterForPid(d.Pid)
-				if rateLimiter.Allow() {
-					a.ds.PersistTraceEvent(d)
-				}
+				// dist tracing disabled by default temporarily
+				// case l7_req.TRACE_EVENT:
+				// 	d := data.(*l7_req.TraceEvent)
+				// 	rateLimiter := a.getRateLimiterForPid(d.Pid)
+				// 	if rateLimiter.Allow() {
+				// 		a.ds.PersistTraceEvent(d)
+				// 	}
 			}
 		}
 	}
@@ -381,6 +387,14 @@ func (a *Aggregator) processExit(pid uint32) {
 		}
 	}
 	a.pgStmtsMu.Unlock()
+
+	a.mySqlStmtsMu.Lock()
+	for key, _ := range a.pgStmts {
+		if strings.HasPrefix(key, fmt.Sprint(pid)) {
+			delete(a.mySqlStmts, key)
+		}
+	}
+	a.mySqlStmtsMu.Unlock()
 }
 
 func (a *Aggregator) signalTlsAttachment(pid uint32) {
@@ -927,6 +941,13 @@ func (a *Aggregator) decodeKafkaPayload(d *l7_req.L7Event) ([]*KafkaMessage, err
 	// var message protocol.Message
 	// var err error
 
+	defer func() {
+		if r := recover(); r != nil {
+			log.Logger.Debug().Any("r", r).
+				Msg("recovered from kafka event,probably slice out of bounds") // since we read 1024 bytes at most from ebpf, slice out of bounds can occur
+		}
+	}()
+
 	result := make([]*KafkaMessage, 0)
 
 	if d.Method == l7_req.KAFKA_PRODUCE_REQUEST {
@@ -1037,8 +1058,9 @@ func (a *Aggregator) processKafkaEvent(ctx context.Context, d *l7_req.L7Event) {
 			Key:       msg.Key,
 			Value:     msg.Value,
 			Type:      msg.Type,
-			Tid:       d.Tid,
-			Seq:       d.Seq,
+			// dist tracing disabled by default temporarily
+			// Tid:       d.Tid,
+			// Seq:       d.Seq,
 		}
 
 		err := a.setFromToV2(addrPair, d, event, "")
@@ -1046,12 +1068,7 @@ func (a *Aggregator) processKafkaEvent(ctx context.Context, d *l7_req.L7Event) {
 			return
 		}
 
-		if event.Type == "CONSUME" {
-			// TODO: reverse the from and to
-			// do we show arrows originating from outbound services ?
-		}
-
-		log.Logger.Warn().Ctx(ctx).Any("kafkaEvent", event).Msg("persist kafka event")
+		log.Logger.Debug().Ctx(ctx).Any("kafkaEvent", event).Msg("persist kafka event")
 		err = a.ds.PersistKafkaEvent(event)
 		if err != nil {
 			log.Logger.Error().Err(err).Msg("error persisting kafka event")
@@ -1076,8 +1093,9 @@ func (a *Aggregator) processAmqpEvent(ctx context.Context, d *l7_req.L7Event) {
 		FailReason: "",
 		Method:     d.Method,
 		Path:       "",
-		Tid:        d.Tid,
-		Seq:        d.Seq,
+		// dist tracing disabled by default temporarily
+		// Tid:        d.Tid,
+		// Seq:        d.Seq,
 	}
 
 	err := a.setFromToV2(addrPair, d, reqDto, "")
@@ -1116,8 +1134,9 @@ func (a *Aggregator) processRedisEvent(ctx context.Context, d *l7_req.L7Event) {
 		FailReason: "",
 		Method:     d.Method,
 		Path:       query,
-		Tid:        d.Tid,
-		Seq:        d.Seq,
+		// dist tracing disabled by default temporarily
+		// Tid:        d.Tid,
+		// Seq:        d.Seq,
 	}
 
 	err := a.setFromToV2(addrPair, d, reqDto, "")
@@ -1208,8 +1227,9 @@ func (a *Aggregator) processHttpEvent(ctx context.Context, d *l7_req.L7Event) {
 		FailReason: "",
 		Method:     d.Method,
 		Path:       path,
-		Tid:        d.Tid,
-		Seq:        d.Seq,
+		// dist tracing disabled by default temporarily
+		// Tid:        d.Tid,
+		// Seq:        d.Seq,
 	}
 
 	err := a.setFromToV2(addrPair, d, reqDto, reqHostHeader)
@@ -1228,12 +1248,84 @@ func (a *Aggregator) processHttpEvent(ctx context.Context, d *l7_req.L7Event) {
 
 }
 
+func (a *Aggregator) processMongoEvent(ctx context.Context, d *l7_req.L7Event) {
+	query, err := a.parseMongoEvent(d)
+	if err != nil {
+		return
+	}
+	addrPair := extractAddressPair(d)
+
+	reqDto := &datastore.Request{
+		StartTime:  int64(convertKernelTimeToUserspaceTime(d.WriteTimeNs) / 1e6),
+		Latency:    d.Duration,
+		FromIP:     addrPair.Saddr,
+		ToIP:       addrPair.Daddr,
+		Protocol:   d.Protocol,
+		Tls:        d.Tls,
+		Completed:  true,
+		StatusCode: d.Status,
+		FailReason: "",
+		Method:     d.Method,
+		Path:       query,
+		// dist tracing disabled by default temporarily
+		// Tid:        d.Tid,
+		// Seq:        d.Seq,
+	}
+
+	err = a.setFromToV2(addrPair, d, reqDto, "")
+	if err != nil {
+		return
+	}
+
+	log.Logger.Debug().Str("path", reqDto.Path).Msg("processmongoEvent persisting")
+	err = a.ds.PersistRequest(reqDto)
+	if err != nil {
+		log.Logger.Error().Err(err).Msg("error persisting request")
+	}
+}
+
+func (a *Aggregator) processMySQLEvent(ctx context.Context, d *l7_req.L7Event) {
+	query, err := a.parseMySQLCommand(d)
+	if err != nil {
+		log.Logger.Error().AnErr("err", err)
+		return
+	}
+	addrPair := extractAddressPair(d)
+
+	reqDto := &datastore.Request{
+		StartTime:  int64(convertKernelTimeToUserspaceTime(d.WriteTimeNs) / 1e6),
+		Latency:    d.Duration,
+		FromIP:     addrPair.Saddr,
+		ToIP:       addrPair.Daddr,
+		Protocol:   d.Protocol,
+		Tls:        d.Tls,
+		Completed:  true,
+		StatusCode: d.Status,
+		FailReason: "",
+		Method:     d.Method,
+		Path:       query,
+		// dist tracing disabled by default temporarily
+		// Tid:        d.Tid,
+		// Seq:        d.Seq,
+	}
+
+	err = a.setFromToV2(addrPair, d, reqDto, "")
+	if err != nil {
+		return
+	}
+
+	err = a.ds.PersistRequest(reqDto)
+	if err != nil {
+		log.Logger.Error().Err(err).Msg("error persisting request")
+	}
+}
+
 func (a *Aggregator) processPostgresEvent(ctx context.Context, d *l7_req.L7Event) {
 	// parse sql command from payload
 	// path = sql command
 	// method = sql message type
 
-	query, err := a.parseSqlCommand(d)
+	query, err := a.parsePostgresCommand(d)
 	if err != nil {
 		log.Logger.Error().AnErr("err", err)
 		return
@@ -1253,8 +1345,9 @@ func (a *Aggregator) processPostgresEvent(ctx context.Context, d *l7_req.L7Event
 		FailReason: "",
 		Method:     d.Method,
 		Path:       query,
-		Tid:        d.Tid,
-		Seq:        d.Seq,
+		// dist tracing disabled by default temporarily
+		// Tid:        d.Tid,
+		// Seq:        d.Seq,
 	}
 
 	err = a.setFromToV2(addrPair, d, reqDto, "")
@@ -1282,6 +1375,10 @@ func (a *Aggregator) processL7(ctx context.Context, d *l7_req.L7Event) {
 		a.processAmqpEvent(ctx, d)
 	case l7_req.L7_PROTOCOL_KAFKA:
 		a.processKafkaEvent(ctx, d)
+	case l7_req.L7_PROTOCOL_MYSQL:
+		a.processMySQLEvent(ctx, d)
+	case l7_req.L7_PROTOCOL_MONGO:
+		a.processMongoEvent(ctx, d)
 	}
 }
 
@@ -1331,7 +1428,50 @@ func (a *Aggregator) findRelatedSocket(ctx context.Context, d *l7_req.L7Event) (
 	return skInfo, nil
 }
 
-func (a *Aggregator) parseSqlCommand(d *l7_req.L7Event) (string, error) {
+func (a *Aggregator) parseMySQLCommand(d *l7_req.L7Event) (string, error) {
+	r := d.Payload[:d.PayloadSize]
+	var sqlCommand string
+	// 3 bytes len, 1 byte package number, 1 byte command type
+	if len(r) < 5 {
+		return "", fmt.Errorf("too short for a sql query")
+	}
+	r = r[5:]
+	sqlCommand = string(r)
+	if d.Method == l7_req.MYSQL_TEXT_QUERY {
+		if !containsSQLKeywords(sqlCommand) {
+			return "", fmt.Errorf("no sql command found")
+		}
+	} else if d.Method == l7_req.MYSQL_PREPARE_STMT {
+		a.mySqlStmtsMu.Lock()
+		a.mySqlStmts[fmt.Sprintf("%d-%d-%d", d.Pid, d.Fd, d.MySqlPrepStmtId)] = string(r)
+		a.mySqlStmtsMu.Unlock()
+	} else if d.Method == l7_req.MYSQL_EXEC_STMT {
+		a.mySqlStmtsMu.RLock()
+		// extract statementId from payload
+		stmtId := binary.LittleEndian.Uint32(r)
+		query, ok := a.mySqlStmts[fmt.Sprintf("%d-%d-%d", d.Pid, d.Fd, stmtId)]
+		a.mySqlStmtsMu.RUnlock()
+		if !ok || query == "" { // we don't have the query for the prepared statement
+			// Execute (name of prepared statement) [(parameter)]
+			return fmt.Sprintf("EXECUTE %d *values*", stmtId), nil
+		}
+		sqlCommand = query
+	} else if d.Method == l7_req.MYSQL_STMT_CLOSE { // deallocated stmt
+		a.mySqlStmtsMu.Lock()
+		// extract statementId from payload
+		stmtId := binary.LittleEndian.Uint32(r)
+		stmtKey := fmt.Sprintf("%d-%d-%d", d.Pid, d.Fd, stmtId)
+		_, ok := a.mySqlStmts[stmtKey]
+		if ok {
+			delete(a.mySqlStmts, stmtKey)
+		}
+		a.mySqlStmtsMu.Unlock()
+		return fmt.Sprintf("CLOSE STMT %d ", stmtId), nil
+	}
+	return sqlCommand, nil
+}
+
+func (a *Aggregator) parsePostgresCommand(d *l7_req.L7Event) (string, error) {
 	r := d.Payload[:d.PayloadSize]
 	var sqlCommand string
 	if d.Method == l7_req.SIMPLE_QUERY {
@@ -1415,6 +1555,67 @@ func (a *Aggregator) parseSqlCommand(d *l7_req.L7Event) (string, error) {
 	return sqlCommand, nil
 }
 
+var MongoOpCompressed uint32 = 2012
+var MongoOpMsg uint32 = 2013
+
+func (a *Aggregator) parseMongoEvent(d *l7_req.L7Event) (string, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Logger.Debug().Any("r", r).
+				Msg("recovered from mongo event,probably slice out of bounds")
+		}
+	}()
+
+	payload := d.Payload[:d.PayloadSize]
+
+	// cut mongo header, 4 bytes MessageLength, 4 bytes RequestID, 4 bytes ResponseTo
+	payload = payload[12:]
+	// cut 4 bytes Opcode, 4 bytes MessageFlags
+	opcode := payload[:4]
+	payload = payload[8:]
+
+	opcodeInt := binary.LittleEndian.Uint32(opcode)
+
+	if opcodeInt == MongoOpCompressed {
+		return "compressed mongo event", nil
+	} else if opcodeInt == MongoOpMsg {
+		kind := payload[0]
+		payload = payload[1:] // cut kind
+		if kind == 0 {        // body
+			docLenBytes := payload[:4] // document length
+			docLen := binary.LittleEndian.Uint32(docLenBytes)
+			payload = payload[4:docLen] // cut docLen
+			// parse Element
+			type_ := payload[0] // 2 means string
+			if type_ != 2 {
+				return "", fmt.Errorf("document element not a string")
+			}
+			payload = payload[1:] // cut type
+
+			// read until NULL
+			element := []uint8{}
+			for _, p := range payload {
+				if p == 0 {
+					break
+				}
+				element = append(element, p)
+			}
+
+			// 1 byte NULL, 4 bytes len
+			elementLenBytes := payload[len(element)+1 : len(element)+1+4]
+			elementLength := binary.LittleEndian.Uint32(elementLenBytes)
+
+			payload = payload[len(element)+5:]        // cut element + null + len
+			elementValue := payload[:elementLength-1] // myCollection, last byte is null
+
+			result := fmt.Sprintf("%s %s", string(element), string(elementValue))
+			return result, nil
+		}
+	}
+
+	return "", fmt.Errorf("could not parse mongo event")
+}
+
 func (a *Aggregator) getPgStmtKey(pid uint32, fd uint64, stmtName string) string {
 	return fmt.Sprintf("%s-%s", a.getConnKey(pid, fd), stmtName)
 }
@@ -1477,18 +1678,20 @@ func (a *Aggregator) sendOpenConnection(sl *SocketLine) {
 	}
 }
 
-// TODO: connection send is made here, sendOpenConnection must be called, refactor this func and its calling place
 func (a *Aggregator) clearSocketLines(ctx context.Context) {
 	ticker := time.NewTicker(120 * time.Second)
 	skLineCh := make(chan *SocketLine, 1000)
 
+	sendAliveConnections, _ := strconv.ParseBool(os.Getenv("SEND_ALIVE_TCP_CONNECTIONS"))
 	go func() {
 		// spawn N goroutines to clear socket map
 		for i := 0; i < 10; i++ {
 			go func() {
 				for skLine := range skLineCh {
 					// send open connections to datastore
-					a.sendOpenConnection(skLine)
+					if sendAliveConnections {
+						a.sendOpenConnection(skLine)
+					}
 					// clear socket history
 					skLine.DeleteUnused()
 				}

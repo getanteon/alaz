@@ -16,6 +16,7 @@
 #endif
 
 #define FILTER_OUT_NON_CONTAINER
+// #define DIST_TRACING_ENABLED // disabled by default 
 
 #include <stddef.h>
 #include "../headers/pt_regs.h"
@@ -35,6 +36,8 @@
 #include "postgres.c"
 #include "redis.c"
 #include "kafka.c"
+#include "mysql.c"
+#include "mongo.c"
 #include "openssl.c"
 #include "http2.c"
 #include "tcp_sock.c"
