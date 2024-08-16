@@ -163,6 +163,8 @@ type BackendDS struct {
 	dsEventChan        chan interface{} // *DaemonSetEvent
 	ssEventChan        chan interface{} // *StatefulSetEvent
 
+	k8sEventChan chan interface{} // K8SEvent, kubectl events
+
 	// TODO add:
 	// job
 	// cronjob
@@ -181,6 +183,7 @@ const (
 	connEndpoint        = "/connections/"
 	kafkaEventEndpoint  = "/events/kafka/"
 	healthCheckEndpoint = "/healthcheck/"
+	k8sEventsEndpoint   = "/k8s-events/"
 
 	// dist tracing disabled by default temporarily
 	// traceEventEndpoint = "/dist_tracing/traffic/"
@@ -286,24 +289,26 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 	resourceChanSize := 200
 
 	ds := &BackendDS{
-		ctx:                   ctx,
-		host:                  conf.Host,
-		c:                     client,
-		batchSize:             bs,
-		reqInfoPool:           newReqInfoPool(func() *ReqInfo { return &ReqInfo{} }, func(r *ReqInfo) {}),
-		aliveConnPool:         newAliveConnPool(func() *ConnInfo { return &ConnInfo{} }, func(r *ConnInfo) {}),
-		kafkaEventInfoPool:    newKafkaEventPool(func() *KafkaEventInfo { return &KafkaEventInfo{} }, func(r *KafkaEventInfo) {}),
-		reqChanBuffer:         make(chan *ReqInfo, conf.ReqBufferSize),
-		connChanBuffer:        make(chan *ConnInfo, conf.ConnBufferSize),
-		kafkaChanBuffer:       make(chan *KafkaEventInfo, conf.ReqBufferSize),
-		podEventChan:          make(chan interface{}, 5*resourceChanSize),
-		svcEventChan:          make(chan interface{}, 2*resourceChanSize),
-		rsEventChan:           make(chan interface{}, 2*resourceChanSize),
-		depEventChan:          make(chan interface{}, 2*resourceChanSize),
-		epEventChan:           make(chan interface{}, resourceChanSize),
-		containerEventChan:    make(chan interface{}, 5*resourceChanSize),
-		dsEventChan:           make(chan interface{}, resourceChanSize),
-		ssEventChan:           make(chan interface{}, resourceChanSize),
+		ctx:                ctx,
+		host:               conf.Host,
+		c:                  client,
+		batchSize:          bs,
+		reqInfoPool:        newReqInfoPool(func() *ReqInfo { return &ReqInfo{} }, func(r *ReqInfo) {}),
+		aliveConnPool:      newAliveConnPool(func() *ConnInfo { return &ConnInfo{} }, func(r *ConnInfo) {}),
+		kafkaEventInfoPool: newKafkaEventPool(func() *KafkaEventInfo { return &KafkaEventInfo{} }, func(r *KafkaEventInfo) {}),
+		reqChanBuffer:      make(chan *ReqInfo, conf.ReqBufferSize),
+		connChanBuffer:     make(chan *ConnInfo, conf.ConnBufferSize),
+		kafkaChanBuffer:    make(chan *KafkaEventInfo, conf.ReqBufferSize),
+		podEventChan:       make(chan interface{}, 5*resourceChanSize),
+		svcEventChan:       make(chan interface{}, 2*resourceChanSize),
+		rsEventChan:        make(chan interface{}, 2*resourceChanSize),
+		depEventChan:       make(chan interface{}, 2*resourceChanSize),
+		epEventChan:        make(chan interface{}, resourceChanSize),
+		containerEventChan: make(chan interface{}, 5*resourceChanSize),
+		dsEventChan:        make(chan interface{}, resourceChanSize),
+		ssEventChan:        make(chan interface{}, resourceChanSize),
+		k8sEventChan:       make(chan interface{}, resourceChanSize),
+
 		metricsExport:         conf.MetricsExport,
 		gpuMetricsExport:      conf.GpuMetricsExport,
 		metricsExportInterval: conf.MetricsExportInterval,
@@ -336,6 +341,7 @@ func (ds *BackendDS) Start() {
 	go ds.sendEventsInBatch(ds.containerEventChan, containerEndpoint, eventsInterval)
 	go ds.sendEventsInBatch(ds.dsEventChan, dsEndpoint, eventsInterval)
 	go ds.sendEventsInBatch(ds.ssEventChan, ssEndpoint, eventsInterval)
+	go ds.sendEventsInBatch(ds.k8sEventChan, k8sEventsEndpoint, eventsInterval)
 
 	// send node-exporter and nvidia-gpu metrics
 	go func() {
@@ -546,7 +552,7 @@ func (b *BackendDS) sendToBackend(method string, payload interface{}, endpoint s
 		return
 	}
 
-	// if endpoint == reqEndpoint {
+	// if endpoint == k8sEventsEndpoint {
 	// 	log.Logger.Debug().Str("endpoint", endpoint).Any("payload", payload).Msg("sending batch to backend")
 	// }
 	err = b.DoRequest(httpReq)
@@ -944,6 +950,11 @@ func (b *BackendDS) PersistStatefulSet(ss StatefulSet, eventType string) error {
 func (b *BackendDS) PersistContainer(c Container, eventType string) error {
 	cEvent := convertContainerToContainerEvent(c, eventType)
 	b.containerEventChan <- &cEvent
+	return nil
+}
+
+func (b *BackendDS) PersistK8SEvent(ev K8SEvent) error {
+	b.k8sEventChan <- &ev
 	return nil
 }
 

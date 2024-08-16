@@ -1,9 +1,6 @@
 package aggregator
 
 import (
-	"context"
-	"fmt"
-
 	"github.com/ddosify/alaz/datastore"
 	"github.com/ddosify/alaz/k8s"
 	"github.com/ddosify/alaz/log"
@@ -41,26 +38,6 @@ func (a *Aggregator) processPod(d k8s.K8sResourceMessage) {
 		log.Logger.Debug().Msgf("Pod %s/%s has no IP, event: %s", pod.Namespace, pod.Name, d.EventType)
 		return
 	}
-
-	ctx := context.WithValue(context.Background(), log.LOG_CONTEXT, "status-msg")
-	var containerStatusMsg string
-	containerStatutes := pod.Status.ContainerStatuses
-	// take first container
-	cs := containerStatutes[0] // TODO: check
-
-	if cs.Started == nil || *cs.Started == false {
-		if cs.State.Running == nil && cs.State.Waiting != nil {
-			containerStatusMsg = fmt.Sprintf("%s: %s", cs.State.Waiting.Reason, cs.State.Waiting.Message)
-		}
-	}
-
-	if cs.Started != nil && *cs.Started == true {
-		if cs.State.Running != nil && cs.State.Waiting == nil {
-			containerStatusMsg = fmt.Sprintf("Started at %s", cs.State.Running.StartedAt)
-		}
-	}
-
-	log.Logger.Info().Ctx(ctx).Str("statusMsg", containerStatusMsg).Msg("pod-container-status")
 
 	dtoPod := datastore.Pod{
 		UID:       string(pod.UID),
@@ -372,4 +349,22 @@ func (a *Aggregator) processStatefulSet(d k8s.K8sResourceMessage) {
 	case k8s.DELETE:
 		go a.ds.PersistStatefulSet(dtoStatefulSet, DELETE)
 	}
+}
+
+func (a *Aggregator) processK8SEvent(d k8s.K8sResourceMessage) {
+	event := d.Object.(*corev1.Event)
+
+	dtoK8SEvent := datastore.K8SEvent{
+		EventName:      event.Name,
+		Kind:           event.InvolvedObject.Kind,
+		Namespace:      event.InvolvedObject.Namespace,
+		Name:           event.InvolvedObject.Name,
+		Uid:            string(event.InvolvedObject.UID),
+		Reason:         event.Reason,
+		Message:        event.Message,
+		Count:          event.Count,
+		FirstTimestamp: event.FirstTimestamp.UnixMilli(),
+		LastTimestamp:  event.LastTimestamp.UnixMilli(),
+	}
+	go a.ds.PersistK8SEvent(dtoK8SEvent)
 }

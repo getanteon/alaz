@@ -48,6 +48,19 @@ type StatefulSet struct {
 	Namespace string // Namespace
 }
 
+type K8SEvent struct {
+	EventName      string // this field is unique
+	Kind           string
+	Namespace      string
+	Name           string
+	Uid            string
+	Reason         string
+	Message        string
+	Count          int32
+	FirstTimestamp int64
+	LastTimestamp  int64
+}
+
 type Deployment struct {
 	UID       string // Deployment UID
 	Name      string // Deployment Name
