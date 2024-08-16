@@ -256,6 +256,8 @@ func (a *Aggregator) processk8s() {
 			a.processDaemonSet(d)
 		case k8s.STATEFULSET:
 			a.processStatefulSet(d)
+		case k8s.K8SEVENT:
+			a.processK8SEvent(d)
 		default:
 			log.Logger.Warn().Msgf("unknown resource type %s", d.ResourceType)
 		}
@@ -1277,7 +1279,6 @@ func (a *Aggregator) processMongoEvent(ctx context.Context, d *l7_req.L7Event) {
 		return
 	}
 
-	log.Logger.Debug().Str("path", reqDto.Path).Msg("processmongoEvent persisting")
 	err = a.ds.PersistRequest(reqDto)
 	if err != nil {
 		log.Logger.Error().Err(err).Msg("error persisting request")

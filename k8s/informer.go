@@ -35,6 +35,7 @@ const (
 	CONTAINER   = "Container"
 	DAEMONSET   = "DaemonSet"
 	STATEFULSET = "StatefulSet"
+	K8SEVENT    = "Event"
 )
 
 const (
@@ -61,12 +62,18 @@ type K8sCollector struct {
 	daemonsetInformer   appsv1.DaemonSetInformer
 	statefulSetInformer appsv1.StatefulSetInformer
 
+	eventInformer v1.EventInformer
+
 	Events chan interface{}
 }
 
 func (k *K8sCollector) Init(events chan interface{}) error {
 	log.Logger.Info().Msg("k8sCollector initializing...")
 	k.Events = events
+
+	// k8s events
+	k.eventInformer = k.informersFactory.Core().V1().Events()
+	k.watchers[K8SEVENT] = k.eventInformer.Informer()
 
 	// Pod
 	k.podInformer = k.informersFactory.Core().V1().Pods()
@@ -99,6 +106,12 @@ func (k *K8sCollector) Init(events chan interface{}) error {
 	defer runtime.HandleCrash()
 
 	// Add event handlers
+	k.watchers[K8SEVENT].AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    getOnAddK8SEventFunc(k.Events),
+		UpdateFunc: getOnUpdateK8SEventFunc(k.Events),
+		DeleteFunc: getOnDeleteK8SEventFunc(k.Events),
+	})
+
 	k.watchers[POD].AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    getOnAddPodFunc(k.Events),
 		UpdateFunc: getOnUpdatePodFunc(k.Events),
