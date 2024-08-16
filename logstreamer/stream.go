@@ -93,6 +93,7 @@ func createFsNotifyWatcher() (*fsnotify.Watcher, error) {
 // LogStreamer accepts two types of backend.
 // 1. Using its own protocol and streaming logs over tcp connections.
 // 2. Sending logs in OTLP to Otel Collector with http.
+// OTLP is now default and only, old protocol with tcp not supported on backend.
 func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, error) {
 	ls := &LogStreamer{
 		critool: critool,
@@ -104,11 +105,15 @@ func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, er
 		logTls = false
 	}
 
-	logBackendOtlp := os.Getenv("LOG_BACKEND_OTLP")
-	if logBackendOtlp != "" {
+	ls.isBackendOTLP = true // mandatory
+	if ls.isBackendOTLP {
 		// otlp
-		ls.isBackendOTLP = true
-		opts := []otlploghttp.Option{otlploghttp.WithEndpoint(logBackendOtlp)}
+		logBackend := os.Getenv("LOG_BACKEND")
+		if logBackend == "" {
+			logBackend = "log-alaz.getanteon.com:443"
+		}
+
+		opts := []otlploghttp.Option{otlploghttp.WithEndpoint(logBackend)}
 		if !logTls {
 			opts = append(opts, otlploghttp.WithInsecure())
 		} else {
@@ -127,7 +132,7 @@ func NewLogStreamer(ctx context.Context, critool *cri.CRITool) (*LogStreamer, er
 		ls.otlpExporter = exporter
 		ls.batchProcessor = sdklog.NewBatchProcessor(ls.otlpExporter, sdklog.WithExportInterval(5*time.Millisecond))
 	} else {
-		// tcp
+		// this branch not used effectively.
 		logBackend := os.Getenv("LOG_BACKEND")
 		if logBackend == "" {
 			logBackend = "log-alaz.getanteon.com:443"
