@@ -341,10 +341,10 @@ func (ls *LogStreamer) sendLogsInOTLP(logPath string) error {
 		logData := otellog.KeyValue{
 			Key: "log",
 			Value: otellog.MapValue(
-				otellog.KeyValue{
-					Key:   "On",
-					Value: otellog.StringValue(logPath),
-				},
+				// otellog.KeyValue{
+				// 	Key:   "On",
+				// 	Value: otellog.StringValue(logPath),
+				// },
 				otellog.KeyValue{
 					Key:   "time",
 					Value: otellog.StringValue(string(timestamp)),
