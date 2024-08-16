@@ -71,7 +71,12 @@ func main() {
 
 	tracingEnabled, err := strconv.ParseBool(os.Getenv("TRACING_ENABLED"))
 	metricsEnabled, _ := strconv.ParseBool(os.Getenv("METRICS_ENABLED"))
-	logsEnabled, _ := strconv.ParseBool(os.Getenv("LOGS_ENABLED"))
+	// logsEnabled, _ := strconv.ParseBool(os.Getenv("LOGS_ENABLED"))
+
+	// Temporarily closed until otlp export's cpu performance problem is resolved
+	// https://github.com/getanteon/alaz/tree/feat/logs-in-otlp
+	// https://github.com/open-telemetry/opentelemetry-go/issues/5196
+	logsEnabled := false
 
 	// datastore backend
 	dsBackend := datastore.NewBackendDS(ctx, config.BackendDSConfig{
