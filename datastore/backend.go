@@ -134,7 +134,7 @@ type BackendDS struct {
 	ctx       context.Context
 	host      string
 	port      string
-	c         *http.Client
+	c         *retryablehttp.Client
 	batchSize uint64
 
 	reqChanBuffer   chan *ReqInfo
@@ -162,6 +162,7 @@ type BackendDS struct {
 	containerEventChan chan interface{} // *ContainerEvent
 	dsEventChan        chan interface{} // *DaemonSetEvent
 	ssEventChan        chan interface{} // *StatefulSetEvent
+	conf               config.BackendDSConfig
 
 	// TODO add:
 	// job
@@ -211,7 +212,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 	retryClient.Logger = LeveledLogger{l: log.Logger.With().Str("component", "retryablehttp").Logger()}
 	retryClient.Backoff = retryablehttp.DefaultBackoff
 	retryClient.RetryWaitMin = 1 * time.Second
-	retryClient.RetryWaitMax = 5 * time.Second
+	retryClient.RetryWaitMax = 2 * time.Second
 	retryClient.RetryMax = 2
 
 	retryClient.CheckRetry = func(ctx context.Context, resp *http.Response, err error) (bool, error) {
@@ -275,7 +276,6 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 		MaxConnsPerHost:   500, // 500 connection per host
 	}
 	retryClient.HTTPClient.Timeout = 10 * time.Second // Set a timeout for the request
-	client := retryClient.StandardClient()
 
 	var defaultBatchSize uint64 = 1000
 
@@ -288,7 +288,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 	ds := &BackendDS{
 		ctx:                   ctx,
 		host:                  conf.Host,
-		c:                     client,
+		c:                     retryClient,
 		batchSize:             bs,
 		reqInfoPool:           newReqInfoPool(func() *ReqInfo { return &ReqInfo{} }, func(r *ReqInfo) {}),
 		aliveConnPool:         newAliveConnPool(func() *ConnInfo { return &ConnInfo{} }, func(r *ConnInfo) {}),
@@ -307,6 +307,7 @@ func NewBackendDS(parentCtx context.Context, conf config.BackendDSConfig) *Backe
 		metricsExport:         conf.MetricsExport,
 		gpuMetricsExport:      conf.GpuMetricsExport,
 		metricsExportInterval: conf.MetricsExportInterval,
+		conf:                  conf,
 		// traceEventQueue:       list.New(),
 		// traceInfoPool:      newTraceInfoPool(func() *TraceInfo { return &TraceInfo{} }, func(r *TraceInfo) {}),
 	}
@@ -427,11 +428,11 @@ func (ds *BackendDS) Start() {
 // 	return batch
 // }
 
-func (b *BackendDS) DoRequest(req *http.Request) error {
+func (b *BackendDS) DoRequest(req *retryablehttp.Request) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	ctx, cancel := context.WithTimeout(b.ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(b.ctx, 10*time.Second)
 	defer cancel()
 
 	resp, err := b.c.Do(req.WithContext(ctx))
@@ -501,7 +502,7 @@ func convertConnsToPayload(batch []*ConnInfo) ConnInfoPayload {
 // }
 
 func (b *BackendDS) sendMetricsToBackend(r io.Reader) {
-	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/metrics/scrape/?instance=%s&monitoring_id=%s", b.host, NodeID, MonitoringID), r)
+	req, err := retryablehttp.NewRequest(http.MethodPost, fmt.Sprintf("%s/metrics/scrape/?instance=%s&monitoring_id=%s", b.host, NodeID, MonitoringID), r)
 	if err != nil {
 		log.Logger.Error().Msgf("error creating metrics request: %v", err)
 		return
@@ -539,8 +540,7 @@ func (b *BackendDS) sendToBackend(method string, payload interface{}, endpoint s
 		log.Logger.Error().Msgf("error marshalling batch: %v", err)
 		return
 	}
-
-	httpReq, err := http.NewRequest(method, b.host+endpoint, bytes.NewBuffer(payloadBytes))
+	httpReq, err := retryablehttp.NewRequest(method, b.host+endpoint, bytes.NewBuffer(payloadBytes))
 	if err != nil {
 		log.Logger.Error().Msgf("error creating http request: %v", err)
 		return
@@ -589,7 +589,7 @@ func (b *BackendDS) sendToBackend(method string, payload interface{}, endpoint s
 // }
 
 func (b *BackendDS) sendReqsInBatch(batchSize uint64) {
-	t := time.NewTicker(5 * time.Second)
+	t := time.NewTicker(1 * time.Second)
 	defer t.Stop()
 
 	send := func() {
@@ -610,7 +610,19 @@ func (b *BackendDS) sendReqsInBatch(batchSize uint64) {
 		}
 
 		reqsPayload := convertReqsToPayload(batch)
-		log.Logger.Debug().Int("len", len(batch)).Msg("reqs batch len")
+
+		// dynamically configure batchSize to avoid blocking on reqChanBuffer
+		lenBatch := uint64(len(batch))
+		if batchSize == lenBatch {
+			// increase batchSize
+			batchSize *= 2
+			if batchSize > b.conf.ReqBufferSize {
+				batchSize = b.conf.ReqBufferSize // max value
+			}
+		} else if lenBatch < batchSize/10 {
+			batchSize /= 2 // decrease batchSize
+		}
+
 		go b.sendToBackend(http.MethodPost, reqsPayload, reqEndpoint)
 
 		// return reqInfoss to the pool
@@ -998,7 +1010,7 @@ func (b *BackendDS) SendHealthCheck(tracing bool, metrics bool, logs bool, nsFil
 			return
 		}
 
-		req, err := http.NewRequest(http.MethodPut, b.host+healthCheckEndpoint, bytes.NewBuffer(payloadBytes))
+		req, err := retryablehttp.NewRequest(http.MethodPut, b.host+healthCheckEndpoint, bytes.NewBuffer(payloadBytes))
 		if err != nil {
 			log.Logger.Error().Msgf("error creating http request: %v", err)
 			return
