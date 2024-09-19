@@ -9,6 +9,7 @@ type DataStore interface {
 	PersistContainer(c Container, eventType string) error
 	PersistDaemonSet(ds DaemonSet, eventType string) error
 	PersistStatefulSet(ss StatefulSet, eventType string) error
+	PersistK8SEvent(ev K8SEvent) error
 
 	PersistRequest(request *Request) error
 

@@ -21,6 +21,7 @@ rules:
   - deployments
   - daemonsets
   - statefulsets
+  - events
   verbs:
   - "get"
   - "list"

@@ -350,3 +350,21 @@ func (a *Aggregator) processStatefulSet(d k8s.K8sResourceMessage) {
 		go a.ds.PersistStatefulSet(dtoStatefulSet, DELETE)
 	}
 }
+
+func (a *Aggregator) processK8SEvent(d k8s.K8sResourceMessage) {
+	event := d.Object.(*corev1.Event)
+
+	dtoK8SEvent := datastore.K8SEvent{
+		EventName:      event.Name,
+		Kind:           event.InvolvedObject.Kind,
+		Namespace:      event.InvolvedObject.Namespace,
+		Name:           event.InvolvedObject.Name,
+		Uid:            string(event.InvolvedObject.UID),
+		Reason:         event.Reason,
+		Message:        event.Message,
+		Count:          event.Count,
+		FirstTimestamp: event.FirstTimestamp.UnixMilli(),
+		LastTimestamp:  event.LastTimestamp.UnixMilli(),
+	}
+	go a.ds.PersistK8SEvent(dtoK8SEvent)
+}
