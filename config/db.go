@@ -14,7 +14,7 @@ type BackendDSConfig struct {
 	GpuMetricsExport      bool
 	MetricsExportInterval int // in seconds
 
-	ReqBufferSize        int
-	ConnBufferSize       int
-	KafkaEventBufferSize int
+	ReqBufferSize        uint64
+	ConnBufferSize       uint64
+	KafkaEventBufferSize uint64
 }
